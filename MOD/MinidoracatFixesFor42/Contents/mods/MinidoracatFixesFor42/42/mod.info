@@ -1,5 +1,5 @@
 name=Minidoracat Fixes for B42
 id=MinidoracatFixesFor42
-description=[B42]原版錯誤修復合輯（客戶端）。修正 Build 42 原版 Lua 未做防護而在多人伺服器上崩潰的地方，例如動物屍體缺 modData 欄位導致整段車輛右鍵選單消失、動物屍體無法裝上拖車。純修復、不改遊戲平衡，不新增任何物品或介面。單人／多人皆可用（多人由伺服器啟用）。By Minidoracat
-modversion=42.20.0-0.1.0
+description=[B42]原版錯誤修復合輯。修正 Build 42 原版未做防護、在多人伺服器上會實際出事的地方：(1) 動物屍體缺 modData 欄位導致整段車輛右鍵選單消失、死掉的動物裝不上拖車；(2) 多格家具（野餐桌／鋼琴／鍛造爐）被砸壞或搬走後留下缺角殘骸，此後打不掉、拆不了、搬不走——含斷根與右鍵清除殘骸。純修復、不改遊戲平衡、不新增物品。單人／多人皆可用（多人由伺服器啟用）。By Minidoracat
+modversion=42.20.0-0.2.0
 versionMin=42.20.0

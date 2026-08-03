@@ -11,24 +11,30 @@ Project Zomboid Build 42 原版錯誤修復合輯（客戶端）。
 與 `MinidoracatFixPrivate`（`MinidoracatFixMultipleFor42` repo，client + server 兩端的
 TimedAction／多人同步修復）的分工是**發佈管道**，不是端別：那支是私有、非 workshop，
 只能裝在自己的伺服器上，玩家客戶端吃不到；本 MOD 是 **workshop 公開**，
-玩家會實際載入的那一半，因此只收客戶端修復。
+玩家會實際載入的那一半。
 
 ## 目前收錄
 
-| 修復 | 症狀 |
-|------|------|
-| `MDFX_AnimalTrailerSize` | 拖車動物門開著時右鍵載具，整段車輛選單消失、死掉的動物裝不上拖車 |
+| 修復 | 端 | 症狀 |
+|------|----|------|
+| `MDFX_AnimalTrailerSize` | client | 拖車動物門開著時右鍵載具，整段車輛選單消失、死掉的動物裝不上拖車 |
+| `MDFX_MultiTileFurniture` | server + client | 多格家具（野餐桌／鋼琴／鍛造爐）被砸壞或搬走後留下缺角殘骸，此後打不掉、拆不了、搬不走 |
 
 ## 結構
 
 ```
 MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/
 ├─ mod.info
-└─ media/lua/client/Fixes/*.lua      每個檔案一項修復，檔頭寫清楚根因
+└─ media/lua/
+   ├─ client/Fixes/*.lua             客戶端修復（檔頭寫清楚根因）
+   ├─ server/Fixes/*.lua             伺服器端修復（MP 由伺服器啟用時生效）
+   ├─ shared/Fixes/*.lua             兩端共用的判準／工具
+   └─ shared/Translate/*/            介面字串（EN / CH / CN / JP）
 docs/fixes.md                        修復清單（症狀／根因／修法／驗證／退場）
 scripts/test_*.lua                   離線自我檢查，lua 直接跑
 scripts/link_workshop.ps1            開發／上傳用符號連結管理
 scripts/PZ_Test.ps1                  本機測試啟動器
+scripts/poster/finish_poster.py      封面合成（主視覺 → preview.png ＋ poster.png）
 ```
 
 ## 開發

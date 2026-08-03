@@ -5,6 +5,86 @@
 
 ---
 
+## MDFX_MultiTileFurniture — 多格家具缺角殘骸鎖死
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `shared/Fixes/MDFX_SpriteGrid.lua`、`server/Fixes/MDFX_MultiTileFurniture.lua`、`client/Fixes/MDFX_MultiTileFurnitureMenu.lua` |
+| 影響版本 | 42.20.0（殘骸鎖死自 42.10 引入） |
+| 端 | server（斷根＋執行）＋ client（右鍵選項） |
+| 狀態 | 生效中 |
+
+### 症狀
+
+野餐桌／鋼琴／鍛造爐等多格家具被大槌砸、被搬運撿取、或被殭屍打壞後，地上留下
+一兩格殘骸。此後大槌打不掉、拆解不了、也搬不走，且**完全沒有任何提示**，永久卡住。
+
+### 根因（兩層）
+
+**缺角怎麼產生的（MP）**：客戶端破壞／撿取時本地整組移除，送出的封包卻只帶單格
+`(x, y, z, index)`。伺服器端 `RemoveItemFromSquarePacket.removeItemFromMap` 只對
+`GARAGE_DOOR` / `DOUBLE_DOOR` 做整組展開（:169-171），其餘一律單格刪 → 存檔只少一格。
+三條路徑收斂於此：MP 大槌（`GameClient.destroy`）、MP 搬運撿取
+（`ISMoveableSpriteProps.lua:1177` 第二格起連封包都不送）、殭屍打壞玩家搬過的家具。
+
+**殘骸為什麼鎖死**：`IsoObjectUtils.getSpriteGridMultiTileObjects` 是 all-or-nothing，
+缺任一格就 `return false`，`safelyRemoveTileObjectFromSquare` 回 -1、什麼都不刪且完全靜默。
+Lua 端搬運／拆解 gate 同構，連 movables cheat 都繞不過。
+
+### 修法：延後確認，不當場展開
+
+`OnObjectAboutToBeRemoved` 對**所有**移除都會觸發，包含原版蓄意的單格手術——
+`MOFeedingTrough.lua:21` 在地圖載入時單格移除再替換成 `IsoFeedingTrough`，而
+**餵食槽本身就用 sprite grid**（`IsoFeedingTrough.java:79-87`）。當場展開刪 sibling
+會在 chunk 載入時把餵食槽的另一半刪掉，直接弄壞餵食槽與兔籠。
+
+所以 event 只記下群組錨點，延後 60 tick（約一秒）再回頭掃一次，**仍然殘缺才清**：
+
+| 情境 | 延後掃描時 | 結果 |
+|------|-----------|------|
+| 原版移除→立刻替換（餵食槽／兔籠） | 同 sprite 已補回，群組完整 | 不動 |
+| 大槌／搬運撿取／殭屍打壞 | 缺角補不回來 | 清掉剩餘成員 |
+
+判準是 `getSpriteGridMultiTileObjects` 的忠實 Lua 移植（逐格比對 sprite 身分），
+所以本 MOD 認定的「殘缺」與原版鎖死用的那道 gate 完全一致——不多清也不漏清。
+
+移除走 `square:transmitRemoveItemFromSquare(obj, false)` 兩參數非 safe 版
+（`IsoGridSquare.java:6319`），繞過整組檢查；原版自己就在用（`MOHutch.lua:99`、
+`MOFeedingTrough.lua:21`）。在伺服器端會走 `GameServer.RemoveItemFromMap`：
+廣播給相關客戶端＋伺服器自刪，同步正確。
+
+**清舊殘骸**：世界上既有的殘骸不會再觸發 event，需要人工清。右鍵選單補一個
+「清除卡住的家具殘骸」，只在該物件確實屬於殘缺群組時出現；MP 下經 `sendClientCommand`
+交由伺服器權威執行，伺服器端**重驗距離（12 格）與殘缺狀態**——座標來自客戶端不可信，
+也不能讓這條指令變成拆完好家具的工具。
+
+### 已知殘留
+
+出手者自己的客戶端可能短暫少顯示同格的其他物件：`GameServer.RemoveItemFromMap` 以
+`obj.getObjectIndex()` 定址廣播，且 `sendToRelative(..., null, ...)` 不排除出手者，
+而出手者本地早已整組移除、索引已位移。不過 `processClient`（:85）有
+`index < sq.getObjects().size()` 邊界檢查，家具是該格最後一個物件時（最常見）
+直接 no-op；只有家具之後還排著其他物件才會誤刪，且純本地暫態、chunk 重載自癒、
+不碰伺服器存檔。要連這個都乾淨才需要 Java patch（在 `removeItemFromMap` 比照
+車庫門直接展開）。
+
+### 驗證
+
+```
+lua scripts/test_multitile_furniture.lua
+```
+
+11 項離線檢查：錨點回推、完整群組不誤判、缺一格判殘缺、同格無關物件不算成員、
+移除必須走非 safe 版、**斷根在確認期滿後生效**、**原版替換流程不被誤傷**、
+重入 guard、清除指令的距離驗證、近距離放行、完好家具不得被指令拆掉。
+
+### 可退場條件
+
+官方在 `removeItemFromMap` 比照 `GARAGE_DOOR` 對 sprite grid 做整組展開，
+或讓 `safelyRemoveTileObjectFromSquare` 對殘缺群組不再靜默失敗。
+
+---
+
 ## MDFX_AnimalTrailerSize — 動物屍體 `animalTrailerSize` 欄位缺失
 
 | 項目 | 內容 |

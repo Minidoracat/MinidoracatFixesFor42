@@ -1,0 +1,3 @@
+ContextMenu_CH = {
+    ContextMenu_MDFX_ClearBrokenFurniture = "清除卡住的家具殘骸",
+}

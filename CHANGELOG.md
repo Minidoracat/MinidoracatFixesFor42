@@ -1,5 +1,31 @@
 # Changelog
 
+## [42.20.0-0.2.0] - 2026-08-04
+
+### 新增
+
+- **MDFX_MultiTileFurniture**：修復多格家具（野餐桌／鋼琴／鍛造爐等）被砸壞或搬走後
+  留下缺角殘骸、此後大槌打不掉／拆解不了／搬不走且完全無提示的問題。
+
+  缺角來自 MP 封包不對稱：客戶端本地整組移除但只送單格封包，而伺服器端
+  `removeItemFromMap` 只對 `GARAGE_DOOR` / `DOUBLE_DOOR` 整組展開；鎖死則來自
+  `getSpriteGridMultiTileObjects` 的 all-or-nothing 檢查缺格即靜默放棄。
+
+  **斷根**：伺服器端 `OnObjectAboutToBeRemoved` 記下群組錨點，延後約一秒再確認，
+  仍殘缺才清掉剩餘成員。刻意不當場展開——原版 `MOFeedingTrough.lua:21` 在地圖載入時
+  會蓄意單格移除再替換，而餵食槽本身就用 sprite grid，當場展開會弄壞餵食槽與兔籠。
+
+  **清舊殘骸**：右鍵「清除卡住的家具殘骸」，只在確實殘缺時出現；MP 下由伺服器
+  權威執行並重驗距離與殘缺狀態（客戶端座標不可信，也不能拿來拆完好家具）。
+
+  殘缺判準是 `getSpriteGridMultiTileObjects` 的忠實 Lua 移植，與原版鎖死用的
+  gate 完全一致。詳見 [docs/fixes.md](docs/fixes.md)。
+
+  > 離線測試：`scripts/test_multitile_furniture.lua`（11 項檢查）。
+  > 已知殘留：出手者自己畫面在少數情況有可自癒的暫態，不影響伺服器存檔。
+
+- 介面字串翻譯：EN / CH / CN / JP。
+
 ## [42.20.0-0.1.0] - 2026-08-04
 
 首版。
