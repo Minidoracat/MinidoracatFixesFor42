@@ -8,8 +8,10 @@ Project Zomboid Build 42 原版錯誤修復合輯（客戶端）。
 不改平衡、不加物品、不加介面、不加設定選項。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件。
 
-與同系列的 `MinidoracatFixPrivate`（私有、伺服器端 TimedAction／同步修復）分工：
-本 MOD 是 **workshop 公開、客戶端**，玩家會實際載入的那一半。
+與 `MinidoracatFixPrivate`（`MinidoracatFixMultipleFor42` repo，client + server 兩端的
+TimedAction／多人同步修復）的分工是**發佈管道**，不是端別：那支是私有、非 workshop，
+只能裝在自己的伺服器上，玩家客戶端吃不到；本 MOD 是 **workshop 公開**，
+玩家會實際載入的那一半，因此只收客戶端修復。
 
 ## 目前收錄
 

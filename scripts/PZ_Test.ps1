@@ -70,7 +70,11 @@ function Stop-AllPZ {
     Write-Host "[停止] 正在停止所有 PZ 相關進程..." -ForegroundColor Yellow
     $stopped = 0
 
-    Get-Process -Name "java" -ErrorAction SilentlyContinue | ForEach-Object {
+    # 只殺從 PZ 目錄啟動的 java（伺服器走 $PZ_PATH\jre64\bin\java.exe）。
+    # 不加這道過濾就會連 IDE、其他伺服器、任何 Java 工具一起 -Force 殺掉。
+    Get-Process -Name "java" -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($PZ_PATH, [System.StringComparison]::OrdinalIgnoreCase)
+    } | ForEach-Object {
         $_ | Stop-Process -Force
         $stopped++
     }

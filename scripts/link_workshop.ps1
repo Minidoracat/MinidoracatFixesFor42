@@ -116,13 +116,17 @@ function New-SymlinkSafe {
             Write-Host "  [$Label] 已掛載 -> $existing" -ForegroundColor Green
             return
         }
-        # 實體資料夾（可能是 Steam 快取）—— 自動重新命名
-        $bakPath = "$LinkPath.bak"
-        if (Test-Path $bakPath) {
-            Remove-Item $bakPath -Recurse -Force -ErrorAction SilentlyContinue
+        # 實體資料夾（可能是 Steam 快取）—— 自動重新命名。
+        # 既有的 .bak 絕不覆蓋：第二次衝突時改用帶時間戳的名字，
+        # 否則第一份備份會被不可復原地刪掉。
+        $leaf = Split-Path -Leaf $LinkPath
+        $parent = Split-Path -Parent $LinkPath
+        $bakName = "$leaf.bak"
+        if (Test-Path (Join-Path $parent $bakName)) {
+            $bakName = "$leaf.$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
         }
-        Rename-Item $LinkPath $bakPath -Force
-        Write-Host "  [$Label] 已將舊資料夾重新命名為 .bak" -ForegroundColor Yellow
+        Rename-Item -LiteralPath $LinkPath -NewName $bakName
+        Write-Host "  [$Label] 已將舊資料夾重新命名為 $bakName" -ForegroundColor Yellow
     }
 
     # 確保父目錄存在
@@ -146,11 +150,17 @@ function New-SymlinkSafe {
 function New-SymlinkElevated {
     param([string]$LinkPath, [string]$Target, [string]$Label)
     try {
+        # 這段會以系統管理員身分執行，路徑絕不可直接字串內插：Windows 路徑允許
+        # 單引號（例如使用者名稱 O'Brien），內插後就成了提權的命令注入。
+        # 先把 ' 依 PowerShell 規則加倍轉義，再整段 base64 化走 -EncodedCommand，
+        # 一併避開命令列參數解析。
+        $inner = "New-Item -ItemType SymbolicLink -Path '{0}' -Target '{1}' -ErrorAction Stop | Out-Null" -f `
+            $LinkPath.Replace("'", "''"), $Target.Replace("'", "''")
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
         Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
-            "-Command",
-            "New-Item -ItemType SymbolicLink -Path '$LinkPath' -Target '$Target' -ErrorAction Stop | Out-Null"
+            "-EncodedCommand", $encoded
         )
         if (Test-IsSymlink $LinkPath) {
             Write-Host "  [$Label] 建立成功（UAC）" -ForegroundColor Green

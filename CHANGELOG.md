@@ -18,8 +18,22 @@
   照樣寫 `animalType`——屍體於是成為「是動物、但缺欄位」的永久壞資料。
 
   修法為呼叫原版函式前補回 `trailerBaseSize × animalSize`（與 Java
-  `IsoAnimal.getAnimalTrailerSize()` 同式），已有數值不覆蓋，補資料全程 `pcall` 保護。
+  `IsoAnimal.getAnimalTrailerSize()` 同式），已有正確數值不覆蓋，每具屍體各自 `pcall`
+  隔離，失敗時印一次 `[MinidoracatFixes]` 診斷行（避免本修復自己靜默失效）。
   詳見 [docs/fixes.md](docs/fixes.md)。
 
   > 玩家回報 + `console (14).txt` 33 次同一堆疊佐證。
-  > 離線測試：`scripts/test_animal_trailer_size.lua`（7 項檢查）。
+  > 離線測試：`scripts/test_animal_trailer_size.lua`（9 項檢查）。
+
+### 開發腳本
+
+- `link_workshop.ps1`：UAC 提權建立符號連結時，路徑改走 `-EncodedCommand` ＋
+  單引號加倍轉義。原本直接字串內插，Windows 路徑允許單引號（例如使用者名稱
+  `O'Brien`），內插後會成為**以系統管理員身分執行的命令注入**。
+- `link_workshop.ps1`：掛載時遇到既有 `.bak` 不再遞迴刪除，改用帶時間戳的備份名，
+  避免第二次衝突把第一份備份不可復原地毀掉。
+- `PZ_Test.ps1`：「停止」只殺路徑位於 PZ 目錄下的 `java.exe`。原本對所有 `java`
+  執行 `Stop-Process -Force`，會連 IDE 與其他 Java 服務一起殺掉。
+
+  > 這三項是從 `MinidoracatMiniMapFor42/scripts/` 原樣移植時帶進來的，
+  > **該 repo 的同名腳本仍有相同問題**。

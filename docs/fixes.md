@@ -75,10 +75,21 @@ AnimalDefinitions.animals[type].trailerBaseSize * body:getAnimalSize()
 ```
 
 與 Java `IsoAnimal.getAnimalTrailerSize()` 同式，值精確（原版 30 種動物全都有
-`trailerBaseSize`）。未知（模組）動物補 0，與 Java 端 `rawgetFloat` 缺鍵行為一致。
-已有數值一律不覆蓋。手上拿著的屍體（原版第 755 行同樣沒防護）一併補。
+`trailerBaseSize`）。已有正確數值一律不覆蓋；已有值但不是數字則覆寫（否則 `round()` 照樣炸）。
+手上拿著的屍體（原版第 755 行同樣沒防護）一併補。
 
-補資料整段包在 `pcall` 裡 —— 修復本身絕不能變成新的選單殺手。
+未知（模組）動物補 **0**，這是**本 MOD 的取捨，不是 Java parity**：
+`KahluaTableImpl.rawgetFloat`（`KahluaTableImpl.java:128`）缺鍵時實際回 `-1.0F` 而非 0，
+但 −1 當「佔用空間」在 `canAddAnimalInTrailer` 裡是負佔用、也無法顯示；
+0 是最接近該寬鬆語意又不會顯示成負數的值。
+
+逐具隔離：每具屍體各自 `pcall`。若整批共用一個 `pcall`，第三具出問題時
+第四具之後全部漏補、原版照樣崩——等於沒修。
+
+補資料整段包在 `pcall` 裡 —— 修復本身絕不能變成新的選單殺手。但不靜默失敗：
+接住錯誤後印一次 `[MinidoracatFixes]` 診斷行（每 session 一次，右鍵不洗版）。
+本修復若因後續 build 的 API 變動而失效，症狀會原封不動退回原本的 `__mul` 崩潰，
+console.txt 必須留得下指向本 MOD 的線索。
 
 ### 驗證
 
@@ -86,8 +97,13 @@ AnimalDefinitions.animals[type].trailerBaseSize * body:getAnimalSize()
 lua scripts/test_animal_trailer_size.lua
 ```
 
-7 項離線檢查：正常補值、不覆蓋既有值、非動物屍體不碰、未知動物補 0、
-包裝後原版函式照常回傳、補資料拋錯時選單仍完整、手上屍體也補到。
+9 項離線檢查：正常補值、不覆蓋既有正確值、既有值非數字時覆寫、非動物屍體不碰、
+未知動物補 0、包裝後原版函式照常回傳、**同格第一具拋錯不害第二具漏補**、
+手上屍體也補到、**重複載入不疊 wrapper**。
+
+> 測試的 vanilla stub 會照原版一樣呼叫 `vehicle:getSquare()`（原版
+> `ISVehicleMenu.lua:775` 自己也走這條）。少了這一步，「壞 vehicle」類測試會變成
+> 假陽性——看起來是本修復擋下了，其實原版根本也活不過那一行。
 
 遊戲內：把有問題的動物屍體丟在開著動物門的拖車旁，右鍵載具 —— 修復前整段
 車輛選單消失，修復後選單完整且「加入動物」可點。

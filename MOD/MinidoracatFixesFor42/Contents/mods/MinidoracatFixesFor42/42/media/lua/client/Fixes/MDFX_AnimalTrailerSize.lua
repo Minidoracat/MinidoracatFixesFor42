@@ -27,8 +27,7 @@
       呼叫原版函式之前，把掃描範圍內缺欄位的動物屍體補回
       AnimalDefinitions.animals[type].trailerBaseSize * body:getAnimalSize()
       —— 與 Java IsoAnimal.getAnimalTrailerSize() 同式，值精確。
-      原版 30 種動物全都有 trailerBaseSize；未知（模組）動物補 0，
-      與 Java 端 BaseVehicle.canAddAnimalInTrailer 用 rawgetFloat 缺鍵時的行為一致。
+      原版 30 種動物全都有 trailerBaseSize。
 
     只補顯示端資料即可，不需要伺服器配合：屍體真的裝上拖車後，
     BaseVehicle.recalcAnimalSize() 走 IsoAnimal.getAnimalTrailerSize() 重算，不看 modData。
@@ -40,16 +39,23 @@ MDFX_AnimalTrailerSize = MDFX_AnimalTrailerSize or {}
 local SCAN_MIN = -6
 local SCAN_MAX = 5
 
+--- 未知（模組）動物的替代尺寸。這是**本 MOD 的取捨**，不是原版行為：
+--- Java 的 KahluaTableImpl.rawgetFloat 缺鍵時回 -1.0，拿 -1 當「佔用空間」在
+--- BaseVehicle.canAddAnimalInTrailer 裡會變成負佔用（比不限制還寬鬆），
+--- 也不可能拿來顯示。0 是最接近該寬鬆語意又不會顯示成負數的值。
+local UNKNOWN_SIZE = 0
+
 --- 與 zombie.characters.animals.IsoAnimal#getAnimalTrailerSize 同式。
 --- 抽成可注入 defs 是為了離線測試（scripts/test_animal_trailer_size.lua）。
 function MDFX_AnimalTrailerSize.computeSize(body, defs)
     defs = defs or (AnimalDefinitions and AnimalDefinitions.animals)
     local def = defs and defs[body:getAnimalType()]
-    local base = def and def.trailerBaseSize or 0
-    return base * body:getAnimalSize()
+    if not def or not def.trailerBaseSize then return UNKNOWN_SIZE end
+    return def.trailerBaseSize * body:getAnimalSize()
 end
 
---- 缺欄位才補；已有數值一律不動（不覆蓋伺服器同步過來的正確值）。
+--- 缺欄位（或欄位不是數字）才補；已有正確數值一律不動，
+--- 不覆蓋伺服器同步過來的值。
 function MDFX_AnimalTrailerSize.backfill(body, defs)
     if not body or not body:isAnimal() then return false end
     local modData = body:getModData()
@@ -58,11 +64,28 @@ function MDFX_AnimalTrailerSize.backfill(body, defs)
     return true
 end
 
+--- 本修復一旦因後續 build 的 API 變動而失效，症狀會原封不動退回原本的 __mul 崩潰，
+--- console.txt 必須留得下指向本 MOD 的線索。每 session 只報一次，右鍵不洗版。
+local reportedFailure = false
+local function report(err)
+    if reportedFailure then return end
+    reportedFailure = true
+    print("[MinidoracatFixes] MDFX_AnimalTrailerSize 補欄位失敗，動物拖車選單可能仍會崩潰: "
+        .. tostring(err))
+end
+
+--- 逐具隔離：某一具屍體有問題時只跳過它，不能讓整批 12x12 的補值中斷——
+--- 否則後面那些本來補得到的屍體仍是 nil，原版照樣崩。
+local function safeBackfill(body)
+    local ok, err = pcall(MDFX_AnimalTrailerSize.backfill, body)
+    if not ok then report(err) end
+end
+
 function MDFX_AnimalTrailerSize.backfillNearVehicle(playerObj, vehicle)
     -- 手上拿著的屍體（原版第 755 行同樣沒防護）
     local item = playerObj and playerObj:getPrimaryHandItem()
     if item then
-        MDFX_AnimalTrailerSize.backfill(item:getDeadBodyObject())
+        safeBackfill(item:getDeadBodyObject())
     end
 
     local vsq = vehicle and vehicle:getSquare()
@@ -74,17 +97,23 @@ function MDFX_AnimalTrailerSize.backfillNearVehicle(playerObj, vehicle)
             if sq then
                 local bodies = sq:getDeadBodys()
                 for i = 0, bodies:size() - 1 do
-                    MDFX_AnimalTrailerSize.backfill(bodies:get(i))
+                    safeBackfill(bodies:get(i))
                 end
             end
         end
     end
 end
 
-local vanillaDoAnimalSubMenu = ISVehicleMenu.doAnimalSubMenu
+-- 只包一次：開發時 reloadLuaFile 會重跑本檔，沒有這道 guard 會一層層疊上去。
+if not MDFX_AnimalTrailerSize.installed then
+    MDFX_AnimalTrailerSize.installed = true
+    local vanillaDoAnimalSubMenu = ISVehicleMenu.doAnimalSubMenu
 
-function ISVehicleMenu.doAnimalSubMenu(subMenu, playerObj, vehicle)
-    -- 補資料若出錯，絕不能連累原版選單——原版就是這樣整段炸掉的
-    pcall(MDFX_AnimalTrailerSize.backfillNearVehicle, playerObj, vehicle)
-    return vanillaDoAnimalSubMenu(subMenu, playerObj, vehicle)
+    function ISVehicleMenu.doAnimalSubMenu(subMenu, playerObj, vehicle)
+        -- 外層再包一次：連 vehicle:getSquare() 之類的框架呼叫失敗也不能讓
+        -- 原版選單少建（原版就是這樣整段炸掉的）。
+        local ok, err = pcall(MDFX_AnimalTrailerSize.backfillNearVehicle, playerObj, vehicle)
+        if not ok then report(err) end
+        return vanillaDoAnimalSubMenu(subMenu, playerObj, vehicle)
+    end
 end
