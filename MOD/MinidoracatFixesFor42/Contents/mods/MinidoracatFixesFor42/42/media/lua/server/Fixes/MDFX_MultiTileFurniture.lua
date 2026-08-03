@@ -72,9 +72,13 @@ function MDFX_MultiTileFurniture.sweepGroup(g)
 
     if complete or #present == 0 then return 0, false end
 
-    -- 容器裡還有東西：原版 RemoveTileObject 不管容器，刪了就等於毀掉玩家的儲物。
-    -- 自動清掃不做這種決定；玩家把東西拿出來後，右鍵手動清仍然可用。
+    -- 裡面還有東西（物品／component 狀態／流體）：原版 RemoveTileObject 不管這些，
+    -- 刪了就等於毀掉玩家的儲物。自動清掃不做這種決定；玩家把東西拿出來後仍可手動清。
     if MDFX_SpriteGrid.hasStoredItems(present) then return 0, false end
+
+    -- 自動清掃沒有行為人，無從判斷誰有權限：任一成員位在安全屋內就不碰，
+    -- 留給有權限的玩家用右鍵手動處理。
+    if MDFX_SpriteGrid.isSafehouseBlocked(present, nil) then return 0, false end
 
     return MDFX_SpriteGrid.removeMembers(present), false
 end
@@ -148,19 +152,19 @@ local function handleCleanup(player, args)
     if (dx * dx + dy * dy) > (MAX_CLEANUP_DIST * MAX_CLEANUP_DIST) then return end
     if math.abs(sq:getZ() - player:getZ()) > 1 then return end
 
-    -- 授權驗證：原版右鍵選單本身就被 safehouseAllowInteract 擋著
-    -- （ISWorldObjectContextMenu.lua:211），但那是客戶端的 gate——惡意客戶端可以
-    -- 直接送這條指令繞過去，跑進別人的安全屋清家具。伺服器端必須自己再擋一次。
-    -- playerAllowed 已涵蓋管理員 capability（SafeHouse.java:282）。
-    local safehouse = SafeHouse.getSafeHouse(sq)
-    if safehouse and not safehouse:playerAllowed(player) then return end
-
-    -- 群組驗證：inspect 已經涵蓋「不得未載入」「不得完好」「不得有存放物」，
-    -- 所以這條指令拆不掉完好家具，也不會吃掉玩家的儲物
+    -- 群組驗證：inspect 已涵蓋「不得未載入」「不得錨點模糊」「不得完好」
+    -- 「不得有內容物」，所以這條指令拆不掉完好家具，也吃不掉玩家的儲物
     local objs = sq:getObjects()
     for i = 0, objs:size() - 1 do
         local broken, present = MDFX_SpriteGrid.inspect(objs:get(i))
         if broken then
+            -- 授權驗證必須放在拿到 present 之後，而且要逐一檢查**每個待刪成員**。
+            -- 原版右鍵選單本身被 safehouseAllowInteract 擋著
+            -- （ISWorldObjectContextMenu.lua:211），但那是客戶端 gate，惡意封包繞得過；
+            -- 而安全屋是矩形範圍，只驗指令指定的那一格，就會出現「站在屋外對屋內
+            -- sibling 下手」的繞道。
+            if MDFX_SpriteGrid.isSafehouseBlocked(present, player) then return end
+
             sweeping = true
             local ok, err = pcall(MDFX_SpriteGrid.removeMembers, present)
             sweeping = false

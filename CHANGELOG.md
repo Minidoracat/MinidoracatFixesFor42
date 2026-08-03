@@ -1,5 +1,47 @@
 # Changelog
 
+## [42.20.0-0.2.3] - 2026-08-04
+
+第三輪 codex 獨立 review（verdict：REQUEST CHANGES／BLOCK；六個舊 blocker 4 關 2 半開）的修正。
+兩條新的可重現不可逆刪除路徑，加上一條 Important。
+
+### 修正
+
+- **只查 `ItemContainer`，component 與流體內容仍會被刪掉**。改為直接用原版自己的
+  `isObjectNoContainerOrEmpty()`（`IsoObject.java:6692`）——它已涵蓋所有容器（含未探索）
+  與所有 component 狀態（`Resources`、進行中的 `CraftLogic`，例如乾燥架）。
+  但它**漏掉流體**：`FluidContainer` 是 component 卻沒 override
+  `isNoContainerOrEmpty()`，而餵食槽有水時 primary `ItemContainer` 甚至是 nil
+  （`IsoFeedingTrough.java:59`），因此另外查 `getFluidContainer()`。
+  codex probe：`component_removed=3`、`fluid_removed=3`。
+
+- **安全屋授權只覆蓋指令那一格，自動清掃完全沒有 gate**。安全屋是矩形範圍，
+  實際被刪的是整組成員——只驗一格就能「站在屋外對屋內 sibling 下手」。
+  改為逐一檢查每個待刪成員當下的 square，並改用與原版 UI 同一套 policy 的
+  `SafeHouse.isSafehouseAllowInteract`（`SafeHouse.java:245`，含交戰中對手，
+  解掉先前 `playerAllowed` 造成的 UI／伺服器不一致）。自動清掃沒有行為人，
+  任一成員在安全屋內就整組 fail closed。
+  codex probe：`safehouse_command_removed=3`、`safehouse_auto_removed=3`。
+
+- **重複 sprite 的 grid 會算出錯誤錨點，刪到隔壁完好群組**。
+  `getSpriteGridPosX` 走 `getSpriteIndex`，只回第一個相符位置
+  （`IsoSpriteGrid.java:52`），`validate()` 也不檢查唯一性。改為掃描前先數
+  該 sprite 在 grid 內的出現次數，不等於 1 一律視為無法判定。
+  codex probe：`duplicate_removed=1,intactB=false`。
+
+### 測試
+
+- 21 → 27 項。新增 component 狀態、流體、安全屋跨界繞道、自動清掃安全屋 gate、
+  重複 sprite grid、MP 分支 payload。
+- 修掉三個 codex 指出的假綠來源：stub 補上 component／fluid 狀態、
+  `SafeHouse` mock 改成逐格判定、`isClient()` 改為可切換讓 MP 分支真的跑到。
+- stub 保留舊 `getContainer()` API，讓「精確退回舊版程式碼」的 mutation 不會死在缺方法。
+- 八道防線全部 mutation test 通過。
+
+### 文件
+
+- 修正 `docs/fixes.md` 殘留的事實錯誤：`rawgetFloat` 缺鍵回 `-1.0` 而非 `0.0`。
+
 ## [42.20.0-0.2.2] - 2026-08-04
 
 第二輪 codex 獨立 review（verdict：REQUEST CHANGES，20/100，三個不可逆刪除 blocker）的修正。

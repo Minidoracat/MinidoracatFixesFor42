@@ -72,12 +72,27 @@ gate 同構——但**有一處必須刻意不照抄**，見下。
 自動清掃與手動清除指令都會放過它。玩家把東西拿出來後就能清——殘骸擋的是「移除」，
 不擋「開箱拿東西」。
 
-判定有兩個地方少一個就會誤刪：
+判定**直接用原版自己的 `isObjectNoContainerOrEmpty()`**（`IsoObject.java:6692`），
+不要自己重寫——它已經涵蓋：
 
-- **物件可能有多個容器**。`IsoObject.getContainerCount()`（`IsoObject.java:5132`）
-  ＝ primary（0 或 1）＋ `secondaryContainers`。只查 `getContainer()` 會漏掉次要容器。
-- **未探索的容器戰利品還沒生成**，`getItems():size()` 是 0，但它「將會」有東西。
-  一律當成有內容（fail-closed），寧可留著殘骸也不要毀掉還沒生成的戰利品。
+- 所有 `ItemContainer`（`getContainerCount()` ＝ primary ＋ `secondaryContainers`）
+- **未探索**的容器（戰利品還沒生成，`size()` 是 0 但「將會」有東西）
+- 所有 component 狀態（`Resources`、進行中的 `CraftLogic`…，例如乾燥架）
+
+但它**漏掉流體**，必須另外查：`FluidContainer` 雖然是 component（`ComponentType:62`），
+卻沒有 override `isNoContainerOrEmpty()`，會走 `Component` 的預設實作。
+餵食槽有水時 primary `ItemContainer` 甚至是 `nil`，內容全在 `FluidContainer`
+（`IsoFeedingTrough.java:59`）；原版判「有沒有流體」的寫法見 `IsoObject.java:2650`。
+
+### 錨點必須唯一
+
+`originOf` 用 `getSpriteGridPosX(sprite)` 回推群組錨點，但原版那個方法走
+`getSpriteIndex`，只回**第一個**相符的位置（`IsoSpriteGrid.java:52`），
+而 `validate()` 不檢查唯一性。grid 內若有重複 sprite，錨點就會算錯、掃描範圍偏移到隔壁，
+把**完好群組**的成員刪掉。因此掃描前先數該 sprite 在 grid 內的出現次數，
+不等於 1 一律回 `nil`（＝無法判定，呼叫端不得刪除）。
+
+原版資產目前沒發現重複 grid，但第三方 MOD 或異常資產會命中。
 
 移除走 `square:transmitRemoveItemFromSquare(obj, false)` 兩參數非 safe 版
 （`IsoGridSquare.java:6319`），繞過整組檢查；原版自己就在用（`MOHutch.lua:99`、
@@ -92,14 +107,19 @@ gate 同構——但**有一處必須刻意不照抄**，見下。
 - 座標型別驗證（畸形封包不得在 event 迴圈裡拋例外，整段 `pcall` 包住）
 - 玩家存在且未死亡
 - 距離 ≤ 12 格、Z 差 ≤ 1
-- **安全屋授權**：原版右鍵選單本身被 `safehouseAllowInteract` 擋著
-  （`ISWorldObjectContextMenu.lua:211`），但那是**客戶端**的 gate——惡意客戶端可以
-  直接送這條指令繞過去，跑進別人的安全屋清家具。伺服器端用
-  `SafeHouse.getSafeHouse(sq)` ＋ `playerAllowed(player)` 再擋一次
-  （後者已涵蓋管理員 capability，`SafeHouse.java:282`；原版拆除的先例在
-  `ISDestroyCursor.lua:148`）
+- **安全屋授權，逐一檢查每個待刪成員**：原版右鍵選單本身被 `safehouseAllowInteract`
+  擋著（`ISWorldObjectContextMenu.lua:211`），但那是**客戶端**的 gate——惡意客戶端
+  可以直接送這條指令繞過去。伺服器端用 `SafeHouse.isSafehouseAllowInteract(sq, player)`
+  （`SafeHouse.java:245`，與原版 UI 同一套 policy，含管理員 capability 與交戰中對手）
+  再擋一次。
+
+  ⚠ **不能只驗指令指定的那一格**。安全屋是矩形範圍，而實際被刪的是 `inspect` 回傳的
+  整組成員——只驗一格就會出現「站在屋外，對屋內的 sibling 下手」的繞道。
+
+  **自動清掃沒有行為人**，無從判斷誰有權限：任一成員位在安全屋內就整組放過，
+  留給有權限的玩家用右鍵手動處理。
 - 最終能不能刪由**伺服器自己重新掃描**決定，不看客戶端說了什麼；
-  `inspect` 已涵蓋「不得未載入」「不得完好」「不得有內容物」三道，
+  `inspect` 已涵蓋「不得未載入」「不得錨點模糊」「不得完好」「不得有內容物」四道，
   所以這條指令拆不掉完好家具，也吃不掉玩家的儲物
 
 **點擊時重新判定（TOCTOU）**：右鍵選單建立當下抓到的成員清單不能拿去刪。
@@ -123,14 +143,17 @@ MP 有伺服器那道重驗擋著，**單人沒有**，沿用舊清單就會直�
 lua scripts/test_multitile_furniture.lua
 ```
 
-21 項離線檢查：錨點回推、完整群組不誤判、缺一格判殘缺、同格無關物件不算成員、
+27 項離線檢查：錨點回推、完整群組不誤判、缺一格判殘缺、同格無關物件不算成員、
 移除必須走非 safe 版、**斷根在確認期滿後生效**、**原版替換流程不被誤傷**、
 重入 guard、清除指令的距離驗證、近距離放行、完好家具不得被指令拆掉、
 畸形封包與死亡玩家被擋、**未載入格子絕不誤刪且載回後重試能補上**、
 **primary／secondary／未探索三種容器一律放過**、**安全屋授權**（未授權擋下、授權放行）、
-**點擊時重新判定**（群組被補回完整、容器被塞東西 → 不刪；情況未變 → 正常清）。
+**點擊時重新判定**（群組被補回完整、容器被塞東西 → 不刪；情況未變 → 正常清）、
+**component 狀態與流體非空一律放過**、**安全屋跨界繞道被擋**、
+**自動清掃碰安全屋 fail closed**、**重複 sprite 的 grid 判為無法判定**、
+**MP 分支不本地刪除且 payload 正確**。
 
-四道會造成不可逆刪除的防線都做過 mutation test——把該防線改回錯誤行為後，
+每一道會造成不可逆刪除的防線都做過 mutation test——把該防線改回錯誤行為後，
 對應檢查立即失敗：
 
 | 突變 | 失敗的檢查 |
@@ -138,7 +161,11 @@ lua scripts/test_multitile_furniture.lua
 | 未載入格子當成缺角 | 未載入的格子必須回報 unknown |
 | 只查 primary 容器 | secondary 容器有東西 |
 | 拿掉未探索容器保護 | 未探索容器（戰利品還沒生成） |
-| 拿掉安全屋授權 | 非授權玩家不得清安全屋內的殘骸 |
+| 拿掉 component 狀態檢查 | primary 容器有東西 |
+| 拿掉流體檢查 | 流體非空時自動清掃必須放過 |
+| 安全屋改成永不阻擋 | 非授權玩家不得清安全屋內的殘骸 |
+| 自動清掃拿掉安全屋 gate | 自動清掃碰到安全屋必須 fail closed |
+| 拿掉重複 sprite 檢查 | 重複 sprite 的 grid 必須回報無法判定 |
 
 ### 可退場條件
 
@@ -199,7 +226,7 @@ if def.feather then                 -- 第 27 行：卻無條件解參考
 
 Java 端對缺欄位是容忍的：
 
-- `BaseVehicle.canAddAnimalInTrailer(IsoDeadBody)` 用 `rawgetFloat`，缺鍵回 `0.0`，不會炸
+- `BaseVehicle.canAddAnimalInTrailer(IsoDeadBody)` 用 `rawgetFloat`，缺鍵回 `-1.0`（`KahluaTableImpl.java:128`），不會炸
 - 真的裝上車之後 `recalcAnimalSize()` 走 `IsoAnimal.getAnimalTrailerSize()`
   （`adef.trailerBaseSize × animalSize`）重算，根本不看 modData
 - `BaseVehicle.testCollisionWithCorpse` 對 `corpseLength` / `corpseSize` 都有做

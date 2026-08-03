@@ -9,15 +9,33 @@
 
 MDFX_SpriteGrid = MDFX_SpriteGrid or {}
 
+--- grid 裡與該 sprite 相同的格子數。
+--- 原版 getSpriteGridPosX 走 getSpriteIndex，只回**第一個**相符的位置
+--- （IsoSpriteGrid.java:52），而 validate() 不檢查唯一性。所以只要 grid 內有
+--- 重複 sprite，錨點就會算錯、掃描範圍偏移到隔壁，把完好群組的成員刪掉。
+--- 數量不等於 1 一律視為無法判定。
+local function spriteOccurrences(grid, sprite)
+    local n = 0
+    for z = 0, grid:getLevels() - 1 do
+        for x = 0, grid:getWidth() - 1 do
+            for y = 0, grid:getHeight() - 1 do
+                if grid:getSprite(x, y, z) == sprite then n = n + 1 end
+            end
+        end
+    end
+    return n
+end
+
 --- 群組錨點（grid 座標 0,0,0 那一格）的世界座標。
 --- 物件仍在 square 上時才能算，所以移除前就要先取。
---- 回傳：x, y, z 或 nil
+--- 回傳：x, y, z 或 nil（nil ＝ 無法判定，呼叫端一律不得刪除）
 function MDFX_SpriteGrid.originOf(obj)
     if not obj or not obj:hasSpriteGrid() then return nil end
     local grid = obj:getSpriteGrid()
     local sprite = obj:getSprite()
     local sq = obj:getSquare()
     if not grid or not sprite or not sq then return nil end
+    if spriteOccurrences(grid, sprite) ~= 1 then return nil end
     return sq:getX() - grid:getSpriteGridPosX(sprite),
            sq:getY() - grid:getSpriteGridPosY(sprite),
            sq:getZ() - grid:getSpriteGridPosZ(sprite)
@@ -82,13 +100,37 @@ end
 ---      一律當成有內容（fail-closed），寧可留著殘骸也不要毀掉還沒生成的戰利品。
 function MDFX_SpriteGrid.hasStoredItems(present)
     for _, obj in ipairs(present) do
-        local count = obj:getContainerCount()
-        for i = 0, count - 1 do
-            local container = obj:getContainerByIndex(i)
-            if container then
-                if not container:isExplored() then return true end
-                local items = container:getItems()
-                if items and items:size() > 0 then return true end
+        -- 直接用原版自己的判準（IsoObject.java:6692）：它已經走遍所有
+        -- ItemContainer（含「未探索」＝戰利品還沒生成）與所有 component
+        -- （Resources、CraftLogic 進行中的製作…）。自己重寫只會寫出它的子集。
+        if not obj:isObjectNoContainerOrEmpty() then return true end
+
+        -- 但它漏掉流體：FluidContainer 雖然是 component（ComponentType:62），
+        -- 卻沒有 override isNoContainerOrEmpty()，會走 Component 的預設實作。
+        -- 餵食槽有水時 primary ItemContainer 甚至是 nil，內容全在 FluidContainer
+        -- （IsoFeedingTrough.java:59），原版判「有沒有流體」的寫法見 IsoObject.java:2650。
+        local fluid = obj:getFluidContainer()
+        if fluid and not fluid:isEmpty() then return true end
+    end
+    return false
+end
+
+--- 群組是否被安全屋擋下。
+---   player 有值（玩家手動清除）→ 用原版 UI 同一套 policy 逐格判定
+---     （isSafehouseAllowInteract 含管理員 capability 與交戰中對手，SafeHouse.java:245）
+---   player 為 nil（自動清掃，沒有行為人）→ 只要任一成員在安全屋內就 fail closed，
+---     留給有權限的玩家手動處理
+---
+--- ⚠ 必須逐一檢查**每個待刪成員當下的 square**。安全屋是矩形範圍，
+--- 拿指令指定的那一格代表整組，就會出現「站在屋外對屋內 sibling 下手」的繞道。
+function MDFX_SpriteGrid.isSafehouseBlocked(present, player)
+    for _, obj in ipairs(present) do
+        local sq = obj:getSquare()
+        if sq then
+            if player then
+                if not SafeHouse.isSafehouseAllowInteract(sq, player) then return true end
+            elseif SafeHouse.getSafeHouse(sq) then
+                return true
             end
         end
     end

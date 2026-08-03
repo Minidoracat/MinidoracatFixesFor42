@@ -11,7 +11,6 @@ local MOD = "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/me
 -- ── stub：PZ 全域 ───────────────────────────────────────────────
 function require(_) end
 function isServer() return true end
-function isClient() return false end
 
 local handlers = {}
 Events = setmetatable({}, { __index = function(t, name)
@@ -23,8 +22,27 @@ end })
 local world = {}
 function getSquare(x, y, z) return world[x .. "," .. y .. "," .. z] end
 
--- 預設：沒有安全屋。個別檢查會就地換掉。
-SafeHouse = { getSafeHouse = function(_) return nil end }
+-- 安全屋是**逐格**的矩形範圍。mock 必須照格判定，否則「站在屋外對屋內 sibling
+-- 下手」那條繞道根本測不出來（全部回同一間安全屋等於假綠）。
+local safehouses = {}   -- "x,y,z" -> { allowed = { name = true } }
+local function shKey(sq) return sq:getX() .. "," .. sq:getY() .. "," .. sq:getZ() end
+SafeHouse = {
+    getSafeHouse = function(sq) return sq and safehouses[shKey(sq)] or nil end,
+    isSafehouseAllowInteract = function(sq, player)
+        local sh = sq and safehouses[shKey(sq)]
+        if not sh then return true end
+        return player ~= nil and sh.allowed[player._name] == true
+    end,
+}
+
+-- MP／SP 切換，讓客戶端選單的兩條分支都測得到
+local clientMode = false
+function isClient() return clientMode end
+local sentCommands = {}
+function sendClientCommand(player, module, command, args)
+    sentCommands[#sentCommands + 1] =
+        { player = player, module = module, command = command, args = args }
+end
 
 local removedLog = {}
 
@@ -75,19 +93,41 @@ local function makeContainer(itemCount, explored)
     }
 end
 
---- containers：容器陣列（模擬 primary + secondaryContainers）
-local function place(sq, sprite, grid, containers)
-    containers = containers or {}
+--- opts：{ containers = {…}, componentBusy = bool, fluid = number|nil }
+---   componentBusy 模擬 Resources / CraftLogic 這類非空 component 狀態
+---   fluid = nil 代表沒有 FluidContainer；給數字則模擬有容器、內含該量
+local function place(sq, sprite, grid, opts)
+    opts = opts or {}
     local o
     o = {
         _sq = sq,
-        _containers = containers,
+        _containers = opts.containers or {},
+        _componentBusy = opts.componentBusy or false,
+        _fluid = opts.fluid,
         getSprite = function() return sprite end,
         getSquare = function() return o._sq end,
         hasSpriteGrid = function() return grid ~= nil end,
         getSpriteGrid = function() return grid end,
+        -- 保留舊 API：讓「精確退回舊版程式碼」的 mutation 也跑得起來，
+        -- 否則 mutation 會死在 stub 缺方法，變成假的 kill
+        getContainer = function() return o._containers[1] end,
         getContainerCount = function() return #o._containers end,
         getContainerByIndex = function(_, i) return o._containers[i + 1] end,
+        -- 對應原版 IsoObject.isObjectNoContainerOrEmpty（IsoObject.java:6692）：
+        -- 所有 ItemContainer（含未探索）＋ 所有 component 狀態
+        isObjectNoContainerOrEmpty = function()
+            for _, c in ipairs(o._containers) do
+                if not c:isExplored() then return false end
+                if c:getItems():size() > 0 then return false end
+            end
+            return not o._componentBusy
+        end,
+        -- FluidContainer 是 component 但沒 override isNoContainerOrEmpty，
+        -- 所以原版那個判準看不到它——必須另外查
+        getFluidContainer = function()
+            if o._fluid == nil then return nil end
+            return { isEmpty = function() return (o._fluid or 0) <= 0 end }
+        end,
     }
     table.insert(sq._objs, o)
     return o
@@ -285,19 +325,21 @@ removedLog = {}
 local _, m17 = buildTable(1500, 1500, 0)
 m17["1,1"]:getSquare():transmitRemoveItemFromSquare(m17["1,1"], false)
 removedLog = {}
-local allowedNames = { alice = true }
-SafeHouse = { getSafeHouse = function(_) return {
-    playerAllowed = function(_, p) return allowedNames[p._name] == true end
-} end }
-local mallory = newPlayer(1501, 1501, 0); mallory._name = "mallory"
+-- 整組 4 格都在同一間安全屋內
+for x = 1500, 1501 do for y = 1500, 1501 do
+    safehouses[x .. "," .. y .. ",0"] = { allowed = { alice = true } }
+end end
+local mallory = newPlayer(1502, 1502, 0); mallory._name = "mallory"
 onCmd("MDFX", "cleanupBrokenFurniture", mallory, { x = 1500, y = 1500, z = 0 })
 assert(#removedLog == 0, "非授權玩家不得清安全屋內的殘骸")
 
 -- 18. 安全屋授權：允許名單內的玩家照常可以清
-local alice = newPlayer(1501, 1501, 0); alice._name = "alice"
+local alice = newPlayer(1502, 1502, 0); alice._name = "alice"
 onCmd("MDFX", "cleanupBrokenFurniture", alice, { x = 1500, y = 1500, z = 0 })
 assert(#removedLog == 3, "授權玩家應可清除，實際 " .. #removedLog)
-SafeHouse = { getSafeHouse = function(_) return nil end }   -- 還原成無安全屋
+for x = 1500, 1501 do for y = 1500, 1501 do
+    safehouses[x .. "," .. y .. ",0"] = nil
+end end
 
 -- ── 客戶端右鍵選單（TOCTOU）────────────────────────────────────
 -- isClient() 為 false ＝ 單人模式，沒有伺服器那道重驗，是最脆弱的路徑。
@@ -359,4 +401,86 @@ assert(captured, "殘缺群組應該要出現清除選項")
 captured()
 assert(#removedLog == 3, "情況未變時應正常清掉 3 格，實際 " .. #removedLog)
 
-print("MDFX_MultiTileFurniture: 21 checks OK")
+-- ── 第三輪 review 發現 ─────────────────────────────────────────
+
+-- 22. component 狀態非空（Resources／進行中的 CraftLogic，例如乾燥架）→ 不得刪
+--     原版 isObjectNoContainerOrEmpty 有查 component；只查 ItemContainer 會漏掉
+removedLog = {}
+standNear(1900)
+local _, m22 = buildTable(1900, 1900, 0)
+m22["1,0"]._componentBusy = true
+m22["1,1"]:getSquare():transmitRemoveItemFromSquare(m22["1,1"], false)
+removedLog = {}
+onRemove(m22["0,0"]); tick(60)
+assert(#removedLog == 0, "component 狀態非空時，自動清掃必須放過")
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(1901, 1901, 0), { x = 1900, y = 1900, z = 0 })
+assert(#removedLog == 0, "component 狀態非空時，手動清除也必須放過")
+
+-- 23. FluidContainer 有內容 → 不得刪
+--     餵食槽有水時 primary ItemContainer 是 nil，內容全在 FluidContainer，
+--     而 FluidContainer 沒 override isNoContainerOrEmpty，原版判準看不到它
+removedLog = {}
+standNear(2000)
+local _, m23 = buildTable(2000, 2000, 0)
+m23["1,0"]._fluid = 5
+m23["1,1"]:getSquare():transmitRemoveItemFromSquare(m23["1,1"], false)
+removedLog = {}
+onRemove(m23["0,0"]); tick(60)
+assert(#removedLog == 0, "流體非空時，自動清掃必須放過")
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(2001, 2001, 0), { x = 2000, y = 2000, z = 0 })
+assert(#removedLog == 0, "流體非空時，手動清除也必須放過")
+
+-- 24. 安全屋跨界繞道：指令指定的那格在屋外，但 sibling 在未授權的安全屋內
+--     只驗指令那一格 = 站在屋外就能清掉別人屋裡的東西
+removedLog = {}
+local _, m24 = buildTable(2100, 2100, 0)
+safehouses["2101,2101,0"] = { allowed = { alice = true } }   -- 只有對角那格在屋內
+m24["1,0"]:getSquare():transmitRemoveItemFromSquare(m24["1,0"], false)
+removedLog = {}
+local outsider = newPlayer(2100, 2100, 0); outsider._name = "mallory"
+onCmd("MDFX", "cleanupBrokenFurniture", outsider, { x = 2100, y = 2100, z = 0 })
+assert(#removedLog == 0, "指令那格在屋外，但有 sibling 在未授權安全屋內，必須整組擋下")
+
+-- 25. 自動清掃沒有行為人 → 任一成員在安全屋內就不得動
+removedLog = {}
+onRemove(m24["0,0"]); tick(60)
+assert(#removedLog == 0, "自動清掃碰到安全屋必須 fail closed（沒有行為人可授權）")
+safehouses["2101,2101,0"] = nil
+
+-- 26. grid 內有重複 sprite → 錨點無法判定，必須整個放棄
+--     原版 getSpriteGridPosX 只回第一個相符位置（IsoSpriteGrid.java:52），
+--     照用會算出偏移的錨點，掃到隔壁完好群組並刪掉它
+removedLog = {}
+local dupSprite = newSprite(0, 0, 0)
+local dupGrid = newGrid(2, 1, 1, { ["0,0,0"] = dupSprite, ["1,0,0"] = dupSprite })
+local dupSqA = newSquare(2200, 2200, 0)
+local dupSqB = newSquare(2201, 2200, 0)
+local dupA = place(dupSqA, dupSprite, dupGrid)
+place(dupSqB, dupSprite, dupGrid)
+assert(G.originOf(dupA) == nil, "重複 sprite 的 grid 必須回報無法判定")
+assert(G.inspect(dupA) == false, "無法判定錨點時不得判為可清除")
+onRemove(dupA); tick(60)
+assert(#removedLog == 0, "錨點無法判定時絕不能刪（會誤傷隔壁完好群組）")
+
+-- 27. MP 分支：客戶端不得本地刪除，只送指令，payload 要正確
+removedLog = {}
+sentCommands = {}
+clientMode = true
+standNear(2300)
+local _, m27 = buildTable(2300, 2300, 0)
+m27["1,1"]:getSquare():transmitRemoveItemFromSquare(m27["1,1"], false)
+removedLog = {}
+captured = nil
+onFill(0, fakeContext, { m27["0,0"] }, false)
+assert(captured, "MP 下殘缺群組也應出現清除選項")
+captured()
+assert(#removedLog == 0, "MP 下客戶端不得自己刪，必須交給伺服器")
+assert(#sentCommands == 1, "應送出一筆 client command，實際 " .. #sentCommands)
+local cmd = sentCommands[1]
+assert(cmd.module == "MDFX" and cmd.command == "cleanupBrokenFurniture",
+    "指令名稱錯誤：" .. tostring(cmd.module) .. "/" .. tostring(cmd.command))
+assert(cmd.args.x == 2300 and cmd.args.y == 2300 and cmd.args.z == 0,
+    "座標 payload 錯誤")
+clientMode = false
+
+print("MDFX_MultiTileFurniture: 27 checks OK")

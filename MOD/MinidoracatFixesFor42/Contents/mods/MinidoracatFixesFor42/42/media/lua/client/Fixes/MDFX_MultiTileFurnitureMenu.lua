@@ -26,6 +26,8 @@ local MAX_DIST = 12
 local function requestCleanup(playerObj, obj)
     local stillBroken, present = MDFX_SpriteGrid.inspect(obj)
     if not stillBroken then return end
+    -- 與伺服器端同一套 policy，避免「選項點得下去、伺服器靜默拒絕」
+    if MDFX_SpriteGrid.isSafehouseBlocked(present, playerObj) then return end
     local sq = obj:getSquare()
     if not sq then return end
 
@@ -46,7 +48,8 @@ function MDFX_MultiTileFurnitureMenu.onFill(playerNum, context, worldobjects, te
 
     for _, obj in ipairs(worldobjects) do
         -- 這裡的判定只決定「要不要顯示選項」；真正的刪除依據在點擊時重新掃描
-        if MDFX_SpriteGrid.inspect(obj) then
+        local broken, present = MDFX_SpriteGrid.inspect(obj)
+        if broken and not MDFX_SpriteGrid.isSafehouseBlocked(present, playerObj) then
             local sq = obj:getSquare()
             local dx, dy = sq:getX() - playerObj:getX(), sq:getY() - playerObj:getY()
             if (dx * dx + dy * dy) <= (MAX_DIST * MAX_DIST) then
