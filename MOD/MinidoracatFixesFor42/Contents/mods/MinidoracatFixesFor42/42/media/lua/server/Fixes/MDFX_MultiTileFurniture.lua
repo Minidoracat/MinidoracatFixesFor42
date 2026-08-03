@@ -49,7 +49,11 @@ local CONFIRM_TICKS = 60
 -- 座標來自客戶端，必須自行驗證，不能直接照著刪。
 local MAX_CLEANUP_DIST = 12
 
-local pending = {}        -- key -> { grid, x, y, z, ticks }
+-- 有格子沒載入時最多再等幾輪。等不到就放棄——殘骸留著沒關係，
+-- 玩家還能用右鍵手動清；誤刪完好的家具才是不可逆的。
+local MAX_RETRIES = 5
+
+local pending = {}        -- key -> { grid, x, y, z, ticks, retries }
 local pendingCount = 0
 local sweeping = false    -- 重入 guard：自己刪 sibling 時不再排隊
 
@@ -57,11 +61,22 @@ local function report(err)
     print("[MinidoracatFixes] MDFX_MultiTileFurniture 失敗: " .. tostring(err))
 end
 
---- 掃一組，仍殘缺才清。回傳清掉幾個。
+--- 掃一組，仍殘缺才清。
+--- 回傳：removed（清掉幾個）, retry（是否該再等一輪）
 function MDFX_MultiTileFurniture.sweepGroup(g)
-    local present, complete = MDFX_SpriteGrid.scan(g.grid, g.x, g.y, g.z)
-    if complete or #present == 0 then return 0 end
-    return MDFX_SpriteGrid.removeMembers(present)
+    local present, complete, unknown = MDFX_SpriteGrid.scan(g.grid, g.x, g.y, g.z)
+
+    -- 有格子無法判定（未載入／稀疏 grid）：絕不刪，改成稍後重試。
+    -- 照抄 Java 那個 boolean 會把「沒載入」當成缺角，跨 chunk 邊界的完好家具會被清掉。
+    if unknown then return 0, true end
+
+    if complete or #present == 0 then return 0, false end
+
+    -- 容器裡還有東西：原版 RemoveTileObject 不管容器，刪了就等於毀掉玩家的儲物。
+    -- 自動清掃不做這種決定；玩家把東西拿出來後，右鍵手動清仍然可用。
+    if MDFX_SpriteGrid.hasStoredItems(present) then return 0, false end
+
+    return MDFX_SpriteGrid.removeMembers(present), false
 end
 
 local function onObjectAboutToBeRemoved(obj)
@@ -72,7 +87,8 @@ local function onObjectAboutToBeRemoved(obj)
     if not ox then return end
     local key = ox .. "," .. oy .. "," .. oz
     if not pending[key] then pendingCount = pendingCount + 1 end
-    pending[key] = { grid = obj:getSpriteGrid(), x = ox, y = oy, z = oz, ticks = CONFIRM_TICKS }
+    pending[key] = { grid = obj:getSpriteGrid(), x = ox, y = oy, z = oz,
+                     ticks = CONFIRM_TICKS, retries = 0 }
 end
 
 local function onTick()
@@ -82,7 +98,7 @@ local function onTick()
         g.ticks = g.ticks - 1
         if g.ticks <= 0 then
             due = due or {}
-            due[#due + 1] = g
+            due[#due + 1] = { key = key, g = g }
             pending[key] = nil
             pendingCount = pendingCount - 1
         end
@@ -90,19 +106,41 @@ local function onTick()
     if not due then return end
 
     sweeping = true
-    for _, g in ipairs(due) do
-        local ok, err = pcall(MDFX_MultiTileFurniture.sweepGroup, g)
-        if not ok then report(err) end
+    local requeue = nil
+    for _, entry in ipairs(due) do
+        -- 成功時 second/third 是 removed/retry；失敗時 second 是錯誤訊息
+        local ok, removedOrErr, retry = pcall(MDFX_MultiTileFurniture.sweepGroup, entry.g)
+        if not ok then
+            report(removedOrErr)
+        elseif retry and entry.g.retries < MAX_RETRIES then
+            entry.g.retries = entry.g.retries + 1
+            entry.g.ticks = CONFIRM_TICKS
+            requeue = requeue or {}
+            requeue[#requeue + 1] = entry
+        end
     end
     sweeping = false   -- pcall 在內層，這裡保證會執行到
+
+    -- 重新排隊放在迭代之外，避免邊走邊改 pending
+    if requeue then
+        for _, entry in ipairs(requeue) do
+            if not pending[entry.key] then pendingCount = pendingCount + 1 end
+            pending[entry.key] = entry.g
+        end
+    end
 end
 
---- 客戶端右鍵「清除卡住的家具殘骸」。座標不可信，全部重驗。
-local function onClientCommand(module, command, player, args)
-    if module ~= "MDFX" or command ~= "cleanupBrokenFurniture" then return end
-    if not player or not args or not args.x then return end
+--- 客戶端右鍵「清除卡住的家具殘骸」。
+--- 這是信任邊界：module/command/座標/玩家狀態全部由客戶端送來，一律重驗，
+--- 而且最終能不能刪由伺服器自己重新掃描決定，不看客戶端說了什麼。
+local function handleCleanup(player, args)
+    -- 型別驗證：畸形封包不能讓 handler 在 event 迴圈裡拋例外
+    if type(args) ~= "table" then return end
+    local x, y, z = args.x, args.y, args.z
+    if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number" then return end
+    if not player or player:isDead() then return end
 
-    local sq = getSquare(args.x, args.y, args.z)
+    local sq = getSquare(x, y, z)
     if not sq then return end
 
     -- 距離驗證：只准清自己構得到的地方
@@ -110,11 +148,11 @@ local function onClientCommand(module, command, player, args)
     if (dx * dx + dy * dy) > (MAX_CLEANUP_DIST * MAX_CLEANUP_DIST) then return end
     if math.abs(sq:getZ() - player:getZ()) > 1 then return end
 
-    -- 群組驗證：只准清真的殘缺的組，不能拿來拆完好的家具
+    -- 群組驗證：inspect 已經涵蓋「不得未載入」「不得完好」「不得有存放物」，
+    -- 所以這條指令拆不掉完好家具，也不會吃掉玩家的儲物
     local objs = sq:getObjects()
     for i = 0, objs:size() - 1 do
-        local obj = objs:get(i)
-        local broken, present = MDFX_SpriteGrid.inspect(obj)
+        local broken, present = MDFX_SpriteGrid.inspect(objs:get(i))
         if broken then
             sweeping = true
             local ok, err = pcall(MDFX_SpriteGrid.removeMembers, present)
@@ -123,6 +161,12 @@ local function onClientCommand(module, command, player, args)
             return
         end
     end
+end
+
+local function onClientCommand(module, command, player, args)
+    if module ~= "MDFX" or command ~= "cleanupBrokenFurniture" then return end
+    local ok, err = pcall(handleCleanup, player, args)
+    if not ok then report(err) end
 end
 
 Events.OnObjectAboutToBeRemoved.Add(onObjectAboutToBeRemoved)

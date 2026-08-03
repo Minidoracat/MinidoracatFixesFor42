@@ -64,7 +64,7 @@ local function newGrid(w, h, levels, spriteMap)
     }
 end
 
-local function place(sq, sprite, grid)
+local function place(sq, sprite, grid, storedItems)
     local o
     o = {
         _sq = sq,
@@ -72,9 +72,22 @@ local function place(sq, sprite, grid)
         getSquare = function() return o._sq end,
         hasSpriteGrid = function() return grid ~= nil end,
         getSpriteGrid = function() return grid end,
+        getContainer = function()
+            if not storedItems then return nil end
+            return { getItems = function()
+                return { size = function() return storedItems end }
+            end }
+        end,
     }
     table.insert(sq._objs, o)
     return o
+end
+
+local function newPlayer(x, y, z, dead)
+    return { getX = function() return x end,
+             getY = function() return y end,
+             getZ = function() return z end,
+             isDead = function() return dead == true end }
 end
 
 --- 蓋一張 2x2 的桌子，錨點 (ox,oy,oz)。回傳 grid, 成員表（key "x,y"）
@@ -190,20 +203,60 @@ removedLog = {}
 local _, m9 = buildTable(800, 800, 0)
 m9["1,1"]:getSquare():transmitRemoveItemFromSquare(m9["1,1"], false)
 removedLog = {}
-local farPlayer = { getX = function() return 0 end, getY = function() return 0 end, getZ = function() return 0 end }
-onCmd("MDFX", "cleanupBrokenFurniture", farPlayer, { x = 800, y = 800, z = 0 })
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(0, 0, 0), { x = 800, y = 800, z = 0 })
 assert(#removedLog == 0, "距離過遠的清除請求必須被拒絕")
 
 -- 10. 近距離且確實殘缺 → 放行
-local nearPlayer = { getX = function() return 801 end, getY = function() return 801 end, getZ = function() return 0 end }
-onCmd("MDFX", "cleanupBrokenFurniture", nearPlayer, { x = 800, y = 800, z = 0 })
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(801, 801, 0), { x = 800, y = 800, z = 0 })
 assert(#removedLog == 3, "近距離的殘骸清除應放行，實際 " .. #removedLog)
 
 -- 11. 群組完整時，客戶端指令不得被用來拆掉完好的家具
 removedLog = {}
 buildTable(900, 900, 0)
-local nearPlayer2 = { getX = function() return 901 end, getY = function() return 901 end, getZ = function() return 0 end }
-onCmd("MDFX", "cleanupBrokenFurniture", nearPlayer2, { x = 900, y = 900, z = 0 })
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(901, 901, 0), { x = 900, y = 900, z = 0 })
 assert(#removedLog == 0, "完好的家具不得被清除指令拆掉")
 
-print("MDFX_MultiTileFurniture: 11 checks OK")
+-- 12. 畸形封包不得在 event 迴圈裡拋例外，也不得刪任何東西
+removedLog = {}
+local _, m12 = buildTable(1000, 1000, 0)
+m12["1,1"]:getSquare():transmitRemoveItemFromSquare(m12["1,1"], false)
+removedLog = {}
+local near12 = newPlayer(1001, 1001, 0)
+onCmd("MDFX", "cleanupBrokenFurniture", near12, nil)            -- args 缺席
+onCmd("MDFX", "cleanupBrokenFurniture", nil, { x = 1000, y = 1000, z = 0 })  -- player 缺席
+for _, bad in ipairs({ "x", { x = "1000", y = 1000, z = 0 }, { x = 1000 }, {} }) do
+    onCmd("MDFX", "cleanupBrokenFurniture", near12, bad)
+end
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(1001, 1001, 0, true), { x = 1000, y = 1000, z = 0 })
+assert(#removedLog == 0, "畸形封包與死亡玩家的請求都必須被擋下")
+
+-- 13. ⚠ 未載入的格子絕不能被當成缺角——照抄 Java 的 boolean 會誤刪跨 chunk 邊界的完好家具
+removedLog = {}
+local grid13, m13 = buildTable(1100, 1100, 0)
+world["1101,1101,0"] = nil                      -- 模擬相鄰 chunk 尚未載入
+local present13, _, unknown13 = G.scan(grid13, 1100, 1100, 0)
+assert(unknown13 == true, "未載入的格子必須回報 unknown")
+assert(#present13 == 3, "未載入那格之外的 3 個成員仍應被找到")
+assert(G.inspect(m13["0,0"]) == false, "unknown 時不得判為可清除")
+onRemove(m13["0,0"])
+tick(60)
+assert(#removedLog == 0, "有格子未載入時絕不能刪除任何成員（會誤刪完好家具）")
+-- 但等格子載回來、且確實殘缺時，重試要能補上
+world["1101,1101,0"] = newSquare(1101, 1101, 0)  -- 載回來，但成員真的不見了
+tick(60)
+assert(#removedLog == 3, "格子載回後確認仍殘缺，重試應清掉剩餘 3 格，實際 " .. #removedLog)
+
+-- 14. 容器裡還有東西 → 自動清掃不得動它（原版 RemoveTileObject 不管容器，刪了就毀掉儲物）
+removedLog = {}
+local _, m14 = buildTable(1200, 1200, 0)
+local stash = m14["1,0"]
+stash.getContainer = function() return { getItems = function() return { size = function() return 7 end } end } end
+m14["1,1"]:getSquare():transmitRemoveItemFromSquare(m14["1,1"], false)
+removedLog = {}
+onRemove(m14["0,0"])
+tick(60)
+assert(#removedLog == 0, "群組內有非空容器時，自動清掃必須放過")
+onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(1201, 1201, 0), { x = 1200, y = 1200, z = 0 })
+assert(#removedLog == 0, "手動清除指令同樣不得吃掉玩家的儲物")
+
+print("MDFX_MultiTileFurniture: 14 checks OK")
