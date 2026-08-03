@@ -1,5 +1,37 @@
 # Changelog
 
+## [42.20.0-0.2.2] - 2026-08-04
+
+第二輪 codex 獨立 review（verdict：REQUEST CHANGES，20/100，三個不可逆刪除 blocker）的修正。
+上一輪三個 blocker 的修法本身還留著三個新缺口。
+
+### 修正
+
+- **容器保護不完整，仍會毀掉玩家的東西**。`hasStoredItems` 只查 primary
+  `getContainer()`，漏掉兩種情況：
+  - 物件可能有**多個**容器（`IsoObject.getContainerCount()` = primary ＋
+    `secondaryContainers`，`IsoObject.java:5132`）
+  - **未探索**的容器戰利品還沒生成，`getItems():size()` 是 0 但「將會」有東西
+    （`ItemContainer.isExplored()`，`ItemContainer.java:334`）
+
+    兩者都改成 fail-closed：一律當成有內容，寧可留著殘骸也不毀東西。
+
+- **伺服器端沒做安全屋授權**。原版右鍵選單被 `safehouseAllowInteract` 擋著
+  （`ISWorldObjectContextMenu.lua:211`），但那是客戶端 gate；惡意客戶端可直接送
+  `OnClientCommand` 繞過去，跑進別人的安全屋清家具。伺服器端補上
+  `SafeHouse.getSafeHouse(sq)` ＋ `playerAllowed(player)`（原版拆除先例：
+  `ISDestroyCursor.lua:148`）。
+
+- **右鍵選項有 TOCTOU**。選項沿用建立選單當下抓到的成員清單，但選單建好到點擊之間
+  世界可能已變（別人補好了、chunk 卸載、有人往容器塞東西）。MP 有伺服器重驗擋著，
+  **單人沒有**，會直接刪錯東西。改成點擊時重跑 `inspect`。
+
+### 測試
+
+- 14 → 21 項。新增 secondary／未探索容器、安全屋授權（擋下＋放行）、
+  以及三項客戶端 TOCTOU（補回完整不刪、容器被塞不刪、情況未變正常清）。
+- 四道會造成不可逆刪除的防線全部做過 mutation test，逐一確認拿掉後對應檢查立即失敗。
+
 ## [42.20.0-0.2.1] - 2026-08-04
 
 依 codex 獨立 review 修正 `MDFX_MultiTileFurniture` 的三個問題，其中第一項會造成不可逆的存檔損壞。

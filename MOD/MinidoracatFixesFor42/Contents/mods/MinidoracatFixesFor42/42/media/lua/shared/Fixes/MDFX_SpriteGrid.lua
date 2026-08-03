@@ -71,14 +71,25 @@ function MDFX_SpriteGrid.scan(grid, ox, oy, oz, getSquareFn)
     return present, complete, unknown
 end
 
---- 群組裡是否還有裝著東西的容器。
+--- 群組裡是否還有「不該被順手毀掉」的容器內容。
 --- 原版 RemoveTileObject 完全不管容器，移除就等於把內容物一起毀掉。
 --- 玩家自己動手拆是他家的事，但本 MOD 的自動清掃不能靜默吃掉玩家的儲物。
+---
+--- 兩個必須注意的地方，少一個就會誤刪：
+---   1. 物件可能有**多個**容器。IsoObject.getContainerCount() = primary（0 或 1）
+---      ＋ secondaryContainers，只查 getContainer() 會漏掉次要容器。
+---   2. **未探索**的容器戰利品還沒生成，getItems():size() 是 0，但它「將會」有東西。
+---      一律當成有內容（fail-closed），寧可留著殘骸也不要毀掉還沒生成的戰利品。
 function MDFX_SpriteGrid.hasStoredItems(present)
     for _, obj in ipairs(present) do
-        local container = obj:getContainer()
-        if container and container:getItems() and container:getItems():size() > 0 then
-            return true
+        local count = obj:getContainerCount()
+        for i = 0, count - 1 do
+            local container = obj:getContainerByIndex(i)
+            if container then
+                if not container:isExplored() then return true end
+                local items = container:getItems()
+                if items and items:size() > 0 then return true end
+            end
         end
     end
     return false

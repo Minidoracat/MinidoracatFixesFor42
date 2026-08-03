@@ -148,6 +148,13 @@ local function handleCleanup(player, args)
     if (dx * dx + dy * dy) > (MAX_CLEANUP_DIST * MAX_CLEANUP_DIST) then return end
     if math.abs(sq:getZ() - player:getZ()) > 1 then return end
 
+    -- 授權驗證：原版右鍵選單本身就被 safehouseAllowInteract 擋著
+    -- （ISWorldObjectContextMenu.lua:211），但那是客戶端的 gate——惡意客戶端可以
+    -- 直接送這條指令繞過去，跑進別人的安全屋清家具。伺服器端必須自己再擋一次。
+    -- playerAllowed 已涵蓋管理員 capability（SafeHouse.java:282）。
+    local safehouse = SafeHouse.getSafeHouse(sq)
+    if safehouse and not safehouse:playerAllowed(player) then return end
+
     -- 群組驗證：inspect 已經涵蓋「不得未載入」「不得完好」「不得有存放物」，
     -- 所以這條指令拆不掉完好家具，也不會吃掉玩家的儲物
     local objs = sq:getObjects()

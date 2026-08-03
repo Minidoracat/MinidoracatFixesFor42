@@ -23,6 +23,9 @@ end })
 local world = {}
 function getSquare(x, y, z) return world[x .. "," .. y .. "," .. z] end
 
+-- 預設：沒有安全屋。個別檢查會就地換掉。
+SafeHouse = { getSafeHouse = function(_) return nil end }
+
 local removedLog = {}
 
 local function newSquare(x, y, z)
@@ -64,20 +67,27 @@ local function newGrid(w, h, levels, spriteMap)
     }
 end
 
-local function place(sq, sprite, grid, storedItems)
+--- itemCount = 目前件數；explored=false 代表戰利品還沒生成（size 會是 0）
+local function makeContainer(itemCount, explored)
+    return {
+        isExplored = function() return explored ~= false end,
+        getItems = function() return { size = function() return itemCount or 0 end } end,
+    }
+end
+
+--- containers：容器陣列（模擬 primary + secondaryContainers）
+local function place(sq, sprite, grid, containers)
+    containers = containers or {}
     local o
     o = {
         _sq = sq,
+        _containers = containers,
         getSprite = function() return sprite end,
         getSquare = function() return o._sq end,
         hasSpriteGrid = function() return grid ~= nil end,
         getSpriteGrid = function() return grid end,
-        getContainer = function()
-            if not storedItems then return nil end
-            return { getItems = function()
-                return { size = function() return storedItems end }
-            end }
-        end,
+        getContainerCount = function() return #o._containers end,
+        getContainerByIndex = function(_, i) return o._containers[i + 1] end,
     }
     table.insert(sq._objs, o)
     return o
@@ -246,17 +256,107 @@ world["1101,1101,0"] = newSquare(1101, 1101, 0)  -- 載回來，但成員真的�
 tick(60)
 assert(#removedLog == 3, "格子載回後確認仍殘缺，重試應清掉剩餘 3 格，實際 " .. #removedLog)
 
--- 14. 容器裡還有東西 → 自動清掃不得動它（原版 RemoveTileObject 不管容器，刪了就毀掉儲物）
-removedLog = {}
-local _, m14 = buildTable(1200, 1200, 0)
-local stash = m14["1,0"]
-stash.getContainer = function() return { getItems = function() return { size = function() return 7 end } end } end
-m14["1,1"]:getSquare():transmitRemoveItemFromSquare(m14["1,1"], false)
-removedLog = {}
-onRemove(m14["0,0"])
-tick(60)
-assert(#removedLog == 0, "群組內有非空容器時，自動清掃必須放過")
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(1201, 1201, 0), { x = 1200, y = 1200, z = 0 })
-assert(#removedLog == 0, "手動清除指令同樣不得吃掉玩家的儲物")
+-- 14~16. 容器保護。原版 RemoveTileObject 不管容器，刪了就等於毀掉儲物。
+--        三種都必須擋下，少一種就會誤刪玩家的東西。
+local containerCases = {
+    { base = 1200, label = "primary 容器有東西",
+      containers = { makeContainer(7) } },
+    { base = 1300, label = "secondary 容器有東西（只查 getContainer() 會漏掉）",
+      containers = { makeContainer(0), makeContainer(3) } },
+    { base = 1400, label = "未探索容器（戰利品還沒生成，size 是 0）",
+      containers = { makeContainer(0, false) } },
+}
+for _, case in ipairs(containerCases) do
+    local b = case.base
+    local _, mc = buildTable(b, b, 0)
+    mc["1,0"]._containers = case.containers
+    mc["1,1"]:getSquare():transmitRemoveItemFromSquare(mc["1,1"], false)
+    removedLog = {}
+    onRemove(mc["0,0"])
+    tick(60)
+    assert(#removedLog == 0, "自動清掃必須放過：" .. case.label)
+    onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(b + 1, b + 1, 0), { x = b, y = b, z = 0 })
+    assert(#removedLog == 0, "手動清除指令必須放過：" .. case.label)
+end
 
-print("MDFX_MultiTileFurniture: 14 checks OK")
+-- 17. 安全屋授權：不在允許名單的玩家不得清別人安全屋裡的家具
+--     （原版右鍵有 safehouseAllowInteract gate，但那是客戶端的，惡意封包繞得過）
+removedLog = {}
+local _, m17 = buildTable(1500, 1500, 0)
+m17["1,1"]:getSquare():transmitRemoveItemFromSquare(m17["1,1"], false)
+removedLog = {}
+local allowedNames = { alice = true }
+SafeHouse = { getSafeHouse = function(_) return {
+    playerAllowed = function(_, p) return allowedNames[p._name] == true end
+} end }
+local mallory = newPlayer(1501, 1501, 0); mallory._name = "mallory"
+onCmd("MDFX", "cleanupBrokenFurniture", mallory, { x = 1500, y = 1500, z = 0 })
+assert(#removedLog == 0, "非授權玩家不得清安全屋內的殘骸")
+
+-- 18. 安全屋授權：允許名單內的玩家照常可以清
+local alice = newPlayer(1501, 1501, 0); alice._name = "alice"
+onCmd("MDFX", "cleanupBrokenFurniture", alice, { x = 1500, y = 1500, z = 0 })
+assert(#removedLog == 3, "授權玩家應可清除，實際 " .. #removedLog)
+SafeHouse = { getSafeHouse = function(_) return nil end }   -- 還原成無安全屋
+
+-- ── 客戶端右鍵選單（TOCTOU）────────────────────────────────────
+-- isClient() 為 false ＝ 單人模式，沒有伺服器那道重驗，是最脆弱的路徑。
+function getText(k) return k end
+local menuPos = { x = 0, y = 0 }
+local menuPlayer = {
+    getX = function() return menuPos.x end,
+    getY = function() return menuPos.y end,
+    getZ = function() return 0 end,
+    isDead = function() return false end,
+}
+function getSpecificPlayer(_) return menuPlayer end
+--- 把測試玩家挪到該組旁邊，否則選單的距離檢查會先擋下來
+local function standNear(base) menuPos.x, menuPos.y = base + 1, base + 1 end
+
+assert(loadfile(MOD .. "client/Fixes/MDFX_MultiTileFurnitureMenu.lua"), "找不到 MDFX_MultiTileFurnitureMenu.lua")()
+local onFill = assert(handlers["OnFillWorldObjectContextMenu"][1], "客戶端未註冊 OnFillWorldObjectContextMenu")
+
+local captured = nil
+local fakeContext = { addOption = function(_, _, _, fn) captured = fn end }
+
+-- 19. 建立選單後世界變了（群組被補回完整）→ 點下去不得再刪
+removedLog = {}
+standNear(1600)
+local grid19, m19 = buildTable(1600, 1600, 0)
+local gone = m19["1,1"]
+local sq19 = gone:getSquare()
+sq19:transmitRemoveItemFromSquare(gone, false)
+removedLog = {}
+captured = nil
+onFill(0, fakeContext, { m19["0,0"] }, false)
+assert(captured, "殘缺群組應該要出現清除選項")
+place(sq19, gone:getSprite(), grid19)      -- 點擊前，別人把它修好了／或本來就還在
+captured()
+assert(#removedLog == 0, "點擊時應重新判定；沿用建立選單當下的清單會刪掉已經完好的家具")
+
+-- 20. 建立選單後容器被塞了東西 → 點下去不得再刪
+removedLog = {}
+standNear(1700)
+local _, m20 = buildTable(1700, 1700, 0)
+m20["1,1"]:getSquare():transmitRemoveItemFromSquare(m20["1,1"], false)
+removedLog = {}
+captured = nil
+onFill(0, fakeContext, { m20["0,0"] }, false)
+assert(captured, "殘缺群組應該要出現清除選項")
+m20["1,0"]._containers = { makeContainer(5) }   -- 點擊前有人把東西放進去了
+captured()
+assert(#removedLog == 0, "點擊時應重新判定；否則會吃掉剛放進去的儲物")
+
+-- 21. 世界沒變 → 點下去照常清掉
+removedLog = {}
+standNear(1800)
+local _, m21 = buildTable(1800, 1800, 0)
+m21["1,1"]:getSquare():transmitRemoveItemFromSquare(m21["1,1"], false)
+removedLog = {}
+captured = nil
+onFill(0, fakeContext, { m21["0,0"] }, false)
+assert(captured, "殘缺群組應該要出現清除選項")
+captured()
+assert(#removedLog == 3, "情況未變時應正常清掉 3 格，實際 " .. #removedLog)
+
+print("MDFX_MultiTileFurniture: 21 checks OK")
