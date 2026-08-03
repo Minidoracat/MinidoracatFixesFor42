@@ -77,9 +77,17 @@ gate 同構——但**有一處必須刻意不照抄**，見下。
 
 - 所有 `ItemContainer`（`getContainerCount()` ＝ primary ＋ `secondaryContainers`）
 - **未探索**的容器（戰利品還沒生成，`size()` 是 0 但「將會」有東西）
-- 所有 component 狀態（`Resources`、進行中的 `CraftLogic`…，例如乾燥架）
+- **部分** component 狀態 —— 涵蓋範圍見下
 
-但它**漏掉流體**，必須另外查：`FluidContainer` 雖然是 component（`ComponentType:62`），
+⚠ **不可宣稱「涵蓋所有 component 狀態」**。`isObjectNoContainerOrEmpty` 只是逐一詢問
+每個 component，而 `Component.isNoContainerOrEmpty()` 的預設實作直接回 `true`
+（`Component.java:125`）。42.20 只有兩個實質 override：`CraftLogic`
+（`CraftLogic.java:670`）與 `Resources`（`Resources.java:449`，且只保護
+`ResourceType.Item`）。巢狀 fluid/resource、沒有 override 的 stateful component、
+自訂 `modData` 都不在保證範圍內。原版目前已知配置落在受保護路徑上，
+但**第三方家具或未來新增的 component 不保證**。
+
+它另外**漏掉流體**，必須自己查：`FluidContainer` 雖然是 component（`ComponentType:62`），
 卻沒有 override `isNoContainerOrEmpty()`，會走 `Component` 的預設實作。
 餵食槽有水時 primary `ItemContainer` 甚至是 `nil`，內容全在 `FluidContainer`
 （`IsoFeedingTrough.java:59`）；原版判「有沒有流體」的寫法見 `IsoObject.java:2650`。
@@ -149,7 +157,7 @@ lua scripts/test_multitile_furniture.lua
 畸形封包與死亡玩家被擋、**未載入格子絕不誤刪且載回後重試能補上**、
 **primary／secondary／未探索三種容器一律放過**、**安全屋授權**（未授權擋下、授權放行）、
 **點擊時重新判定**（群組被補回完整、容器被塞東西 → 不刪；情況未變 → 正常清）、
-**component 狀態與流體非空一律放過**、**安全屋跨界繞道被擋**、
+**已知 component 狀態與流體非空一律放過**、**安全屋跨界繞道被擋**、
 **自動清掃碰安全屋 fail closed**、**重複 sprite 的 grid 判為無法判定**、
 **MP 分支不本地刪除且 payload 正確**。
 
