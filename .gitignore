@@ -1,0 +1,29 @@
+# Claude Code / AI 工具本機設定（不進版控）
+.claude/
+.mcp.json
+CLAUDE.md
+AGENTS.md
+.agents/
+.omc/
+.omx/
+.codex/
+.code-review-graph/
+.gitnexus/
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+temp/
+tmp/
+
+# Python 編譯快取
+__pycache__/
+luac.out

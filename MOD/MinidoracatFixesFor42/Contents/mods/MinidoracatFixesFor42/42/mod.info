@@ -1,0 +1,5 @@
+name=Minidoracat Fixes for B42
+id=MinidoracatFixesFor42
+description=[B42]原版錯誤修復合輯（客戶端）。修正 Build 42 原版 Lua 未做防護而在多人伺服器上崩潰的地方，例如動物屍體缺 modData 欄位導致整段車輛右鍵選單消失、動物屍體無法裝上拖車。純修復、不改遊戲平衡，不新增任何物品或介面。單人／多人皆可用（多人由伺服器啟用）。By Minidoracat
+modversion=42.20.0-0.1.0
+versionMin=42.20.0
