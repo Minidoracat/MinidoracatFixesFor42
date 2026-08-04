@@ -26,10 +26,18 @@
 
 ### 測試
 
-- 27 → 24 項（移除斷根相關情境，新增「選單本身也擋安全屋」）。
-- 測試開頭斷言 `OnObjectAboutToBeRemoved` / `OnTick` **未被註冊**，
-  自動斷根若被誤加回來立刻失敗。
-- 七道防線 mutation test 全數通過，含「安全屋只驗指令那一格」這條繞道。
+- 27 → 25 項（移除斷根相關情境，新增「選單本身也擋安全屋」與 event 白名單防迴歸）。
+- **event 白名單防迴歸**：所有待測檔載入完後，斷言註冊的 event 只有
+  `OnClientCommand` 與 `OnFillWorldObjectContextMenu`。第五輪 review 實測，
+  原本只黑名單 `OnTick` / `OnObjectAboutToBeRemoved` 的版本擋不住
+  「改用 `EveryOneMinute`」與「改在 client 端註冊」兩種變體；白名單版本四種全擋。
+- 十一道防線 mutation test 全數通過。
+
+### 文件
+
+- 修正三處註解語意殘留：client 檔頭仍稱斷根會防止新殘骸、shared 仍用「自動清掃」、
+  server 的「吃不掉玩家儲物」比實際 component 保證更絕對。
+  公開 README／docs 原本就正確，這三處是程式碼內註解。
 
 ## [42.20.0-0.2.3] - 2026-08-04
 

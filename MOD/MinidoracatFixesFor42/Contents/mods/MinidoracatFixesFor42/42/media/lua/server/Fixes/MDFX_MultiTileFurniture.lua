@@ -69,7 +69,9 @@ local function handleCleanup(player, args)
     if math.abs(sq:getZ() - player:getZ()) > 1 then return end
 
     -- 群組驗證：inspect 已涵蓋「不得未載入」「不得錨點模糊」「不得完好」
-    -- 「不得有內容物」，所以這條指令拆不掉完好家具，也吃不掉玩家的儲物
+    -- 「不得有內容物」，所以這條指令拆不掉完好家具。
+    -- 內容物的保證範圍限於原版認得出來的那些（見 MDFX_SpriteGrid.hasStoredItems）；
+    -- 第三方家具的自訂 component／modData 不在保證內。
     local objs = sq:getObjects()
     for i = 0, objs:size() - 1 do
         local broken, present = MDFX_SpriteGrid.inspect(objs:get(i))

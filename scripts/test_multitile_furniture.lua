@@ -177,8 +177,16 @@ assert(loadfile(MOD .. "server/Fixes/MDFX_MultiTileFurniture.lua"), "找不到 M
 local G = MDFX_SpriteGrid
 local onCmd = assert(handlers["OnClientCommand"] and handlers["OnClientCommand"][1],
     "伺服器端未註冊 OnClientCommand")
-assert(handlers["OnObjectAboutToBeRemoved"] == nil and handlers["OnTick"] == nil,
-    "自動斷根應已移除，不該再註冊 OnObjectAboutToBeRemoved / OnTick")
+
+--- 本 MOD 允許註冊的 event 白名單。
+--- 這兩個都由玩家動作觸發、都有行為人；任何**定時或世界事件**的註冊都代表
+--- 有東西會在沒有行為人的情況下跑起來，那正是自動斷根被移除的原因。
+--- 檢查放在所有待測檔載入完之後（見檔尾），只黑名單 OnTick／
+--- OnObjectAboutToBeRemoved 擋不住換成 EveryOneMinute 或改在 client 端註冊。
+local ALLOWED_EVENTS = {
+    OnClientCommand = true,
+    OnFillWorldObjectContextMenu = true,
+}
 
 local function cleanup(base, player)
     onCmd("MDFX", "cleanupBrokenFurniture", player, { x = base, y = base, z = 0 })
@@ -377,4 +385,19 @@ openMenuOn(m24["0,0"])
 assert(captured == nil, "未授權安全屋的殘骸不得出現清除選項")
 safehouses["2201,2200,0"] = nil
 
-print("MDFX_MultiTileFurniture: 24 checks OK")
+-- 25. 防迴歸：所有待測檔載入完後，註冊的 event 必須全在白名單內。
+--     擋的是「無行為人的刪除路徑被加回來」——不論它掛在 OnTick、EveryOneMinute、
+--     OnObjectAboutToBeRemoved，也不論寫在 server 還是 client。
+local registered = {}
+for name in pairs(handlers) do registered[#registered + 1] = name end
+table.sort(registered)
+for _, name in ipairs(registered) do
+    assert(ALLOWED_EVENTS[name],
+        "註冊了白名單外的 event：" .. name ..
+        "。本 MOD 只做玩家觸發的清除；定時／世界事件代表有東西會在沒有行為人的" ..
+        "情況下刪物件，那正是自動斷根被移除的原因。")
+end
+assert(#registered == 2, "應只註冊 2 個 event，實際 " .. #registered ..
+    "（" .. table.concat(registered, ", ") .. "）")
+
+print("MDFX_MultiTileFurniture: 25 checks OK")

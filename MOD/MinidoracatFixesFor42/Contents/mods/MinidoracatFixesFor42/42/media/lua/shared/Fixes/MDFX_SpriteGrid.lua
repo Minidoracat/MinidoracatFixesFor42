@@ -91,7 +91,12 @@ end
 
 --- 群組裡是否還有「不該被順手毀掉」的容器內容。
 --- 原版 RemoveTileObject 完全不管容器，移除就等於把內容物一起毀掉。
---- 玩家自己動手拆是他家的事，但本 MOD 的自動清掃不能靜默吃掉玩家的儲物。
+--- 玩家用大槌拆是他自己的決定，但本 MOD 的「清殘骸」選項不該順手吃掉裡面的東西。
+---
+--- ⚠ 保證範圍限於**原版認得出來的**內容：所有 ItemContainer、未探索容器、
+--- 有 override isNoContainerOrEmpty() 的 component（42.20 只有 CraftLogic 與
+--- Resources），以及本檔另外查的 FluidContainer。第三方家具的自訂 component
+--- 或 modData 不在保證內——Component 的預設實作直接回 true（Component.java:125）。
 ---
 --- 兩個必須注意的地方，少一個就會誤刪：
 ---   1. 物件可能有**多個**容器。IsoObject.getContainerCount() = primary（0 或 1）

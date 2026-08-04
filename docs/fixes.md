@@ -156,7 +156,7 @@ MP 有伺服器那道重驗擋著，**單人沒有**，沿用舊清單就會直�
 lua scripts/test_multitile_furniture.lua
 ```
 
-24 項離線檢查，涵蓋每一條會造成**不可逆刪除**的路徑：
+25 項離線檢查，涵蓋每一條會造成**不可逆刪除**的路徑：
 錨點回推、完整群組不誤判、缺一格判殘缺、同格無關物件不算成員、移除走非 safe 版、
 **未載入格子回報 unknown 且不得清除**、**重複 sprite 的 grid 判為無法判定**、
 **五種內容物一律放過**（primary／secondary／未探索容器、component 狀態、流體）、
@@ -165,8 +165,13 @@ lua scripts/test_multitile_furniture.lua
 **點擊時重新判定**（補回完整／容器被塞 → 不刪；情況未變 → 正常清）、
 **MP 分支不本地刪除且 payload 正確**、選單本身也擋安全屋。
 
-測試開頭會斷言 `OnObjectAboutToBeRemoved` / `OnTick` **未被註冊**——
-自動斷根若被誤加回來，測試立刻失敗。
+**event 白名單防迴歸**：所有待測檔載入完之後，斷言註冊的 event 只有
+`OnClientCommand` 與 `OnFillWorldObjectContextMenu`（兩者都由玩家動作觸發，
+都有行為人）。任何定時或世界事件的註冊都會讓測試失敗——不論它掛在 `OnTick`、
+`EveryOneMinute` 或 `OnObjectAboutToBeRemoved`，也不論寫在 server 還是 client。
+
+只黑名單 `OnTick` / `OnObjectAboutToBeRemoved` 是不夠的：獨立審查實測，
+改用 `EveryOneMinute`、或改在 client 端註冊，都能繞過黑名單版本。
 
 每一道會造成不可逆刪除的防線都做過 mutation test——把該防線改回錯誤行為後，
 對應檢查立即失敗：
@@ -180,6 +185,10 @@ lua scripts/test_multitile_furniture.lua
 | 安全屋永不阻擋 | 非授權玩家不得清安全屋內的殘骸 |
 | 安全屋只驗指令那一格 | 有 sibling 在未授權安全屋內時必須整組擋下 |
 | TOCTOU：點擊時不重驗 | 點擊時應重新判定 |
+| server 注入 `OnTick` | 註冊了白名單外的 event |
+| server 注入 `OnObjectAboutToBeRemoved` | 註冊了白名單外的 event |
+| client 注入 `OnTick` | 註冊了白名單外的 event |
+| server 改用 `EveryOneMinute` | 註冊了白名單外的 event |
 
 ### 可退場條件
 
