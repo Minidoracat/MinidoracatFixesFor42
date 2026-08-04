@@ -18,7 +18,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | 修復 | 端 | 症狀 |
 |------|----|------|
 | `MDFX_AnimalTrailerSize` | client | 拖車動物門開著時右鍵載具，整段車輛選單消失、死掉的動物裝不上拖車 |
-| `MDFX_MultiTileFurniture` | server + client | 多格家具（野餐桌／鋼琴／鍛造爐）被砸壞或搬走後留下缺角殘骸，此後打不掉、拆不了、搬不走 |
+| `MDFX_MultiTileFurniture` | server + client | 多格家具（野餐桌／鋼琴／鍛造爐）被砸壞或搬走後留下缺角殘骸，此後打不掉、拆不了、搬不走。右鍵可清除（只清殘骸，不做斷根——理由見 docs） |
 
 ## 結構
 

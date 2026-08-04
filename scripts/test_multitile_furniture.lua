@@ -1,16 +1,19 @@
 -- MDFX_SpriteGrid / MDFX_MultiTileFurniture 離線自我檢查
 -- 用法（repo 根目錄）： lua scripts/test_multitile_furniture.lua
 --
--- 重點驗的是兩個會出事的地方：
---   1. 殘缺判準必須與原版 getSpriteGridMultiTileObjects 一致（不多清、不漏清）
---   2. 延後確認必須放過「原版蓄意單格移除後立刻替換」的流程
---      （MOFeedingTrough 就是這樣，當場展開會弄壞餵食槽）
+-- 範圍：只有「手動清除殘骸」。自動斷根已移除（分不出永久殘骸與延遲替換），
+-- 所以這裡不再有 OnObjectAboutToBeRemoved / OnTick 相關情境。
+--
+-- 重點驗的是每一條會造成**不可逆刪除**的路徑都擋得住：
+--   未載入格子、錨點模糊、完好群組、內容物（容器／component／流體）、
+--   安全屋（含跨界繞道）、畸形封包、TOCTOU。
 
 local MOD = "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/media/lua/"
 
 -- ── stub：PZ 全域 ───────────────────────────────────────────────
 function require(_) end
 function isServer() return true end
+function getText(k) return k end
 
 local handlers = {}
 Events = setmetatable({}, { __index = function(t, name)
@@ -94,8 +97,11 @@ local function makeContainer(itemCount, explored)
 end
 
 --- opts：{ containers = {…}, componentBusy = bool, fluid = number|nil }
----   componentBusy 模擬 Resources / CraftLogic 這類非空 component 狀態
----   fluid = nil 代表沒有 FluidContainer；給數字則模擬有容器、內含該量
+---
+--- ⚠ componentBusy 模擬的是「**原版 predicate 認得出來**的 component 狀態」
+--- （42.20 只有 CraftLogic 與 Resources 兩個實質 override；Component 的預設實作
+--- 直接回 true，見 Component.java:125）。沒有 override 的 stateful component
+--- 本 MOD 也保護不到——那是已知限制，不是這個 stub 的假設。
 local function place(sq, sprite, grid, opts)
     opts = opts or {}
     local o
@@ -113,8 +119,7 @@ local function place(sq, sprite, grid, opts)
         getContainer = function() return o._containers[1] end,
         getContainerCount = function() return #o._containers end,
         getContainerByIndex = function(_, i) return o._containers[i + 1] end,
-        -- 對應原版 IsoObject.isObjectNoContainerOrEmpty（IsoObject.java:6692）：
-        -- 所有 ItemContainer（含未探索）＋ 所有 component 狀態
+        -- 對應原版 IsoObject.isObjectNoContainerOrEmpty（IsoObject.java:6692）
         isObjectNoContainerOrEmpty = function()
             for _, c in ipairs(o._containers) do
                 if not c:isExplored() then return false end
@@ -133,20 +138,22 @@ local function place(sq, sprite, grid, opts)
     return o
 end
 
-local function newPlayer(x, y, z, dead)
-    return { getX = function() return x end,
+local function newPlayer(x, y, z, opts)
+    opts = opts or {}
+    return { _name = opts.name,
+             getX = function() return x end,
              getY = function() return y end,
              getZ = function() return z end,
-             isDead = function() return dead == true end }
+             isDead = function() return opts.dead == true end }
 end
 
 --- 蓋一張 2x2 的桌子，錨點 (ox,oy,oz)。回傳 grid, 成員表（key "x,y"）
 local function buildTable(ox, oy, oz)
-    local spriteMap, grid = {}, nil
+    local spriteMap = {}
     for x = 0, 1 do for y = 0, 1 do
         spriteMap[x .. "," .. y .. ",0"] = newSprite(x, y, 0)
     end end
-    grid = newGrid(2, 2, 1, spriteMap)
+    local grid = newGrid(2, 2, 1, spriteMap)
     local members = {}
     for x = 0, 1 do for y = 0, 1 do
         local sq = getSquare(ox + x, oy + y, oz) or newSquare(ox + x, oy + y, oz)
@@ -155,36 +162,46 @@ local function buildTable(ox, oy, oz)
     return grid, members
 end
 
+--- 蓋一張桌子並打掉右下角，做成殘骸
+local function buildWreck(base)
+    local grid, m = buildTable(base, base, 0)
+    m["1,1"]:getSquare():transmitRemoveItemFromSquare(m["1,1"], false)
+    removedLog = {}
+    return grid, m
+end
+
 -- ── 載入待測檔 ─────────────────────────────────────────────────
 assert(loadfile(MOD .. "shared/Fixes/MDFX_SpriteGrid.lua"), "找不到 MDFX_SpriteGrid.lua（請從 repo 根目錄執行）")()
 assert(loadfile(MOD .. "server/Fixes/MDFX_MultiTileFurniture.lua"), "找不到 MDFX_MultiTileFurniture.lua")()
 
 local G = MDFX_SpriteGrid
-local onRemove = assert(handlers["OnObjectAboutToBeRemoved"][1], "伺服器端未註冊 OnObjectAboutToBeRemoved")
-local onTick = assert(handlers["OnTick"][1], "伺服器端未註冊 OnTick")
-local onCmd = assert(handlers["OnClientCommand"][1], "伺服器端未註冊 OnClientCommand")
+local onCmd = assert(handlers["OnClientCommand"] and handlers["OnClientCommand"][1],
+    "伺服器端未註冊 OnClientCommand")
+assert(handlers["OnObjectAboutToBeRemoved"] == nil and handlers["OnTick"] == nil,
+    "自動斷根應已移除，不該再註冊 OnObjectAboutToBeRemoved / OnTick")
 
-local function tick(n) for _ = 1, n do onTick() end end
+local function cleanup(base, player)
+    onCmd("MDFX", "cleanupBrokenFurniture", player, { x = base, y = base, z = 0 })
+end
 
--- ── 檢查 ───────────────────────────────────────────────────────
+-- ══ 群組判定 ═══════════════════════════════════════════════════
 
 -- 1. 錨點回推：任一成員都要算出同一個錨點
-local _, m = buildTable(100, 100, 0)
-for _, obj in pairs(m) do
+local _, m1 = buildTable(100, 100, 0)
+for _, obj in pairs(m1) do
     local ox, oy, oz = G.originOf(obj)
     assert(ox == 100 and oy == 100 and oz == 0,
-        "錨點應為 100,100,0，實際 " .. tostring(ox) .. "," .. tostring(oy) .. "," .. tostring(oz))
+        "錨點應為 100,100,0，實際 " .. tostring(ox) .. "," .. tostring(oy))
 end
 
 -- 2. 完整群組 → complete，且不算殘缺
 local grid2, m2 = buildTable(200, 200, 0)
-local present, complete = G.scan(grid2, 200, 200, 0)
-assert(complete == true and #present == 4, "完整 2x2 應找到 4 個成員")
+local present2, complete2 = G.scan(grid2, 200, 200, 0)
+assert(complete2 == true and #present2 == 4, "完整 2x2 應找到 4 個成員")
 assert(G.inspect(m2["0,0"]) == false, "完整群組不得被判為殘缺")
 
 -- 3. 缺一格 → 殘缺，且 present 只剩 3
-local grid3, m3 = buildTable(300, 300, 0)
-m3["1,1"]:getSquare():transmitRemoveItemFromSquare(m3["1,1"], false)
+local grid3, m3 = buildWreck(300)
 local present3, complete3 = G.scan(grid3, 300, 300, 0)
 assert(complete3 == false and #present3 == 3, "缺一格應為殘缺且剩 3 個成員")
 assert(G.inspect(m3["0,0"]) == true, "殘骸必須被判為殘缺")
@@ -195,155 +212,106 @@ place(m4["0,0"]:getSquare(), newSprite(9, 9, 9), nil)   -- 掉落物之類
 local present4, complete4 = G.scan(grid4, 400, 400, 0)
 assert(complete4 == true and #present4 == 4, "無關物件不得被算進群組")
 
--- 5. removeMembers 必須用非 safe 版（safelyRemove=false），否則原版整組檢查會擋下來
+-- 5. removeMembers 必須用非 safe 版，否則原版 all-or-nothing 檢查會讓移除靜默失敗
 removedLog = {}
 G.removeMembers(present3)
 assert(#removedLog == 3, "應移除 3 個殘骸成員，實際 " .. #removedLog)
 for _, r in ipairs(removedLog) do
-    assert(r.safelyRemove == false, "必須走非 safe 版，否則 all-or-nothing 檢查會讓移除靜默失敗")
+    assert(r.safelyRemove == false, "必須走非 safe 版")
 end
 
--- 6. 斷根：大槌打掉一格且沒人補回來 → 延後確認後清掉剩餘 3 格
-removedLog = {}
-local _, m6 = buildTable(500, 500, 0)
-local victim = m6["0,1"]
-onRemove(victim)                                                   -- 原版：刪除前觸發
-victim:getSquare():transmitRemoveItemFromSquare(victim, false)      -- 原版真的刪掉它
-removedLog = {}                                                     -- 只看本 MOD 之後刪了什麼
-tick(59); assert(#removedLog == 0, "確認期未到不得動手")
-tick(1)
-assert(#removedLog == 3, "確認期滿且仍殘缺，應清掉剩下 3 格，實際 " .. #removedLog)
+-- 6. ⚠ 未載入的格子絕不能被當成缺角（會誤判跨 chunk 邊界的完好家具）
+local grid6, m6 = buildTable(600, 600, 0)
+world["601,601,0"] = nil                       -- 模擬相鄰 chunk 尚未載入
+local present6, _, unknown6 = G.scan(grid6, 600, 600, 0)
+assert(unknown6 == true, "未載入的格子必須回報 unknown")
+assert(#present6 == 3, "其餘 3 個成員仍應被找到")
+assert(G.inspect(m6["0,0"]) == false, "unknown 時不得判為可清除")
 
--- 7. 不誤傷原版蓄意的「單格移除→立刻替換」（MOFeedingTrough 模式）
---    當場展開的話這裡會把餵食槽另一半刪掉，正是本設計要避免的
-removedLog = {}
-local grid7, m7 = buildTable(600, 600, 0)
-local replaced = m7["1,0"]
-local sameSprite = replaced:getSprite()
-local sq7 = replaced:getSquare()
-onRemove(replaced)
-sq7:transmitRemoveItemFromSquare(replaced, false)
-place(sq7, sameSprite, grid7)          -- 同一幀補回同 sprite 的功能物件
-removedLog = {}
-tick(60)
-assert(#removedLog == 0, "群組已被補回完整，不得清除（否則會弄壞餵食槽／兔籠）")
+-- 7. ⚠ grid 內有重複 sprite → 錨點無法判定，必須整組放棄
+--    原版 getSpriteGridPosX 只回第一個相符位置（IsoSpriteGrid.java:52）
+local dupSprite = newSprite(0, 0, 0)
+local dupGrid = newGrid(2, 1, 1, { ["0,0,0"] = dupSprite, ["1,0,0"] = dupSprite })
+local dupA = place(newSquare(700, 700, 0), dupSprite, dupGrid)
+place(newSquare(701, 700, 0), dupSprite, dupGrid)
+assert(G.originOf(dupA) == nil, "重複 sprite 的 grid 必須回報無法判定")
+assert(G.inspect(dupA) == false, "無法判定錨點時不得判為可清除")
 
--- 8. 重入 guard：清除過程中自己觸發的移除不得再排隊，避免無限滾雪球
-removedLog = {}
-local _, m8 = buildTable(700, 700, 0)
-local hookedSquare = m8["0,0"]:getSquare()
-local origTransmit = hookedSquare.transmitRemoveItemFromSquare
-hookedSquare.transmitRemoveItemFromSquare = function(selfSq, obj, safe)
-    onRemove(obj)                       -- 模擬 Java 端刪除時再次觸發同一個 event
-    return origTransmit(selfSq, obj, safe)
+-- ══ 內容物保全 ═════════════════════════════════════════════════
+-- 原版 RemoveTileObject 完全不管這些，刪了就等於毀掉玩家的東西
+
+local contentCases = {
+    { base = 800,  label = "primary 容器有東西",        apply = function(o) o._containers = { makeContainer(7) } end },
+    { base = 900,  label = "secondary 容器有東西",      apply = function(o) o._containers = { makeContainer(0), makeContainer(3) } end },
+    { base = 1000, label = "未探索容器（戰利品未生成）", apply = function(o) o._containers = { makeContainer(0, false) } end },
+    { base = 1100, label = "component 狀態非空（乾燥架類）", apply = function(o) o._componentBusy = true end },
+    { base = 1200, label = "流體非空（餵食槽類）",      apply = function(o) o._fluid = 5 end },
+}
+for _, case in ipairs(contentCases) do
+    local _, mc = buildWreck(case.base)
+    case.apply(mc["1,0"])
+    assert(G.inspect(mc["0,0"]) == false, "有內容物時不得判為可清除：" .. case.label)
+    cleanup(case.base, newPlayer(case.base + 1, case.base + 1, 0))
+    assert(#removedLog == 0, "手動清除必須放過：" .. case.label)
 end
-local v8 = m8["1,1"]
-onRemove(v8)
-v8:getSquare():transmitRemoveItemFromSquare(v8, false)
-removedLog = {}
-tick(60)
-local firstSweep = #removedLog
-assert(firstSweep == 3, "第一次掃描應清 3 格，實際 " .. firstSweep)
-removedLog = {}
-tick(120)
-assert(#removedLog == 0, "重入 guard 失效：清除動作又把自己排進佇列了")
 
--- 9. 客戶端指令必須重驗——距離過遠一律拒絕
-removedLog = {}
-local _, m9 = buildTable(800, 800, 0)
-m9["1,1"]:getSquare():transmitRemoveItemFromSquare(m9["1,1"], false)
-removedLog = {}
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(0, 0, 0), { x = 800, y = 800, z = 0 })
+-- ══ 指令信任邊界 ═══════════════════════════════════════════════
+
+-- 13. 距離過遠一律拒絕
+local _, _ = buildWreck(1300)
+cleanup(1300, newPlayer(0, 0, 0))
 assert(#removedLog == 0, "距離過遠的清除請求必須被拒絕")
 
--- 10. 近距離且確實殘缺 → 放行
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(801, 801, 0), { x = 800, y = 800, z = 0 })
+-- 14. 近距離且確實殘缺 → 放行
+cleanup(1300, newPlayer(1301, 1301, 0))
 assert(#removedLog == 3, "近距離的殘骸清除應放行，實際 " .. #removedLog)
 
--- 11. 群組完整時，客戶端指令不得被用來拆掉完好的家具
+-- 15. 完好家具不得被指令拆掉
 removedLog = {}
-buildTable(900, 900, 0)
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(901, 901, 0), { x = 900, y = 900, z = 0 })
+buildTable(1400, 1400, 0)
+cleanup(1400, newPlayer(1401, 1401, 0))
 assert(#removedLog == 0, "完好的家具不得被清除指令拆掉")
 
--- 12. 畸形封包不得在 event 迴圈裡拋例外，也不得刪任何東西
-removedLog = {}
-local _, m12 = buildTable(1000, 1000, 0)
-m12["1,1"]:getSquare():transmitRemoveItemFromSquare(m12["1,1"], false)
-removedLog = {}
-local near12 = newPlayer(1001, 1001, 0)
-onCmd("MDFX", "cleanupBrokenFurniture", near12, nil)            -- args 缺席
-onCmd("MDFX", "cleanupBrokenFurniture", nil, { x = 1000, y = 1000, z = 0 })  -- player 缺席
-for _, bad in ipairs({ "x", { x = "1000", y = 1000, z = 0 }, { x = 1000 }, {} }) do
-    onCmd("MDFX", "cleanupBrokenFurniture", near12, bad)
+-- 16. 畸形封包與死亡玩家都要擋下，且不得拋例外
+buildWreck(1500)
+local near = newPlayer(1501, 1501, 0)
+onCmd("MDFX", "cleanupBrokenFurniture", near, nil)
+onCmd("MDFX", "cleanupBrokenFurniture", nil, { x = 1500, y = 1500, z = 0 })
+for _, bad in ipairs({ "x", { x = "1500", y = 1500, z = 0 }, { x = 1500 }, {} }) do
+    onCmd("MDFX", "cleanupBrokenFurniture", near, bad)
 end
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(1001, 1001, 0, true), { x = 1000, y = 1000, z = 0 })
+cleanup(1500, newPlayer(1501, 1501, 0, { dead = true }))
 assert(#removedLog == 0, "畸形封包與死亡玩家的請求都必須被擋下")
 
--- 13. ⚠ 未載入的格子絕不能被當成缺角——照抄 Java 的 boolean 會誤刪跨 chunk 邊界的完好家具
-removedLog = {}
-local grid13, m13 = buildTable(1100, 1100, 0)
-world["1101,1101,0"] = nil                      -- 模擬相鄰 chunk 尚未載入
-local present13, _, unknown13 = G.scan(grid13, 1100, 1100, 0)
-assert(unknown13 == true, "未載入的格子必須回報 unknown")
-assert(#present13 == 3, "未載入那格之外的 3 個成員仍應被找到")
-assert(G.inspect(m13["0,0"]) == false, "unknown 時不得判為可清除")
-onRemove(m13["0,0"])
-tick(60)
-assert(#removedLog == 0, "有格子未載入時絕不能刪除任何成員（會誤刪完好家具）")
--- 但等格子載回來、且確實殘缺時，重試要能補上
-world["1101,1101,0"] = newSquare(1101, 1101, 0)  -- 載回來，但成員真的不見了
-tick(60)
-assert(#removedLog == 3, "格子載回後確認仍殘缺，重試應清掉剩餘 3 格，實際 " .. #removedLog)
+-- ══ 安全屋授權 ═════════════════════════════════════════════════
 
--- 14~16. 容器保護。原版 RemoveTileObject 不管容器，刪了就等於毀掉儲物。
---        三種都必須擋下，少一種就會誤刪玩家的東西。
-local containerCases = {
-    { base = 1200, label = "primary 容器有東西",
-      containers = { makeContainer(7) } },
-    { base = 1300, label = "secondary 容器有東西（只查 getContainer() 會漏掉）",
-      containers = { makeContainer(0), makeContainer(3) } },
-    { base = 1400, label = "未探索容器（戰利品還沒生成，size 是 0）",
-      containers = { makeContainer(0, false) } },
-}
-for _, case in ipairs(containerCases) do
-    local b = case.base
-    local _, mc = buildTable(b, b, 0)
-    mc["1,0"]._containers = case.containers
-    mc["1,1"]:getSquare():transmitRemoveItemFromSquare(mc["1,1"], false)
-    removedLog = {}
-    onRemove(mc["0,0"])
-    tick(60)
-    assert(#removedLog == 0, "自動清掃必須放過：" .. case.label)
-    onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(b + 1, b + 1, 0), { x = b, y = b, z = 0 })
-    assert(#removedLog == 0, "手動清除指令必須放過：" .. case.label)
-end
-
--- 17. 安全屋授權：不在允許名單的玩家不得清別人安全屋裡的家具
---     （原版右鍵有 safehouseAllowInteract gate，但那是客戶端的，惡意封包繞得過）
-removedLog = {}
-local _, m17 = buildTable(1500, 1500, 0)
-m17["1,1"]:getSquare():transmitRemoveItemFromSquare(m17["1,1"], false)
-removedLog = {}
--- 整組 4 格都在同一間安全屋內
-for x = 1500, 1501 do for y = 1500, 1501 do
+-- 17. 非授權玩家不得清安全屋內的殘骸
+buildWreck(1600)
+for x = 1600, 1601 do for y = 1600, 1601 do
     safehouses[x .. "," .. y .. ",0"] = { allowed = { alice = true } }
 end end
-local mallory = newPlayer(1502, 1502, 0); mallory._name = "mallory"
-onCmd("MDFX", "cleanupBrokenFurniture", mallory, { x = 1500, y = 1500, z = 0 })
+cleanup(1600, newPlayer(1602, 1602, 0, { name = "mallory" }))
 assert(#removedLog == 0, "非授權玩家不得清安全屋內的殘骸")
 
--- 18. 安全屋授權：允許名單內的玩家照常可以清
-local alice = newPlayer(1502, 1502, 0); alice._name = "alice"
-onCmd("MDFX", "cleanupBrokenFurniture", alice, { x = 1500, y = 1500, z = 0 })
+-- 18. 授權玩家照常可以清
+cleanup(1600, newPlayer(1602, 1602, 0, { name = "alice" }))
 assert(#removedLog == 3, "授權玩家應可清除，實際 " .. #removedLog)
-for x = 1500, 1501 do for y = 1500, 1501 do
-    safehouses[x .. "," .. y .. ",0"] = nil
-end end
+for x = 1600, 1601 do for y = 1600, 1601 do safehouses[x .. "," .. y .. ",0"] = nil end end
 
--- ── 客戶端右鍵選單（TOCTOU）────────────────────────────────────
--- isClient() 為 false ＝ 單人模式，沒有伺服器那道重驗，是最脆弱的路徑。
-function getText(k) return k end
+-- 19. ⚠ 跨界繞道：指令那格在屋外，但 sibling 在未授權安全屋內 → 整組擋下
+--     只驗指令那一格的話，站在屋外就能清掉別人屋裡的東西
+buildWreck(1700)                                             -- 缺角在 (1701,1701)
+-- 安全屋只罩住其中一個**存活**的 sibling；指令指定的 (1700,1700) 在屋外
+safehouses["1701,1700,0"] = { allowed = { alice = true } }
+cleanup(1700, newPlayer(1700, 1700, 0, { name = "mallory" }))
+assert(#removedLog == 0, "有 sibling 在未授權安全屋內時，必須整組擋下")
+safehouses["1701,1700,0"] = nil
+
+-- ══ 客戶端右鍵選單 ═════════════════════════════════════════════
+
+assert(loadfile(MOD .. "client/Fixes/MDFX_MultiTileFurnitureMenu.lua"), "找不到 MDFX_MultiTileFurnitureMenu.lua")()
+local onFill = assert(handlers["OnFillWorldObjectContextMenu"][1], "客戶端未註冊 OnFillWorldObjectContextMenu")
+
 local menuPos = { x = 0, y = 0 }
 local menuPlayer = {
     getX = function() return menuPos.x end,
@@ -352,135 +320,61 @@ local menuPlayer = {
     isDead = function() return false end,
 }
 function getSpecificPlayer(_) return menuPlayer end
---- 把測試玩家挪到該組旁邊，否則選單的距離檢查會先擋下來
 local function standNear(base) menuPos.x, menuPos.y = base + 1, base + 1 end
-
-assert(loadfile(MOD .. "client/Fixes/MDFX_MultiTileFurnitureMenu.lua"), "找不到 MDFX_MultiTileFurnitureMenu.lua")()
-local onFill = assert(handlers["OnFillWorldObjectContextMenu"][1], "客戶端未註冊 OnFillWorldObjectContextMenu")
 
 local captured = nil
 local fakeContext = { addOption = function(_, _, _, fn) captured = fn end }
 
--- 19. 建立選單後世界變了（群組被補回完整）→ 點下去不得再刪
-removedLog = {}
-standNear(1600)
-local grid19, m19 = buildTable(1600, 1600, 0)
-local gone = m19["1,1"]
-local sq19 = gone:getSquare()
-sq19:transmitRemoveItemFromSquare(gone, false)
-removedLog = {}
-captured = nil
-onFill(0, fakeContext, { m19["0,0"] }, false)
-assert(captured, "殘缺群組應該要出現清除選項")
-place(sq19, gone:getSprite(), grid19)      -- 點擊前，別人把它修好了／或本來就還在
-captured()
-assert(#removedLog == 0, "點擊時應重新判定；沿用建立選單當下的清單會刪掉已經完好的家具")
+local function openMenuOn(obj) captured = nil; onFill(0, fakeContext, { obj }, false) end
 
--- 20. 建立選單後容器被塞了東西 → 點下去不得再刪
-removedLog = {}
-standNear(1700)
-local _, m20 = buildTable(1700, 1700, 0)
-m20["1,1"]:getSquare():transmitRemoveItemFromSquare(m20["1,1"], false)
-removedLog = {}
-captured = nil
-onFill(0, fakeContext, { m20["0,0"] }, false)
+-- 20. ⚠ TOCTOU：建立選單後群組被補回完整 → 點下去不得再刪
+local grid20, m20 = buildWreck(1800)
+standNear(1800)
+openMenuOn(m20["0,0"])
 assert(captured, "殘缺群組應該要出現清除選項")
-m20["1,0"]._containers = { makeContainer(5) }   -- 點擊前有人把東西放進去了
+place(getSquare(1801, 1801, 0), m20["1,1"]:getSprite(), grid20)   -- 點擊前被補回來了
+captured()
+assert(#removedLog == 0, "點擊時應重新判定；沿用舊清單會刪掉已經完好的家具")
+
+-- 21. ⚠ TOCTOU：建立選單後容器被塞了東西 → 點下去不得再刪
+local _, m21 = buildWreck(1900)
+standNear(1900)
+openMenuOn(m21["0,0"])
+assert(captured, "殘缺群組應該要出現清除選項")
+m21["1,0"]._containers = { makeContainer(5) }
 captured()
 assert(#removedLog == 0, "點擊時應重新判定；否則會吃掉剛放進去的儲物")
 
--- 21. 世界沒變 → 點下去照常清掉
-removedLog = {}
-standNear(1800)
-local _, m21 = buildTable(1800, 1800, 0)
-m21["1,1"]:getSquare():transmitRemoveItemFromSquare(m21["1,1"], false)
-removedLog = {}
-captured = nil
-onFill(0, fakeContext, { m21["0,0"] }, false)
+-- 22. 情況未變 → 點下去照常清掉
+local _, m22 = buildWreck(2000)
+standNear(2000)
+openMenuOn(m22["0,0"])
 assert(captured, "殘缺群組應該要出現清除選項")
 captured()
 assert(#removedLog == 3, "情況未變時應正常清掉 3 格，實際 " .. #removedLog)
 
--- ── 第三輪 review 發現 ─────────────────────────────────────────
-
--- 22. component 狀態非空（Resources／進行中的 CraftLogic，例如乾燥架）→ 不得刪
---     原版 isObjectNoContainerOrEmpty 有查 component；只查 ItemContainer 會漏掉
-removedLog = {}
-standNear(1900)
-local _, m22 = buildTable(1900, 1900, 0)
-m22["1,0"]._componentBusy = true
-m22["1,1"]:getSquare():transmitRemoveItemFromSquare(m22["1,1"], false)
-removedLog = {}
-onRemove(m22["0,0"]); tick(60)
-assert(#removedLog == 0, "component 狀態非空時，自動清掃必須放過")
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(1901, 1901, 0), { x = 1900, y = 1900, z = 0 })
-assert(#removedLog == 0, "component 狀態非空時，手動清除也必須放過")
-
--- 23. FluidContainer 有內容 → 不得刪
---     餵食槽有水時 primary ItemContainer 是 nil，內容全在 FluidContainer，
---     而 FluidContainer 沒 override isNoContainerOrEmpty，原版判準看不到它
-removedLog = {}
-standNear(2000)
-local _, m23 = buildTable(2000, 2000, 0)
-m23["1,0"]._fluid = 5
-m23["1,1"]:getSquare():transmitRemoveItemFromSquare(m23["1,1"], false)
-removedLog = {}
-onRemove(m23["0,0"]); tick(60)
-assert(#removedLog == 0, "流體非空時，自動清掃必須放過")
-onCmd("MDFX", "cleanupBrokenFurniture", newPlayer(2001, 2001, 0), { x = 2000, y = 2000, z = 0 })
-assert(#removedLog == 0, "流體非空時，手動清除也必須放過")
-
--- 24. 安全屋跨界繞道：指令指定的那格在屋外，但 sibling 在未授權的安全屋內
---     只驗指令那一格 = 站在屋外就能清掉別人屋裡的東西
-removedLog = {}
-local _, m24 = buildTable(2100, 2100, 0)
-safehouses["2101,2101,0"] = { allowed = { alice = true } }   -- 只有對角那格在屋內
-m24["1,0"]:getSquare():transmitRemoveItemFromSquare(m24["1,0"], false)
-removedLog = {}
-local outsider = newPlayer(2100, 2100, 0); outsider._name = "mallory"
-onCmd("MDFX", "cleanupBrokenFurniture", outsider, { x = 2100, y = 2100, z = 0 })
-assert(#removedLog == 0, "指令那格在屋外，但有 sibling 在未授權安全屋內，必須整組擋下")
-
--- 25. 自動清掃沒有行為人 → 任一成員在安全屋內就不得動
-removedLog = {}
-onRemove(m24["0,0"]); tick(60)
-assert(#removedLog == 0, "自動清掃碰到安全屋必須 fail closed（沒有行為人可授權）")
-safehouses["2101,2101,0"] = nil
-
--- 26. grid 內有重複 sprite → 錨點無法判定，必須整個放棄
---     原版 getSpriteGridPosX 只回第一個相符位置（IsoSpriteGrid.java:52），
---     照用會算出偏移的錨點，掃到隔壁完好群組並刪掉它
-removedLog = {}
-local dupSprite = newSprite(0, 0, 0)
-local dupGrid = newGrid(2, 1, 1, { ["0,0,0"] = dupSprite, ["1,0,0"] = dupSprite })
-local dupSqA = newSquare(2200, 2200, 0)
-local dupSqB = newSquare(2201, 2200, 0)
-local dupA = place(dupSqA, dupSprite, dupGrid)
-place(dupSqB, dupSprite, dupGrid)
-assert(G.originOf(dupA) == nil, "重複 sprite 的 grid 必須回報無法判定")
-assert(G.inspect(dupA) == false, "無法判定錨點時不得判為可清除")
-onRemove(dupA); tick(60)
-assert(#removedLog == 0, "錨點無法判定時絕不能刪（會誤傷隔壁完好群組）")
-
--- 27. MP 分支：客戶端不得本地刪除，只送指令，payload 要正確
-removedLog = {}
+-- 23. MP 分支：客戶端不得本地刪除，只送指令，payload 要正確
 sentCommands = {}
 clientMode = true
-standNear(2300)
-local _, m27 = buildTable(2300, 2300, 0)
-m27["1,1"]:getSquare():transmitRemoveItemFromSquare(m27["1,1"], false)
-removedLog = {}
-captured = nil
-onFill(0, fakeContext, { m27["0,0"] }, false)
+local _, m23 = buildWreck(2100)
+standNear(2100)
+openMenuOn(m23["0,0"])
 assert(captured, "MP 下殘缺群組也應出現清除選項")
 captured()
 assert(#removedLog == 0, "MP 下客戶端不得自己刪，必須交給伺服器")
 assert(#sentCommands == 1, "應送出一筆 client command，實際 " .. #sentCommands)
 local cmd = sentCommands[1]
-assert(cmd.module == "MDFX" and cmd.command == "cleanupBrokenFurniture",
-    "指令名稱錯誤：" .. tostring(cmd.module) .. "/" .. tostring(cmd.command))
-assert(cmd.args.x == 2300 and cmd.args.y == 2300 and cmd.args.z == 0,
-    "座標 payload 錯誤")
+assert(cmd.module == "MDFX" and cmd.command == "cleanupBrokenFurniture", "指令名稱錯誤")
+assert(cmd.args.x == 2100 and cmd.args.y == 2100 and cmd.args.z == 0, "座標 payload 錯誤")
 clientMode = false
 
-print("MDFX_MultiTileFurniture: 27 checks OK")
+-- 24. 選單本身也要擋安全屋，避免「選項點得下去、伺服器靜默拒絕」
+local _, m24 = buildWreck(2200)
+safehouses["2201,2200,0"] = { allowed = { alice = true } }   -- 罩住存活的 sibling
+menuPlayer._name = "mallory"
+standNear(2200)
+openMenuOn(m24["0,0"])
+assert(captured == nil, "未授權安全屋的殘骸不得出現清除選項")
+safehouses["2201,2200,0"] = nil
+
+print("MDFX_MultiTileFurniture: 24 checks OK")

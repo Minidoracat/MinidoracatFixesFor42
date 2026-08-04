@@ -1,5 +1,36 @@
 # Changelog
 
+## [42.20.0-0.3.0] - 2026-08-04
+
+依第四輪 codex 獨立 review（60/100，九個歷史 blocker 8 關 1 半開）的架構性結論，
+**移除自動斷根，只保留右鍵手動清除**。
+
+### 移除
+
+- **`MDFX_MultiTileFurniture` 的自動斷根**（`OnObjectAboutToBeRemoved` ＋ `OnTick`
+  延後確認掃描）。它分不出「永久殘骸」與「合法但延遲完成的 remove-and-replace」——
+  PZ 從未承諾 replacement 會在固定時間內完成（`MOFeedingTrough.lua:15` 目前恰好
+  同幀完成，但那不是 API 契約）。獨立審查用延遲替換 probe 重現了不可逆刪掉三個
+  仍有效成員（`delayed_replacement_removed=3`），而當時 27 項測試全綠。
+
+  沒有行為人、拿不到操作意圖，只靠事後掃描無法證明零資料損失；加長 timeout、
+  identity snapshot、`OnObjectAdded` 取消機制都只能縮小視窗。
+
+  影響：新的缺角仍會產生，但玩家隨時能用右鍵清掉。要真正斷根該走 Java patch，
+  在 `removeItemFromMap` 比照車庫門展開——那裡才拿得到明確的操作意圖。
+
+### 保留與強化
+
+右鍵手動清除有明確行為人與完整的 server gate，全部保留：距離、安全屋（逐成員）、
+內容物（容器／component／流體）、未載入格子、錨點模糊、TOCTOU 重驗、畸形封包。
+
+### 測試
+
+- 27 → 24 項（移除斷根相關情境，新增「選單本身也擋安全屋」）。
+- 測試開頭斷言 `OnObjectAboutToBeRemoved` / `OnTick` **未被註冊**，
+  自動斷根若被誤加回來立刻失敗。
+- 七道防線 mutation test 全數通過，含「安全屋只驗指令那一格」這條繞道。
+
 ## [42.20.0-0.2.3] - 2026-08-04
 
 第三輪 codex 獨立 review（verdict：REQUEST CHANGES／BLOCK；六個舊 blocker 4 關 2 半開）的修正。
