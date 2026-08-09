@@ -20,6 +20,9 @@
   8. 佔位符殘留            — {{TOKEN}} 漏替換
   9. Steam 描述位元組      — 各語言 ≤8000 UTF-8 bytes（中日文 3 bytes/字，容易低估）
  10. 沙盒選項翻譯配對       — 每個 option 要有 Sandbox_<translation> 標題＋ _tooltip＋分頁名
+ 11. CHANGELOG 洩漏掃描     — bullet 會被整段貼到公開的 Workshop 更新說明；掃基礎設施
+                           樣式（/home/ 路徑、IP、SteamID64、ssh、主機名）當最後防線。
+                           攻擊配方與玩家識別資訊機器認不出來，靠撰寫規則（AGENTS.md）
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
 pz-mod-template（見 AGENTS.md）。
@@ -273,6 +276,26 @@ for m in MEDIA_DIRS:
     miss += [f"缺 tooltip: Sandbox_{o}_tooltip" for o in opts if f"Sandbox_{o}_tooltip" not in keys]
     miss += [f"缺分頁名: Sandbox_{p}" for p in pages if f"Sandbox_{p}" not in keys]
     fail("沙盒選項翻譯配對", miss) if miss else ok(f"沙盒選項翻譯配對（{len(opts)} 選項）")
+
+# ---- 11. CHANGELOG 洩漏掃描 ----
+LEAK_PATTERNS = [
+    (re.compile(r"/home/\w+"), "Linux 家目錄路徑"),
+    (re.compile(r"[A-Z]:\\Users\\"), "Windows 使用者路徑"),
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "IPv4 位址"),
+    (re.compile(r"\b7656\d{13}\b"), "SteamID64"),
+    (re.compile(r"\bssh\b", re.IGNORECASE), "ssh 字樣"),
+    (re.compile(r"pz-?server", re.IGNORECASE), "伺服器主機名"),
+]
+_cl = os.path.join(REPO, "CHANGELOG.md")
+if os.path.isfile(_cl):
+    leaks = []
+    with open(_cl, encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            for pat, desc in LEAK_PATTERNS:
+                mm = pat.search(line)
+                if mm:
+                    leaks.append(f"CHANGELOG.md:{lineno} {desc}（{mm.group()[:40]}）")
+    fail("CHANGELOG 無基礎設施洩漏樣式", leaks) if leaks else ok("CHANGELOG 無基礎設施洩漏樣式")
 
 # ---- 總結 ----
 print()
