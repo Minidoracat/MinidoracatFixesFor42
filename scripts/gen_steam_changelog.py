@@ -29,7 +29,7 @@ SRC = os.path.join(REPO, "CHANGELOG.md")
 DST = os.path.join(REPO, "STEAM_CHANGELOG.md")
 
 SECTION_EMOJI = {
-    "新增": "✨", "變更": "🔄", "修正": "🔧", "效能": "⚡", "移除": "🗑️", "安全": "🛡️",
+    "新增": "✨", "變更": "🔄", "更新": "🔄", "修正": "🔧", "效能": "⚡", "移除": "🗑️", "安全": "🛡️",
     "Added": "✨", "Changed": "🔄", "Fixed": "🔧", "Removed": "🗑️", "Notes": "📝",
 }
 
@@ -157,6 +157,12 @@ def main():
             out.append(f"[*] {inline(top.group(1))}")
             continue
         if raw.strip() == "":
+            continue
+        if (in_list or in_sub) and raw[:1].isspace():
+            # 縮排續行（無 dash）＝上一個條目的折行，接回同一 [*]；CJK 邊界不補空格
+            cont = inline(raw)
+            sep = "" if (out[-1] and ord(out[-1][-1]) > 0x2E7F) or ord(cont[0]) > 0x2E7F else " "
+            out[-1] += sep + cont
             continue
         close_list()
         out.append(inline(raw))
