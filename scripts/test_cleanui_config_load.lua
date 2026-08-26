@@ -44,6 +44,16 @@ local function fireBoot()
     for i = 1, #bootHandlers do bootHandlers[i]() end
 end
 
+-- 只判斷「有沒有本補丁的安裝訊息」。真實 CleanUI 自己也會 print（例如
+-- getFileWriter 被 stub 成 nil 時的 "Could not open ... for writing"），
+-- 那些不該算成本補丁介入的證據。
+local function shimAnnounced()
+    for i = 1, #prints do
+        if prints[i]:find("shim installed", 1, true) then return true end
+    end
+    return false
+end
+
 -- 模擬 CleanUI v2.7.8 的 CleanUIConfig：有 restricted parser 的 loadConfigFile，
 -- 但沒有外層 loadConfig。files 是「磁碟」內容，reads 記錄每次讀檔。
 local function newCleanUI(files, opts)
@@ -166,9 +176,11 @@ local ok9, res9 = pcall(CleanUIConfig.loadConfig)
 check("9 檔名為 nil 時不拋出", ok9 == true, tostring(res9))
 check("9 檔名為 nil 時回 nil 且不讀檔", res9 == nil and #CleanUIConfig.reads == 0)
 
--- ── 情境 10：與真實 CleanUI v2.7.8 檔案整合（找不到檔案就跳過）─
--- 前面九個情境用 stub 驗邏輯；這一個把真的 CleanUIConfig.lua 載進來，
--- 先重現「未安裝補丁時 getConfig 拋出」，再證明安裝後能讀出玩家設定。
+-- ── 情境 10：與真實 CleanUI 檔案整合（找不到檔案就跳過）───────
+-- 前面九個情境用 stub 驗邏輯；這一個把真的 CleanUIConfig.lua 載進來。
+-- 版本自適應：
+--   v2.7.8（缺 loadConfig）→ 重現「未裝補丁時 getConfig 拋出」再證明補丁修好它
+--   v2.7.9+（官方已補）    → 驗證補丁對真實官方版本自動退場，並比對兩者行為等價
 local REAL_CLEANUI = "D:/SteamLibrary/steamapps/workshop/content/108600/3437629766/"
     .. "mods/CleanUI/42.19/media/lua/client/ISUI/CleanUIConfig.lua"
 
@@ -201,33 +213,79 @@ else
         getFileWriter = function() return nil end
     end
 
-    -- 對照組：只載真實 CleanUI，不裝補丁 → 必須重現線上的錯誤
-    resetEnv()
-    installFileStubs()
-    dofile(REAL_CLEANUI)
-    check("10 真實檔案確實缺 loadConfig", CleanUIConfig.loadConfig == nil)
-    local okBare, errBare = pcall(CleanUIConfig.getConfig)
-    check("10 對照組：未裝補丁時 getConfig 拋出", okBare == false, tostring(errBare))
+    local src = io.open(REAL_CLEANUI, "r")
+    local source = src:read("a")
+    src:close()
+    local officialFixed =
+        source:find("function CleanUIConfig.loadConfig()", 1, true) ~= nil
 
-    -- 實驗組：載真實 CleanUI ＋ 本補丁
-    resetEnv()
-    installFileStubs()
-    dofile(REAL_CLEANUI)
-    loadShim()
-    local okFixed, cfg10 = pcall(CleanUIConfig.getConfig)
-    check("10 裝上補丁後 getConfig 不再拋出", okFixed == true, tostring(cfg10))
-    check("10 讀出玩家自己的設定（hideEquipped）",
-        type(cfg10) == "table" and cfg10.hideEquipped == true)
-    check("10 讀出欄位設定（pane_0_inventory_sortBy）",
-        type(cfg10) == "table" and cfg10.pane_0_inventory_sortBy == "nameInc")
-    check("10 缺少的 default key 由 CleanUI 自己補齊（lockLootWindow）",
-        type(cfg10) == "table" and cfg10.lockLootWindow == false)
+    if not officialFixed then
+        -- === v2.7.8 路線：重現線上故障，再證明補丁修好它 ===
+        realPrint("  ----  10 真實檔案為 v2.7.8 世代（缺 loadConfig）")
+        resetEnv()
+        installFileStubs()
+        dofile(REAL_CLEANUI)
+        check("10 真實檔案確實缺 loadConfig", CleanUIConfig.loadConfig == nil)
+        local okBare, errBare = pcall(CleanUIConfig.getConfig)
+        check("10 對照組：未裝補丁時 getConfig 拋出", okBare == false, tostring(errBare))
 
-    -- CleanUI 在檔案層把 getConfig 掛上 OnGameBoot（CleanUIConfig.lua:456）：
-    -- 補丁裝上後這一輪必須安靜跑完，這就是線上第一個錯誤的發生點。
-    local okBoot, errBoot = pcall(fireBoot)
-    check("10 OnGameBoot 一輪不拋出（線上第一個錯誤的發生點）",
-        okBoot == true, tostring(errBoot))
+        resetEnv()
+        installFileStubs()
+        dofile(REAL_CLEANUI)
+        loadShim()
+        local okFixed, cfg10 = pcall(CleanUIConfig.getConfig)
+        check("10 裝上補丁後 getConfig 不再拋出", okFixed == true, tostring(cfg10))
+        check("10 讀出玩家自己的設定（hideEquipped）",
+            type(cfg10) == "table" and cfg10.hideEquipped == true)
+        check("10 讀出欄位設定（pane_0_inventory_sortBy）",
+            type(cfg10) == "table" and cfg10.pane_0_inventory_sortBy == "nameInc")
+        check("10 缺少的 default key 由 CleanUI 自己補齊（lockLootWindow）",
+            type(cfg10) == "table" and cfg10.lockLootWindow == false)
+
+        local okBoot, errBoot = pcall(fireBoot)
+        check("10 OnGameBoot 一輪不拋出（線上第一個錯誤的發生點）",
+            okBoot == true, tostring(errBoot))
+    else
+        -- === v2.7.9+ 路線：官方已修好，驗證退場與行為等價 ===
+        realPrint("  ----  10 真實檔案已是官方修復版（自帶 loadConfig）")
+        resetEnv()
+        installFileStubs()
+        dofile(REAL_CLEANUI)
+        local officialLoad = CleanUIConfig.loadConfig
+        check("10 真實檔案已自帶 loadConfig", type(officialLoad) == "function")
+
+        local okBare, cfgOfficial = pcall(CleanUIConfig.getConfig)
+        check("10 官方版本本身就不拋出（bug 已修）", okBare == true, tostring(cfgOfficial))
+
+        loadShim()
+        check("10 補丁對真實官方版本自動退場", CleanUIConfig.loadConfig == officialLoad)
+        check("10 退場時不印安裝訊息", not shimAnnounced(), table.concat(prints, " | "))
+
+        -- 行為等價比對：把官方 loadConfig 拿掉（模擬 v2.7.8）讓補丁接手，
+        -- 對同一份設定檔應該讀出內容相同的 table。
+        resetEnv()
+        installFileStubs()
+        dofile(REAL_CLEANUI)
+        local viaOfficial = CleanUIConfig.getConfig()
+        resetEnv()
+        installFileStubs()
+        dofile(REAL_CLEANUI)
+        CleanUIConfig.loadConfig = nil
+        loadShim()
+        local viaShim = CleanUIConfig.getConfig()
+
+        local same, diffKey = true, nil
+        for k, v in pairs(viaOfficial) do
+            if viaShim[k] ~= v then same, diffKey = false, k break end
+        end
+        for k, v in pairs(viaShim) do
+            if viaOfficial[k] ~= v then same, diffKey = false, k break end
+        end
+        check("10 補丁與官方實作讀出相同結果", same, "差異 key: " .. tostring(diffKey))
+
+        local okBoot, errBoot = pcall(fireBoot)
+        check("10 OnGameBoot 一輪不拋出", okBoot == true, tostring(errBoot))
+    end
 end
 
 -- ── 情境 11：本檔早於 CleanUI 載入，且 CleanUI 已修好 ─────────
