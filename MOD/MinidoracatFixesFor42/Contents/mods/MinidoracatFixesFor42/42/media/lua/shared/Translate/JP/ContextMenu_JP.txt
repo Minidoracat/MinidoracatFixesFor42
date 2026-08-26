@@ -1,3 +1,0 @@
-ContextMenu_JP = {
-    ContextMenu_MDFX_ClearBrokenFurniture = "壊れた家具の残骸を撤去",
-}
