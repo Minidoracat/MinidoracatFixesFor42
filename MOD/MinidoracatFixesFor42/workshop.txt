@@ -1,4 +1,5 @@
 version=1
+id=3790443858
 title=Minidoracat Fixes for B42
 description=[h1]🔧 Minidoracat Fixes for B42[/h1]
 description=[h3]By Minidoracat[/h3]
@@ -37,5 +38,8 @@ description=[h2]📺 Follow the author[/h2]
 description=[url=https://www.twitch.tv/minidoracat]🎬 Twitch channel[/url]
 description=
 description=[b]#fix #bugfix #CleanUI #inventory #Minidoracat[/b]
+description=
+description=Workshop ID: 3790443858
+description=Mod ID: MinidoracatFixesFor42
 tags=Build 42;Interface;Multiplayer
 visibility=public

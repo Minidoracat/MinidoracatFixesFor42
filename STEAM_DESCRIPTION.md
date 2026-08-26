@@ -35,3 +35,6 @@
 [url=https://www.twitch.tv/minidoracat]🎬 Twitch 頻道[/url]
 
 [b]#fix #bugfix #CleanUI #inventory #Minidoracat[/b]
+
+Workshop ID: 3790443858
+Mod ID: MinidoracatFixesFor42

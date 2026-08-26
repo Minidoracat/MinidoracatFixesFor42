@@ -35,3 +35,6 @@ Right now this mod does exactly one thing: it brings back the inventory and loot
 [url=https://www.twitch.tv/minidoracat]🎬 Twitch channel[/url]
 
 [b]#fix #bugfix #CleanUI #inventory #Minidoracat[/b]
+
+Workshop ID: 3790443858
+Mod ID: MinidoracatFixesFor42
