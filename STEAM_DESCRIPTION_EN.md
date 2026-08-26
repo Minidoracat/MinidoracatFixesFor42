@@ -3,27 +3,29 @@
 
 [hr][/hr]
 
-[h2]✨ What is this[/h2]
-A collection of client-side fixes for vanilla Build 42 bugs — specifically the spots where vanilla Lua skips a nil check and actually blows up on multiplayer servers.
+[h2]⏳ This is a temporary fix[/h2]
+Right now this mod does exactly one thing: it brings back the inventory and loot windows that [b]CleanUI[/b] breaks on Build 42.20.4.
 
-[b]Fixes only[/b] — no balance changes, no new items, no new UI, no new options. The only difference after installing is that things that used to break no longer break.
+[b]This is a stopgap on the original author's behalf.[/b] Once CleanUI ships a fixed version, this fix retires itself automatically — it detects the official version and stops interfering. Players do not have to do anything. At that point this mod will be delisted, or repurposed for something else.
 
-[h2]🧰 Included so far[/h2]
+[h2]🐛 What it fixes[/h2]
 [list]
-[*] [b]Dead animals can't be loaded into a trailer / vehicle right-click menu disappears[/b]
-With a trailer's animal door open, right-clicking the vehicle (or pressing "Add animal" in the trailer animal UI) wipes out the entire vehicle context menu, and dead animals can't be loaded.
-console.txt shows [b]__mul not defined for operands in round[/b] (ISVehicleMenu.lua:806).
-The cause is an animal corpse missing the mod-data field that records how much trailer space it takes; the vanilla line reads it unguarded, which aborts the whole menu build.
-This fix backfills that field using the game's own formula before vanilla reads it, so the value matches exactly what the engine computes.
+[*] [b]Symptom[/b]: the inventory and loot windows never open at all. Your character can walk and chat, but the entire inventory interface simply does not exist.
+[*] console.txt shows [b]Object tried to call nil in getConfig[/b].
+[*] [b]The cause is on CleanUI's side[/b]: the Build 42.20.4 security change removed Lua's loadstring, CleanUI rewrote its config loading path the same day, but the released files are missing one of the functions while the code calling it was left unchanged.
+[*] The inventory panel aborts halfway through construction, which also takes down the loot window and every other interface hanging off the same initialization sequence. That is why "one setting could not be read" removes your whole inventory UI.
+[*] [b]This fix[/b]: it only restores that one missing function, using nothing but what CleanUI already ships. No changes to any of CleanUI's existing behavior, no new settings, no new UI.
 [/list]
 
 [h2]📋 Mod info[/h2]
 [list]
 [*] [b]Mod ID:[/b] MinidoracatFixesFor42
-[*] [b]Supported version:[/b] Build 42.20.0+
-[*] Works in singleplayer / multiplayer (MP requires the server to enable the mod)
-[*] Client-side fixes; no extra server configuration needed
-[*] Once a fix lands officially, the corresponding entry is removed from this mod
+[*] [b]Supported version:[/b] Build 42.20.4+
+[*] Does nothing at all — and causes no side effects — if you do not have CleanUI installed
+[*] Client-side fix; no extra server configuration needed
+[*] Load order does not matter (before or after CleanUI both work)
+[*] No balance changes, no new items, no new UI, no new options
+[*] Never writes to or modifies your CleanUI config file
 [/list]
 
 [h2]💬 Feedback & community[/h2]
@@ -32,4 +34,4 @@ This fix backfills that field using the game's own formula before vanilla reads 
 [h2]📺 Follow the author[/h2]
 [url=https://www.twitch.tv/minidoracat]🎬 Twitch channel[/url]
 
-[b]#fix #bugfix #vehicle #animal #Minidoracat[/b]
+[b]#fix #bugfix #CleanUI #inventory #Minidoracat[/b]

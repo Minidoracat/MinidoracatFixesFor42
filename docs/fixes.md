@@ -5,6 +5,110 @@
 
 ---
 
+## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_CleanUIConfigLoad.lua` |
+| 影響版本 | Build 42.20.4 ＋ CleanUI v2.7.8（workshop 3437629766） |
+| 端 | 純客戶端 |
+| 狀態 | 生效中（**臨時**：CleanUI 官方補上自己的 `loadConfig` 後自動退場） |
+
+### 症狀
+
+背包與戰利品視窗完全不建立。角色能移動、能聊天、moodle 正常，但整個物品欄介面
+不存在。`console.txt` 出現兩筆
+`java.lang.RuntimeException: Object tried to call nil in getConfig`：
+
+```
+Lua((MOD:CleanUI)).getConfig(CleanUIConfig.lua:410)
+Lua((MOD:CleanUI)).new(ISInventoryPane.lua:344)
+Lua((MOD:CleanUI)).createChildren(ISInventoryPage.lua:359)
+Lua(Vanilla).instantiate(ISUIElement.lua:1007)
+Lua(Vanilla).setUIName(ISUIElement.lua:1785)
+Lua(Vanilla).createInventoryInterface(ISPlayerDataObject.lua:30)
+Lua(Vanilla).createPlayerData(ISPlayerData.lua:172)
+```
+
+第一筆更早，來自 `Events.OnGameBoot`（`CleanUIConfig.lua:456` 註冊 `getConfig`），
+在連線時的 `Core.ResetLua` 觸發。log 只有兩筆不是間歇性——第一次建構就中斷，
+後面的 `getConfig` 呼叫點（`ISInventoryPage.lua:777/788/811`、
+`ISInventoryPane.lua:1609/1631`、`HideEquippedItems.lua:63/88`）根本沒機會執行。
+
+### 根因（兩層）
+
+**① vanilla 的 API break**：42.20.4 的
+`se.krka.kahlua.j2se.J2SEPlatform.setupEnvironment` 刪掉了 `LuaCompiler.register(env)`
+與 serialize.lua 載入（42.20.3 該呼叫在 `J2SEPlatform.java:59`）。`LuaCompiler` class
+還在 jar 內，但沒人再 `register`，等於 **Lua 環境不再有 `loadstring`／`loadstream`**。
+任何用它讀設定或反序列化的 mod 都當場失效。
+
+**② CleanUI hotfix 的 regression**：作者當日（2026-08-26）發 v2.7.8，自寫 restricted
+parser 取代 `loadstring`（change note 自述「the Build 42.20.4 security change that
+removed loadstring/loadstream」）。但發佈包**沒有**外層 `CleanUIConfig.loadConfig`：
+六個版本目錄（42.12–42.16、42.19）＋`common/` 全 grep 零定義，只留下零 caller 的
+`loadConfigFile(fileName)`（`:375`），以及沒有讀取者的 `configCache`（`:2`/`:360`）
+與 `legacyConfigFileName`（`:353`）——正是那層 wrapper 該用的材料。
+而 `getConfig`（`:410`）與 `updateConfig`（`:446`）都還在呼叫它。
+
+**為什麼整個物品欄消失**：`ISInventoryPane:new()` 在 `:344`
+（`CleanUIConfig.getConfig()["hideEquipped"]`）拋出，`return o`（`:345`）沒執行；
+vanilla `ISUIElement:instantiate()` 對 `createChildren()` 的呼叫**沒有 pcall 保護**
+（`ISUIElement.lua:1007`），例外一路外逃到 Java 的 `protectedCall`，於是
+`ISPlayerDataObject:createInventoryInterface` 在 `:30`（`setUIName`）之後全部不執行——
+`addToUIManager()`、戰利品面板 `panel3`、`UIManager.setPlayerInventory()` 都沒跑。
+掛在同一段初始化流程上的其他 mod 也一併中斷（實測 tsarslib 的
+`ISPlayerDataTuning.lua:24` 先呼叫原函式，它的 tuning UI 因此沒建）。
+
+**同作者的對照組（判定 regression 的最硬證據）**：CleanHotBar 同日做了字面相同的
+改寫（`chbconfig.lua:252-253` 註解逐字提到 42.20.4 移除 loadstring），但它的
+`CHBConfig.loadConfig`（`:287-311`）存在（cache → `.txt` → legacy `.lua`＋回寫遷移）
+且每個 I/O 都包 `pcall` ⇒ 零錯誤。同一改寫，差一個外層函式。
+
+### 修法
+
+只補回缺失的那一個函式，形狀沿用 CleanHotBar 的正解，材料全部取自 CleanUI 自己
+已存在的成員（`configCache` → `loadConfigFile(configFileName)` →
+`loadConfigFile(legacyConfigFileName)`）。不改 CleanUI 任何既有行為。
+
+三個刻意的取捨：
+
+1. **不依賴 mod 載入順序。** 本檔晚於 CleanUI 載入時直接安裝；早於 CleanUI 時改在
+   `OnGameBoot` 補裝——vanilla `Core.ResetLua` 先跑完 `LuaManager.LoadDirBase()`
+   才觸發 `OnGameBoot`（`Core.java:3948` / `:3962`），那時 CleanUI 一定已載入，
+   而我們的 handler 因為先註冊所以先執行，仍早於 CleanUI 自己那個 `getConfig`。
+   `loadModAfter=` **不能**用來保證順序：42.20.4 雖有解析
+   （`ChooseGameInfo.java:227-228`），但 `getLoadAfter` 全 jar 零 caller。
+2. **不建立假的 `CleanUIConfig` 空表**去搶順序。有其他 mod 以全域表存在與否偵測
+   CleanUI（log 實測 ProximityInventory 會印 `CleanUI detected -> skipping …`），
+   建空表會造成誤判。
+3. **不主動寫檔遷移** legacy 設定。CleanUI 的 `getConfig`／`updateConfig` 會在真的
+   需要時自己呼叫 `saveConfig`，本修復保持零檔案副作用。但 `configCache` 一定要填
+   ——`getConfig` 會被 `ISInventoryPage:isPagelocked()`（`ISInventoryPage.lua:811`）
+   這類每幀路徑呼叫，不填等於每幀讀檔。
+
+### 驗證
+
+`lua scripts/test_cleanui_config_load.lua` — 35 項，全綠。九組 stub 情境涵蓋
+四種載入順序 × CleanUI 狀態的組合、快取命中、legacy 退回、檔名為 nil、
+`loadConfigFile` 拋出不外洩例外、零 `saveConfig` 呼叫；第十組直接
+`dofile` 真實的 `CleanUIConfig.lua`，先以對照組重現「未安裝本修復時 `getConfig`
+拋出」，再驗證安裝後讀得出玩家設定、缺少的 default key 由 CleanUI 自己補齊、
+以及 `OnGameBoot` 一輪安靜跑完（線上第一筆錯誤的發生點）。
+
+### 可退場條件
+
+CleanUI 官方補上自己的 `loadConfig`（或改掉 caller）。屆時本修復的
+`type(CleanUIConfig.loadConfig) == "function"` 檢查會成立、自動不介入，
+**不需要玩家做任何事**；確認官方版本上線後把本檔從 MOD 移除即可。
+
+已回報作者（Steam workshop discussion），內容含 stack、缺失符號的 grep 證據、
+CleanHotBar 對照組，以及兩個順帶發現：`loadConfigFile` 用
+`getFileReader(fileName, true)` 的第二參數是 `createIfNull`，讀 legacy 路徑會建空檔；
+以及該函式缺 `pcall` 保護（CleanHotBar 有）。
+
+---
+
 ## MDFX_MultiTileFurniture — 多格家具缺角殘骸鎖死
 
 | 項目 | 內容 |
@@ -12,7 +116,7 @@
 | 檔案 | `shared/Fixes/MDFX_SpriteGrid.lua`、`server/Fixes/MDFX_MultiTileFurniture.lua`、`client/Fixes/MDFX_MultiTileFurnitureMenu.lua` |
 | 影響版本 | 42.20.0（殘骸鎖死自 42.10 引入） |
 | 端 | server（權威執行）＋ client（右鍵選項） |
-| 狀態 | 生效中（**只清殘骸，不做斷根**——理由見下） |
+| 狀態 | **已於 0.4.0 移出 MOD**（不再隨遊戲版本維護；本節保留為記錄） |
 
 ### 症狀
 
@@ -209,7 +313,7 @@ lua scripts/test_multitile_furniture.lua
 | 檔案 | `42/media/lua/client/Fixes/MDFX_AnimalTrailerSize.lua` |
 | 影響版本 | 42.20.0（更早版本同樣有此寫法） |
 | 端 | 純客戶端 |
-| 狀態 | 生效中 |
+| 狀態 | **已於 0.4.0 移出 MOD**（不再隨遊戲版本維護；本節保留為記錄） |
 
 ### 症狀
 
