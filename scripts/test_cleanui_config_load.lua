@@ -230,6 +230,40 @@ else
         okBoot == true, tostring(errBoot))
 end
 
+-- ── 情境 11：本檔早於 CleanUI 載入，且 CleanUI 已修好 ─────────
+-- 這是「官方修好之後自動退場」的另一半：情境 2 驗的是本檔晚於 CleanUI 載入，
+-- 這一組驗延後補裝那條路徑同樣不會蓋掉官方版本。
+resetEnv()
+loadShim()
+check("11 CleanUI 未載入時延後處理", #bootHandlers == 1, #bootHandlers .. " handlers")
+CleanUIConfig = newCleanUI({ ["CleanUIConfig.txt"] = { hideEquipped = true } })
+local official11 = function() return { fromOfficial = true } end
+CleanUIConfig.loadConfig = official11
+fireBoot()
+check("11 官方版本存活（先載入也不覆寫）", CleanUIConfig.loadConfig == official11)
+check("11 呼叫得到的是官方版本",
+    type(CleanUIConfig.loadConfig().fromOfficial) == "boolean")
+check("11 退場時不印安裝訊息", #prints == 0, table.concat(prints, " | "))
+check("11 退場時不讀檔", #CleanUIConfig.reads == 0, #CleanUIConfig.reads .. " reads")
+
+-- ── 情境 12：官方改掉 caller 而不是補函式（退場的邊界情況）────
+-- 若作者把 getConfig 改成直接呼叫 loadConfigFile，loadConfig 仍然不存在，
+-- 本補丁還是會安裝——但已經沒有人呼叫它，等於一個孤立的函式定義。
+-- 這種情況下「不介入」是靠沒有 caller 達成的，不是靠 type 檢查；
+-- 驗證重點是它不能改動 CleanUI 任何既有成員。
+resetEnv()
+CleanUIConfig = newCleanUI({ ["CleanUIConfig.txt"] = { hideEquipped = true } })
+local snapshot = {}
+for k, v in pairs(CleanUIConfig) do snapshot[k] = v end
+loadShim()
+local mutated = {}
+for k, v in pairs(snapshot) do
+    if CleanUIConfig[k] ~= v then mutated[#mutated + 1] = k end
+end
+check("12 只新增 loadConfig、不改動任何既有成員",
+    #mutated == 0 and type(CleanUIConfig.loadConfig) == "function",
+    "被改動: " .. table.concat(mutated, ","))
+
 -- ── 總結 ─────────────────────────────────────────────────────
 print = realPrint
 print()
