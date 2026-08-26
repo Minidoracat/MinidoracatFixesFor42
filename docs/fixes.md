@@ -12,7 +12,7 @@
 | 檔案 | `client/Fixes/MDFX_CleanUIConfigLoad.lua` |
 | 影響版本 | Build 42.20.4 ＋ CleanUI v2.7.8（workshop 3437629766） |
 | 端 | 純客戶端 |
-| 狀態 | 生效中（**臨時**：CleanUI 官方補上自己的 `loadConfig` 後自動退場） |
+| 狀態 | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險） |
 
 ### 症狀
 
@@ -89,23 +89,59 @@ vanilla `ISUIElement:instantiate()` 對 `createChildren()` 的呼叫**沒有 pca
 
 ### 驗證
 
-`lua scripts/test_cleanui_config_load.lua` — 35 項，全綠。九組 stub 情境涵蓋
-四種載入順序 × CleanUI 狀態的組合、快取命中、legacy 退回、檔名為 nil、
-`loadConfigFile` 拋出不外洩例外、零 `saveConfig` 呼叫；第十組直接
-`dofile` 真實的 `CleanUIConfig.lua`，先以對照組重現「未安裝本修復時 `getConfig`
-拋出」，再驗證安裝後讀得出玩家設定、缺少的 default key 由 CleanUI 自己補齊、
-以及 `OnGameBoot` 一輪安靜跑完（線上第一筆錯誤的發生點）。
+`lua scripts/test_cleanui_config_load.lua` — 40 項，全綠。十一組 stub 情境涵蓋
+**四種「載入順序 × CleanUI 是否已修好」的組合**、快取命中不重讀檔、legacy 退回、
+檔名為 nil、`loadConfigFile` 拋出不外洩例外、零 `saveConfig` 呼叫，以及
+「只新增 `loadConfig`、不改動任何既有成員」（`pairs` 快照比對）。
 
-### 可退場條件
+第十組直接 `dofile` 真實的 `CleanUIConfig.lua`，並依檔案內容自適應版本：
+v2.7.8 世代先以對照組重現「未安裝本修復時 `getConfig` 拋出」再驗證修好；
+v2.7.9+ 則驗證對真實官方版本自動退場，並雙向比對「官方 `loadConfig`」與
+「本補丁」對同一份設定檔讀出的結果是否相同。
+
+**mutation 驗證**（證明退場守衛承重）：抽掉
+`if type(CleanUIConfig.loadConfig) == "function" then return true end` 三行後，
+情境 2 與 11 共 6 個檢查轉紅（官方版本被覆寫、印出安裝訊息、多讀一次檔）；
+還原後全綠、檔案逐位元一致。
+
+### 退場記錄（2026-08-27）
+
+CleanUI **v2.7.9**（台北 2026-08-27 01:36 發佈）已補回 `loadConfig`，change note
+逐字寫「Restored the missing configuration loader **accidentally omitted** in 2.7.8」
+——與本節的「打包漏檔」判定一致。
+
+**逐行 diff（v2.7.8 `md5 e748fe75` → v2.7.9 `md5 b829ffd8`）：作者在
+`CleanUIConfig.lua` 裡只加了 24 行 `loadConfig`（另補了檔尾換行），結構與本補丁
+完全相同**——cache 短路 → 先讀 `.txt` → 退回 legacy `.lua` → 填 `configCache`。
+兩邊都是從同作者同日的 CleanHotBar `CHBConfig.loadConfig`（`chbconfig.lua:287-311`）
+反推出來的，所以收斂到同一形狀。作者的三行註解也對應本節推導時用的三個線索。
+
+實質差異只有兩點：
+
+1. 作者在 legacy 讀成功後呼叫 `saveConfig` 做遷移；本補丁刻意不寫檔（臨時補丁保持
+   零檔案副作用，遷移交給官方版接手時自然發生）。對正式修復而言作者的選擇更完整。
+2. 本補丁多了 `pcall` 與 `type` 檢查（比作者保守）。
+
+v2.7.9 另修了 `42.15/42.16/42.19` 的 `ISInventoryPaneContextMenu.lua`（context-menu
+dispatcher 的 `loadstring` 殘留），那塊本補丁從來沒碰——只有官方版本有。
+
+**行為等價已實測**：同一份設定檔，一邊跑官方 `loadConfig`、一邊把官方的抽掉讓本補丁
+接手，雙向比對兩個 table 的每個 key，結果相同（`test_cleanui_config_load.lua` 情境 10）。
+
+處置：正式服 `pzserver.ini` 的 `Mods=` 與 `WorkshopItems=` 已移除本 MOD
+（移除後與安裝前逐行相同，80/80）。MOD 檔案保留——它對 v2.7.9 是完全 no-op
+（已用真實 v2.7.9 驗證自動退場），留著等於零成本的 regression 保險。
+
+### 原始的可退場條件（已滿足）
 
 CleanUI 官方補上自己的 `loadConfig`（或改掉 caller）。屆時本修復的
 `type(CleanUIConfig.loadConfig) == "function"` 檢查會成立、自動不介入，
-**不需要玩家做任何事**；確認官方版本上線後把本檔從 MOD 移除即可。
+**不需要玩家做任何事**。
 
 已回報作者（Steam workshop discussion），內容含 stack、缺失符號的 grep 證據、
 CleanHotBar 對照組，以及兩個順帶發現：`loadConfigFile` 用
 `getFileReader(fileName, true)` 的第二參數是 `createIfNull`，讀 legacy 路徑會建空檔；
-以及該函式缺 `pcall` 保護（CleanHotBar 有）。
+以及該函式缺 `pcall` 保護（CleanHotBar 有）。這兩點 v2.7.9 都還沒動。
 
 ---
 
