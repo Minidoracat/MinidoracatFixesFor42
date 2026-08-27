@@ -2,14 +2,13 @@
 
 **By Minidoracat**
 
-Project Zomboid Build 42 的修復合輯（客戶端）。
+Project Zomboid Build 42 的常設修復合輯（client + server）。
 
-**目前只收一項臨時修復**：CleanUI 在 Build 42.20.4 上讓背包與戰利品視窗完全不建立。
-這是替原作者頂著的臨時措施——CleanUI 官方修好之後本修復會自動退場（偵測到官方版本
-就不覆寫），屆時本 MOD 會下架或改收其他項目。
-
-純修復——不改平衡、不加物品、不加介面、不加設定選項。每一項修復都在
-[docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件。
+只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
+不加物品、不加介面、不加設定選項；正常遊玩的行為完全不變，只在原本會炸掉的
+地方乾淨接住。每一項修復都在 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、
+修法、驗證方式與可退場條件；遊戲更新後跑
+`python scripts/check_vanilla_alignment.py` 一鍵確認各修復的 vanilla 前提是否仍成立。
 
 與 `MinidoracatFixPrivate`（`MinidoracatFixMultipleFor42` repo，client + server 兩端的
 TimedAction／多人同步修復）的分工是**發佈管道**，不是端別：那支是私有、非 workshop，
@@ -20,7 +19,10 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 
 | 修復 | 端 | 症狀 |
 |------|----|------|
-| `MDFX_CleanUIConfigLoad` | client | 裝了 CleanUI 之後背包與戰利品視窗完全打不開，console 出現 `Object tried to call nil in getConfig`。CleanUI v2.7.8 的發佈包缺了 `CleanUIConfig.loadConfig`，本修復把它補回去 |
+| `MDFX_ButcherMeatRatio` | server | 屠宰某些動物屍體（modData 缺 `meatRatio`，多為動物 MOD 產物）時 `ButcheringUtil.lua:70` 串接 nil 拋錯，連鎖 NetTimedAction NPE；玩家花完整段動作一塊肉都拿不到，該動物永遠屠宰不了 |
+| `MDFX_ReloadSpeedGuard` | shared | 手持非槍械物品＋穿彈藥背帶（或 RELOAD_FAST 裝備）對彈匣裝彈，`ISReloadWeaponAction.lua:95` 對非武器呼叫 `getMagazineType` 拋錯；裝彈流程沒開始就中斷，「按了沒反應」 |
+| `MDFX_PetAnimalGuard` | server | 撫摸動作送到伺服器時動物已死亡／卸載，3 秒後 `ISPetAnimal.lua:88` 對 nil 拋錯；比照 vanilla 自家寫法乾淨結束動作 |
+| `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |
 
 ### 已移出
 
@@ -38,11 +40,12 @@ MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/
 ├─ mod.info
 └─ media/lua/
    ├─ client/Fixes/*.lua             客戶端修復（檔頭寫清楚根因）
-   ├─ server/Fixes/*.lua             伺服器端修復（MP 由伺服器啟用時生效）
-   ├─ shared/Fixes/*.lua             兩端共用的判準／工具
-   └─ shared/Translate/*/            介面字串（目前無，臨時修復不含任何字串）
+   ├─ server/Fixes/*.lua             伺服器端修復（MP 由伺服器啟用；單人也載入）
+   ├─ shared/Fixes/*.lua             兩端都要保護時放這裡
+   └─ shared/Translate/*/            介面字串（目前無，修復不含任何字串）
 docs/fixes.md                        修復清單（症狀／根因／修法／驗證／退場）
 scripts/test_*.lua                   離線自我檢查，lua 直接跑
+scripts/check_vanilla_alignment.py   遊戲更新後確認各修復仍對齊 vanilla
 scripts/link_workshop.ps1            開發／上傳用符號連結管理
 scripts/PZ_Test.ps1                  本機測試啟動器
 scripts/poster/finish_poster.py      封面合成（主視覺 → preview.png ＋ poster.png）
@@ -53,16 +56,23 @@ scripts/poster/finish_poster.py      封面合成（主視覺 → preview.png �
 ```powershell
 .\link_workshop.bat     # 連結到 Zomboid\Workshop 與 Zomboid\mods
 .\PZ_Test.bat           # 啟動本機測試
+lua scripts\test_butcher_meatratio.lua
+lua scripts\test_reload_speed_guard.lua
+lua scripts\test_pet_animal_guard.lua
 lua scripts\test_cleanui_config_load.lua
+python scripts\check_vanilla_alignment.py
 ```
 
 ## 加一項新修復
 
-1. 在 `media/lua/client/Fixes/` 開一個 `MDFX_<名稱>.lua`，檔頭註解寫明症狀、
-   根因（含原版檔名行號）、修法、為什麼修在這一端。
-2. 包裝原版函式時一律 `pcall` 保護自己的部分——修復本身不能變成新的當機來源。
-3. 寫一支 `scripts/test_<名稱>.lua` 離線檢查，`lua` 跑得起來。
-4. 在 `docs/fixes.md` 登記，含可退場條件。
+1. 依生效端在 `media/lua/{client,server,shared}/Fixes/` 開一個 `MDFX_<名稱>.lua`，
+   檔頭註解寫明症狀、根因（含原版檔名行號）、修法、為什麼修在這一端。
+2. 包裝原版函式時一律 `pcall` 保護自己的部分——修復本身不能變成新的當機來源；
+   正常路徑必須原樣透傳（零行為差異），並防重複包裝。
+3. 寫一支 `scripts/test_<名稱>.lua` 離線檢查，`lua` 跑得起來；對每道防線做
+   mutation 驗證（抽掉防線對應檢查要轉紅）。
+4. 在 `docs/fixes.md` 登記，含可退場條件；在
+   `scripts/check_vanilla_alignment.py` 登記 vanilla 指紋（爆點行＋依賴符號）。
 5. 更新 `CHANGELOG.md` 與 `mod.info` 的 `modversion`。
 
 ## MOD 資訊

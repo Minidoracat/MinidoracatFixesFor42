@@ -5,6 +5,320 @@
 
 ---
 
+## MDFX_ButcherMeatRatio — 屠宰壞屍體（modData 缺 `meatRatio`）
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_ButcherMeatRatio.lua` |
+| 影響版本 | Build 42.20.4（更早版本同樣有此寫法） |
+| 端 | server（單人同樣載入；vanilla 函式開頭 `if isClient() then return end`，與爆點同端） |
+| 狀態 | **現役** |
+
+### 症狀
+
+屠宰特定動物屍體：玩家花完整段屠宰動作（900 − 技能×20 ticks）、動畫演完、
+一塊肉都拿不到、屍體留在原地；同一隻動物每次重試都一樣。伺服器 log：
+
+```
+__concat not defined for operands: null
+  Lua(Vanilla).butcherAnimalFromGround(ButcheringUtil.lua:70)
+→ NetTimedAction.perform Exception → NPE(NetTimedAction.java:140)
+```
+
+來源伺服器 log 七日觀測 0–20 次/天，長期存在；已實掃確認該伺服器啟用的
+所有 MOD 均未覆蓋此檔，堆疊的 `Lua(Vanilla)` 標記亦證明執行的是原版檔案。
+
+### 根因（兩層）
+
+**壞屍體怎麼產生的**：`setAnimalBodyData`（`shared/Definitions/animal/`
+`ButcheringUtil.lua:12-57`）在 :18 查 `AnimalPartsDefinitions.animals[fullName]`，
+模組動物查不到時 def 為 nil，:19 誠實寫下 `modData["parts"] = def ~= nil`，
+:27 卻無條件解參考 `def.feather` 拋錯——而 `meatRatio` 要到 :40 才寫入。
+Java 端 `IsoDeadBody.setAnimalData` 是 protectedCallVoid，錯誤吞掉後屍體照樣
+生成，成為「`isAnimal()` 為 true、modData 永久缺 `meatRatio`」的壞資料。
+**與已退場的 MDFX_AnimalTrailerSize 同根因、不同下游爆點**（見該節）。
+
+**爆點**：`ButcheringUtil.butcherAnimalFromGround` 在給任何產出之前先組除錯字串：
+
+```lua
+-- ButcheringUtil.lua:70
+text = text .. "Meat ratio: " .. carcass:getModData()["meatRatio"] .. "\r\n";
+```
+
+缺欄位時 Kahlua 對 nil 串接直接拋。爆點位於給肉（:97-102）、給骨（:91-94）、
+屍體處置（:153-167）全部之前，所以整段屠宰零產出。
+
+**為什麼動作發起得了**：`ISButcherAnimal:isValid()`（:6）要求
+`modData["parts"] ~= nil`——壞屍體的 `parts` 是 **false**（有值，非 nil），
+所以過得了 isValid、進得了爆點；更舊的「欄位時代之前」屍體 `parts` 為 nil，
+根本進不來。
+
+### 修法
+
+包裝 `ButcheringUtil.butcherAnimalFromGround`：屍體為 nil、或 modData 的
+`meatRatio` **不是 number**（nil／string／boolean 都算——vanilla 的 :70 串接、
+:279 比較、:287-288 乘法對非 number 一律拋錯）時，印一次
+`[MinidoracatFixes]` 診斷（含 AnimalType，幫管理員定位壞屍體來源 MOD）
+後直接 return；其餘一律原樣透傳。取捨：
+
+1. **不補預設值**——`meatRatio` 會進 `addAnimalPart` 的產出量乘法
+   （`ButcheringUtil.lua:287-288`），任何預設值都是在改產出平衡。
+2. **不複製函式體「跳過除錯字串」**——實戰可達的壞屍體形狀只有
+   「`parts=false` 的模組動物」，官方就算修好 :70，同一屍體也會在 :74 的
+   `partDef` 檢查早退（`getAnimalDef` 查的是當初就查不到的同一個 key），
+   所以早退與「修好後的 vanilla」行為等價；而繼續往下跑反而踩更多缺欄位
+   地雷（:279 `meatRatio <= 0` 對 nil 比較、:134 `AddItems` 吃 nil 數量、
+   :156 `2 - modData["animalRotStage"]`）；骨架路徑（:92 `getAnimalBones` →
+   :470 逐骨呼叫 `addAnimalPart`）同樣繞不開 :279。
+3. **carcass 為 nil 也擋（fail-closed）**——`ISGetAnimalBones:complete()`（:49）
+   沒有 `ISButcherAnimal:complete()`（:51）那道 body guard，MP 物件解析競態下
+   body 為 nil 會直達本函式，vanilla :69 對 nil 索引必炸。與 MDFX_PetAnimalGuard
+   的 nil 解析是同一機制（NetTimedAction 封包重建）。
+4. **判準檢查自身拋錯時 fail-open**——`getModData` 拋錯等「guard 自己也無法
+   判斷」的形狀交還 vanilla，讓堆疊指向原始行號，不掩蓋。
+5. **診斷每 session 只印一次**——登入客戶端可重複送畸形 NetTimedAction，
+   診斷行不能成為 log 洗版放大器。
+
+**安裝機制**：sentinel 存 wrapper 自身引用（不是 boolean）。`Core.ResetLua`
+重載時 vanilla 重建整張表、sentinel 隨之消失、本檔重跑重新包裝；後載 MOD
+整支替換目標函式時，`OnGameBoot` 復查會發現 sentinel 與現任不符，把「他的
+版本」當新 original 再包一層（chain，兩邊行為都保留）。比本補丁更晚的替換
+不在保證範圍。
+
+### 已知同根因殘留（不在本 MOD 範圍）
+
+同一批壞屍體在 MP 純客戶端還有其他缺欄位爆點：`animalTrailerSize`
+（拖車選單，之前由 MDFX_AnimalTrailerSize 覆蓋、已於 0.4.0 退場）與
+`animalSize`（`ISButcherAnimal.lua:81` 的 `isLargeAnimal`，僅在動物 MOD 有註冊
+AnimalAvatarDefinition＋hook 時可達）。兩者都是 client 端、無 server log 實據，
+本次刻意不收；症狀出現時參照 MDFX_AnimalTrailerSize 的記錄另案評估。
+
+### 驗證
+
+`lua scripts/test_butcher_meatratio.lua` — 29 項，全綠。涵蓋：正常屍體完全透傳
+（參數、回傳、呼叫次數）、壞屍體擋下＋診斷恰一次、`meatRatio=0` 不誤攔而
+string／boolean 攔下、carcass=nil 擋下、getModData 拋錯時 fail-open、重複載入
+不疊 wrapper、後載 MOD 整支替換後 `OnGameBoot` 復查重新包裝（壞形狀恢復被擋、
+正常路徑透傳到替換版）、vanilla 缺席不亂補、成員快照（只新增 sentinel）。
+含對照組：同一壞屍體直打 stub vanilla 確實拋錯。
+
+**mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
+
+| 突變 | 轉紅 |
+|------|------|
+| 早退 gate 改 `if false then` | 12 項（例外外洩、原函式被呼叫、診斷缺席…） |
+| 型別判準退化回 `== nil` | 2 項（string／boolean 放行） |
+| OnGameBoot 復查永遠自認在位 | 2 項（替換後 guard 未恢復） |
+
+遊戲內：對缺欄位屍體發起屠宰——修復前 server log 出現 `__concat` 例外且零產出；
+修復後動作正常完成、log 出現一行 `[MinidoracatFixes] butcher aborted`、不再有例外。
+
+### 可退場條件
+
+官方修好 `setAnimalBodyData` 的 nil 解參考（壞屍體不再產生）**且**對 :70 加
+防護或移除該除錯字串（既有壞屍體不再炸）。只修前者救不了世界上已存在的壞屍體。
+遊戲更新後跑 `python scripts/check_vanilla_alignment.py`：爆點行、
+`butcherAnimalFromGround` 符號、`isClient()` 前提任一變動都會報 CHANGED。
+
+---
+
+## MDFX_ReloadSpeedGuard — `setReloadSpeed` 對「手持非槍械」缺防護
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `shared/Fixes/MDFX_ReloadSpeedGuard.lua` |
+| 影響版本 | Build 42.20.4 |
+| 端 | shared（server／client／單人同一段程式碼同一爆點，三端都保護） |
+| 狀態 | **現役** |
+
+### 症狀
+
+特定裝備組合下按裝彈完全沒反應：子彈不消耗、彈匣不填充、沒有動畫。伺服器 log
+（正式服實測 7 次/輪）：
+
+```
+java.lang.RuntimeException: Object tried to call nil in setReloadSpeed
+  Lua(Vanilla).setReloadSpeed(ISReloadWeaponAction.lua:95)
+```
+
+### 根因
+
+`ISReloadWeaponAction.setReloadSpeed`（`shared/TimedActions/`
+`ISReloadWeaponAction.lua:75-114`）把 `character:getPrimaryHandItem()`（:86）
+當「槍」用，:90 的 gate 只檢查「手上有東西＋穿彈藥背帶（`AMMO_STRAP`）或帶
+`RELOAD_FAST_*` 標籤裝備」，沒檢查那東西是不是槍械：
+
+```lua
+-- :93  基類方法，安全（InventoryItem.java:3901，非槍回 null）
+if gun:getAmmoType() == AmmoType.SHOTGUN_SHELLS then
+-- :95  只有 HandWeapon 有（HandWeapon.java:2020）→ 非武器 call nil，當場拋
+elseif gun:getMagazineType() then
+```
+
+觸發不需要手持槍：對彈匣裝子彈（`ISLoadBulletsInMagazine`）手上拿什麼都行。
+server 端 `serverStart()`（:69-78）→ `initVars()`（:53-55）→ `setReloadSpeed`
+在三個 `emulateAnimEvent` 註冊**之前**拋出——裝彈流程沒開始就中斷，action 掛著
+直到 timeout。單人與 MP 客戶端走 `start()` → `initVars()`（:23）同樣會炸，
+所以修在 shared。
+
+順帶記錄一個**尚未修**的隔壁地雷：:100/:102 在 `reloadFast` 為 true、沒穿背帶時
+`strap:getClothingItemName()` 對 nil 解參考。要到達那裡需要手持 shell/bullets
+型**槍械**＋帶 RELOAD_FAST tag＋沒穿背帶＋tag 細項全不匹配，實戰 log 零實據。
+該形狀手持的是槍械、不吻合本補丁的辨識條件，會走「重拋」路徑原樣暴露——
+刻意不擴大承接範圍。
+
+### 修法
+
+包裝 `ISReloadWeaponAction.setReloadSpeed`（static，7 個 caller 全部表查呼叫：
+Reload／Eject／Insert／LoadBullets／UnloadFirearm／UnloadMagazine 的 initVars
+以 rack=false、`ISRackFirearm` 以 rack=true）：
+
+1. 先 `pcall` 原函式，成功即結束——**正常玩家的裝彈速度公式一個位元都沒動**，
+   vanilla 更新公式時正常路徑自動跟進。
+2. 原函式拋出時**正面辨識已知壞形狀**：手持物存在且
+   `not instanceof(gun, "HandWeapon")`。吻合才以 vanilla `:76-83`／`:109-112`
+   的「無背帶加成」語意重算：`0.8 ＋ 裝填技能×0.10 － 恐慌×0.05`（rack 時
+   `＋技能×0.04`、不扣恐慌）、駕駛中再 `×0.8`，寫入 `ReloadSpeed` 後印一次
+   診斷。背帶那段（:85-108）本來就只對「手持槍械」有意義，跳過它是這個
+   形狀下的正確語意，不是少算。重算再失敗整體退 1.0（下游
+   `getReloadTime`（:70）`getVariableFloat("ReloadSpeed", 1.0)` 的預設值），
+   不用算到一半的值。
+3. 原函式因**其他原因**拋出（未來版本的新問題、或連辨識都失敗）→ 印一次
+   警告後把原始錯誤**原樣重拋**——本補丁只承接它能辨識的形狀，不冒充、
+   不掩蓋新的 regression。
+
+不整函式替換：40 行複製面在遊戲更新時就是 40 行漂移風險；fallback 公式只在
+「vanilla 自己已經炸掉、且確認是已知形狀」時承重，過期的最壞後果是壞形狀下
+速度略偏，正常玩家永遠不受影響。公式係數已登記進 `check_vanilla_alignment.py`，
+vanilla 改係數會被抓到。
+
+server 端能連炸 7 次到 :95 也順帶證明了 fallback 用的
+`getMoodles()`／`getPerkLevel()` 在 server 端安全（:79-:82 每次都先執行過）。
+
+**安裝機制**：sentinel 存 wrapper 自身引用；`Core.ResetLua` 重載時重新包裝、
+後載 MOD 整支替換時 `OnGameBoot` 復查把「他的版本」當新 original 再包一層。
+與另兩檔同款，詳見 MDFX_ButcherMeatRatio 節。
+
+### 驗證
+
+`lua scripts/test_reload_speed_guard.lua` — 29 項，全綠。涵蓋：原函式成功時
+完全透傳（不重算、不多寫變數、不印診斷）、已知壞形狀 fallback 三種精確值
+（rack=false：`0.8+4×0.10−2×0.05=1.1`；rack=true：`0.8+5×0.04=1.0` 恐慌不參與；
+駕駛：`×0.8`）、診斷恰一次、未知原因（手持槍械卻拋／辨識自身拋錯／空手拋錯）
+原樣重拋且不寫變數、fallback 也炸整體退 1.0、`setVariable` 拋錯不外洩、
+重複載入不疊、後載 MOD 替換後復查重裝（正常路徑透傳到替換版＋壞形狀恢復被擋）、
+vanilla 缺席不亂補、成員快照。
+
+**mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
+
+| 突變 | 轉紅 |
+|------|------|
+| 抽掉 `pcall` 保護 | 4 項（例外外洩、fallback 缺席） |
+| 辨識永真（吞掉一切 exception） | 6 項（未知原因該重拋的全部失守） |
+| fallback 係數 0.10→0.20 | 2 項（精確值 1.5≠1.1） |
+| OnGameBoot 復查永遠自認在位 | 1 項（替換後 guard 未恢復） |
+
+遊戲內：手持手電筒＋穿彈藥背帶對彈匣裝彈——修復前 log 出現
+`Object tried to call nil in setReloadSpeed` 且裝彈無反應；修復後裝彈正常完成、
+log 出現一行 `[MinidoracatFixes] setReloadSpeed crashed ... fallback`。
+手持槍械正常裝彈速度不變。
+
+### 可退場條件
+
+官方在 :95 前檢查手持物是否槍械（`check_vanilla_alignment.py` 對
+`instanceof(gun, "HandWeapon")` 形狀有 exithint），或改用基類安全的查法。
+
+---
+
+## MDFX_PetAnimalGuard — 撫摸動作 server 端解析不到動物
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_PetAnimalGuard.lua` |
+| 影響版本 | Build 42.20.4 |
+| 端 | server（此形狀只存在於 server 端的封包重建；單人／客戶端的 `self.animal` 是 `new()` 當下的本地物件引用，不會是 nil） |
+| 狀態 | **現役** |
+
+### 症狀
+
+MP 下撫摸動物，動物在 3 秒撫摸期間死亡／卸載／離開同步範圍：撫摸加成沒生效
+（動物都沒了，本來就給不了），伺服器留下髒例外（正式服實測 1 次/輪）：
+
+```
+java.lang.RuntimeException: attempted index: petAnimal of non-table: null
+  Lua(Vanilla).animEvent(ISPetAnimal.lua:88)
+```
+
+### 根因
+
+server 以 `NetTimedAction.parse`（`NetTimedAction.java:142-171`）重建 action：
+以 `new` 的參數名從封包反序列化引數（`:41-51` 用 prototype locvars 對應），
+`ISPetAnimal.new(character, animal)` 的 animal 由序列化物件 id 解析，動物已
+死亡／卸載時解析結果是 nil。`new()`（:95-101）只做欄位賦值所以照樣成功；
+`serverStart()`（:81-84）不碰 `self.animal`，只註冊 3 秒後的模擬事件
+（`emulateAnimEventOnce` → `AnimEventEmulator`，`LuaManager.java:12189`）。
+3 秒到，`animEvent`（:86-93）在 :88 對 nil 解參考拋錯；之後 timeout →
+`NetTimedAction.perform` → `complete()`（:69-72）同一行再炸一次
+（protectedCall 包住，log 再髒一次）。
+
+**vanilla 自己知道這形狀該怎麼防**——隔壁檔 `ISLoadBulletsInMagazine:serverStart()`
+（:70-73）就有一模一樣的 guard：
+
+```lua
+if not self.magazine then self.netAction:forceComplete() return end
+```
+
+`ISPetAnimal` 少寫了這段。
+
+### 修法
+
+比照 vanilla 自家慣例，包裝三個 method（class 表替換；PZ fork 的
+`KahluaTableImpl.rawget` 走 metatable 鏈——`KahluaTableImpl.java:98`——所以
+Java 端 `serverStart`／`complete`／`animEvent` 的 rawget 派發都拿得到包裝版）：
+
+| method | animal 為 nil 時 | 依據 |
+|--------|-----------------|------|
+| `serverStart` | 印一次診斷、`netAction:forceComplete()`、不註冊模擬事件 | 主閘，`ISLoadBulletsInMagazine:70-73` 同款 |
+| `animEvent` | 只攔 `pettingFinished` 靜默略過；**其他 event 原樣透傳**（未來 vanilla 新增的行為照常暴露，本修復不隱藏未知問題） | 第二道保險 |
+| `complete` | 回 `false` | `ISButcherAnimal:complete` 對「屍體被別人撿走」的 vanilla 先例（:51-53）；Java 端 `NetTimedAction.perform` 把 false 傳回 `ActionManager`（`ActionManager.java:64`），action 走 Reject 流程通知 client 移除——比回 true 更正確（`forceComplete()` 只更新 `endTime`，不代表成功） |
+
+動物存在的正常撫摸三個 method 全部原樣透傳，零行為差異。
+診斷每 session 只印一次（與另兩檔同款節流）。
+
+**安裝機制**：sentinel 存 serverStart wrapper 引用（三個 method 同批安裝、
+同批判斷）；`Core.ResetLua` 重載時重新包裝、後載 MOD 整支替換時 `OnGameBoot`
+復查把「他的版本」當新 original 再包一層。與另兩檔同款，詳見
+MDFX_ButcherMeatRatio 節。
+
+### 驗證
+
+`lua scripts/test_pet_animal_guard.lua` — 30 項，全綠。涵蓋：動物存在時三個
+method 全透傳、nil 時 serverStart 擋下＋`forceComplete` 恰一次＋診斷恰一次、
+`netAction` 也 nil 不炸、`pettingFinished` 靜默略過而其他 event 照常透傳、
+complete 回 false、重複載入不疊、後載 MOD 替換後復查重裝（壞形狀恢復被擋＋
+正常路徑透傳到替換版）、vanilla 缺席／部分缺席不亂補、成員快照。
+含對照組：stub vanilla 對 nil 動物確實拋錯。
+
+**mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
+
+| 突變 | 轉紅 |
+|------|------|
+| serverStart gate 改 `if false and ...` | 6 項 |
+| complete 改回 true | 1 項（先例檢查） |
+| OnGameBoot 復查永遠自認在位 | 2 項（替換後 guard 未恢復） |
+
+遊戲內：MP 撫摸動物並讓另一管理端立即移除該動物——修復前 3 秒後 server log
+出現 `attempted index: petAnimal` 例外；修復後 log 出現一行
+`[MinidoracatFixes] ISPetAnimal.serverStart: animal resolved to nil`、無例外。
+
+### 可退場條件
+
+官方在 `ISPetAnimal:serverStart` 補上與 `ISLoadBulletsInMagazine` 同款的
+nil guard（`check_vanilla_alignment.py` 對 `if not self.animal then` 形狀有
+exithint）。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

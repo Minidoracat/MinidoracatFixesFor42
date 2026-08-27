@@ -1,6 +1,6 @@
 name=Minidoracat Fixes for B42
 id=MinidoracatFixesFor42
-description=[B42]臨時修復包。目前只收一項：CleanUI v2.7.8 在 Build 42.20.4 上因為缺少 CleanUIConfig.loadConfig，導致背包與戰利品視窗完全不會建立（console 出現 Object tried to call nil in getConfig）。本 MOD 只把那個缺失的函式補回去，不改 CleanUI 其他行為、不改遊戲平衡、不新增物品或介面。沒裝 CleanUI 的玩家裝了也完全沒有作用。CleanUI 原作者更新修好之後本修復會自動失效，屆時本 MOD 即下架或改收其他項目。單人／多人皆可用。By Minidoracat
+description=[B42]常設修復合輯。只收「原版壞掉、官方修好就退場」的防護，目前包含：屠宰壞屍體（缺 meatRatio 欄位的動物永遠屠宰不了且伺服器拋錯）、手持非槍械物品＋彈藥背帶時裝彈完全沒反應、撫摸的動物剛好死亡或卸載時伺服器拋錯，以及 CleanUI v2.7.8 缺 loadConfig 的臨時補丁（官方 v2.7.9 已修，保留為保險、自動不介入）。純修復——不改平衡、不加物品、不加介面、不加設定；正常遊玩行為完全不變，只在原本會炸的地方乾淨接住，每項都在官方修好時退場。單人／多人皆可用。By Minidoracat
 poster=poster.png
-modversion=42.20.4-0.4.0
+modversion=42.20.4-0.5.0
 versionMin=42.20.4

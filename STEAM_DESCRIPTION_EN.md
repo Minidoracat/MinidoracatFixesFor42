@@ -3,38 +3,36 @@
 
 [hr][/hr]
 
-[h2]⏳ This is a temporary fix[/h2]
-Right now this mod does exactly one thing: it brings back the inventory and loot windows that [b]CleanUI[/b] breaks on Build 42.20.4.
+[h2]🧰 What is this[/h2]
+A standing collection of fixes for Project Zomboid Build 42. It only carries guards for things that are broken in vanilla and will be retired once fixed officially — pure fixes: no balance changes, no items, no UI, no settings. Normal gameplay behaves exactly the same; the fixes only kick in where vanilla would otherwise throw, and leave a one-line diagnostic in the log.
 
-[b]This is a stopgap on the original author's behalf.[/b] Once CleanUI ships a fixed version, this fix retires itself automatically — it detects the official version and stops interfering. Players do not have to do anything. At that point this mod will be delisted, or repurposed for something else.
+Every fix is documented publicly with symptoms, root cause, approach, verification and retirement condition; anything fixed officially gets removed from this mod.
 
-[h2]🐛 What it fixes[/h2]
+[h2]🐛 Currently included[/h2]
 [list]
-[*] [b]Symptom[/b]: the inventory and loot windows never open at all. Your character can walk and chat, but the entire inventory interface simply does not exist.
-[*] console.txt shows [b]Object tried to call nil in getConfig[/b].
-[*] [b]The cause is on CleanUI's side[/b]: the Build 42.20.4 security change removed Lua's loadstring, CleanUI rewrote its config loading path the same day, but the released files are missing one of the functions while the code calling it was left unchanged.
-[*] The inventory panel aborts halfway through construction, which also takes down the loot window and every other interface hanging off the same initialization sequence. That is why "one setting could not be read" removes your whole inventory UI.
-[*] [b]This fix[/b]: it only restores that one missing function, using nothing but what CleanUI already ships. No changes to any of CleanUI's existing behavior, no new settings, no new UI.
+[*] [b]Butchering a broken corpse throws on the server; the animal can never be butchered[/b] (server-side). Some animal corpses (mostly from animal mods) permanently lack an internal data field, and the vanilla butchering code crashes before handing out any meat — you spend the whole butchering action, the animation plays, you get nothing, the corpse stays, and every retry crashes again. This fix cleanly rejects such corpses; butchering yields for healthy animals are untouched.
+[*] [b]Reloading does nothing[/b] (both sides). Holding a non-firearm item (flashlight, crowbar…) while wearing an ammo strap (or fast-reload tagged gear) makes the vanilla reload-speed calculation crash when loading bullets into a magazine — no bullets consumed, nothing loaded, it just looks like the key does nothing. This fix catches that case and falls back to the vanilla formula without the strap bonus; reloading with an actual firearm in hand runs the untouched vanilla code at unchanged speed.
+[*] [b]Petting an animal that just died/despawned throws on the server[/b] (server-side). In multiplayer, if the animal is already gone when the action reaches the server, the server dereferences a null reference 3 seconds later. This fix ends the action cleanly, mirroring vanilla's own guard style (the magazine-loading action already has the exact same check).
+[*] [b]CleanUI inventory rescue[/b] (client-side, retired). CleanUI v2.7.8 shipped without one function, which kept inventory and loot windows from ever being built; official v2.7.9 fixed it. The patch detects the official version and stands down automatically; it is kept purely as regression insurance.
 [/list]
+
+[h2]🔎 How these fixes are grounded[/h2]
+Every fix goes through the same process before being included: locate the crash in real server error logs, then verify the root cause line by line against the decompiled source code of the latest game version. Two of them (reloading, petting) even have the exact same guard already written elsewhere in vanilla code — the crashing spots simply missed it, and this mod fills the gap following vanilla's own convention. After each game update, a tool re-checks that every fix still matches vanilla.
 
 [h2]📋 Mod info[/h2]
 [list]
 [*] [b]Mod ID:[/b] MinidoracatFixesFor42
 [*] [b]Supported version:[/b] Build 42.20.4+
-[*] Does nothing at all — and causes no side effects — if you do not have CleanUI installed
-[*] Client-side fix; no extra server configuration needed
-[*] Load order does not matter (before or after CleanUI both work)
-[*] No balance changes, no new items, no new UI, no new options
-[*] Never writes to or modifies your CleanUI config file
+[*] Works in singleplayer and multiplayer (enabled by the server in MP)
+[*] No balance changes, no items, no UI, no settings
+[*] Zero interference in normal play: fixes only engage where vanilla would throw
+[*] Every fix retires once the official game fixes the underlying issue
 [/list]
 
 [h2]💬 Feedback & community[/h2]
 [url=https://discord.gg/Gur2V67]👉 Join the Discord server[/url]
 
-[h2]📺 Follow the author[/h2]
-[url=https://www.twitch.tv/minidoracat]🎬 Twitch channel[/url]
-
-[b]#fix #bugfix #CleanUI #inventory #Minidoracat[/b]
+[b]#fix #bugfix #vanilla #butchering #reload #Minidoracat[/b]
 
 Workshop ID: 3790443858
 Mod ID: MinidoracatFixesFor42
