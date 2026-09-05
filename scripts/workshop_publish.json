@@ -11,5 +11,11 @@
         "tchinese": "STEAM_DESCRIPTION.md",
         "schinese": "STEAM_DESCRIPTION.md",
         "japanese": "STEAM_DESCRIPTION_JP.md"
+    },
+    "titles": {
+        "english": "Minidoracat Fixes for B42",
+        "tchinese": "[B42] Minidoracat 修正合集 Fixes",
+        "schinese": "[B42] Minidoracat 修正合集 Fixes",
+        "japanese": "[B42] Minidoracat 修正パック Fixes"
     }
 }
