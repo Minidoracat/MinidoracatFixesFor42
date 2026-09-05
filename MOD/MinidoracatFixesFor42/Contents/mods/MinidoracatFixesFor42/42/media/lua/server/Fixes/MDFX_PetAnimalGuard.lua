@@ -40,76 +40,42 @@ Java 端的 serverStart／complete／animEvent 派發都會拿到包裝後的版
   action 走 Reject 流程通知 client 移除——比回 true 更正確。
 
 動物還活著的正常撫摸三個 method 全部原樣透傳，零行為差異。
-放 server/ 目錄：單人與 MP 客戶端的 self.animal 是 new() 當下的本地物件
-引用，不會是 nil，這個形狀只存在於 server 端的封包重建。
+放 server/ 目錄並只在 `isServer()` 安裝：單人與 MP 客戶端的 self.animal 是
+new() 當下的本地物件引用，不會是 nil，這個形狀只存在於 server 端的封包重建。
 
 【安裝機制】
-sentinel 存 serverStart wrapper 引用（三個 method 同批安裝、同批判斷）：
-Core.ResetLua 重載時 vanilla 重建表、本檔重跑重新包裝；後載 MOD 整支替換時
-OnGameBoot 復查把「他的版本」當新 original 再包一層。
-比本補丁更晚的替換不在保證範圍。
+`shared/Fixes/MDFX_Guard.lua`：`isServer()` 閘門、形狀檢查（三個 method 都要在）
+＋一次性 `NOT installed` 診斷、marker 冪等（錨在 serverStart，三個 method 同批
+安裝）、立即安裝＋`OnGameBoot` 復查。Core.ResetLua 重載時 vanilla 重建表、
+marker 隨之消失、重新包裝；後載 MOD 整支替換時復查把「他的版本」當新 original
+再包一層。比本補丁更晚的替換不在保證範圍。
 
 【退場條件】
 官方在 ISPetAnimal:serverStart 補上與 ISLoadBulletsInMagazine 同款的 nil guard。
 遊戲更新後跑 `python scripts/check_vanilla_alignment.py` 確認 vanilla 形狀是否已變。
 ]]
 
-local warnedNilAnimal = false
-local warnedNotInstalled = false
-
-local function install()
-    if type(ISPetAnimal) ~= "table"
-        or type(ISPetAnimal.serverStart) ~= "function"
-        or type(ISPetAnimal.animEvent) ~= "function"
-        or type(ISPetAnimal.complete) ~= "function" then
-        if not warnedNotInstalled then
-            warnedNotInstalled = true
-            print("[MinidoracatFixes] MDFX_PetAnimalGuard NOT installed: vanilla ISPetAnimal shape changed; re-check docs/fixes.md")
-        end
-        return
-    end
-    if ISPetAnimal.MDFX_petAnimalGuard == ISPetAnimal.serverStart then
-        return
-    end
-
-    local originalServerStart = ISPetAnimal.serverStart
-    local originalAnimEvent = ISPetAnimal.animEvent
-    local originalComplete = ISPetAnimal.complete
-
-    local function wrappedServerStart(self)
-        if not self.animal then
-            if not warnedNilAnimal then
-                warnedNilAnimal = true
-                print("[MinidoracatFixes] ISPetAnimal.serverStart: animal resolved to nil (died/unloaded); completing action instead of crashing at ISPetAnimal.lua:88. Further occurrences suppressed this session. See docs/fixes.md MDFX_PetAnimalGuard")
-            end
-            if self.netAction then
-                self.netAction:forceComplete()
-            end
-            return
-        end
-        return originalServerStart(self)
-    end
-
-    ISPetAnimal.serverStart = wrappedServerStart
-
-    ISPetAnimal.animEvent = function(self, event, parameter)
-        if not self.animal and event == "pettingFinished" then
-            return
-        end
-        return originalAnimEvent(self, event, parameter)
-    end
-
-    ISPetAnimal.complete = function(self)
-        if not self.animal then
-            return false
-        end
-        return originalComplete(self)
-    end
-
-    ISPetAnimal.MDFX_petAnimalGuard = wrappedServerStart
-end
-
-install()
-if Events and Events.OnGameBoot then
-    Events.OnGameBoot.Add(install)
-end
+MDFX_Guard.wrap({
+    name = "petAnimalGuard",
+    class = "ISPetAnimal",
+    methods = { "serverStart", "animEvent", "complete" },
+    build = function(originals)
+        return {
+            serverStart = function(self)
+                if self.animal then return originals.serverStart(self) end
+                MDFX_Guard.warnOnce("petAnimalGuard", "ISPetAnimal.serverStart: animal resolved to nil (died/unloaded); completing action instead of crashing at ISPetAnimal.lua:88. Further occurrences suppressed this session. See docs/fixes.md MDFX_PetAnimalGuard")
+                if self.netAction then
+                    self.netAction:forceComplete()
+                end
+            end,
+            animEvent = function(self, event, parameter)
+                if not self.animal and event == "pettingFinished" then return end
+                return originals.animEvent(self, event, parameter)
+            end,
+            complete = function(self)
+                if not self.animal then return false end
+                return originals.complete(self)
+            end,
+        }
+    end,
+})

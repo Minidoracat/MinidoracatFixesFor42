@@ -236,7 +236,7 @@ log 出現一行 `[MinidoracatFixes] setReloadSpeed crashed ... fallback`。
 |------|------|
 | 檔案 | `server/Fixes/MDFX_PetAnimalGuard.lua` |
 | 影響版本 | Build 42.20.4 |
-| 端 | server（此形狀只存在於 server 端的封包重建；單人／客戶端的 `self.animal` 是 `new()` 當下的本地物件引用，不會是 nil） |
+| 端 | server，且只在 `isServer()` 安裝（此形狀只存在於 server 端的封包重建；單人／客戶端的 `self.animal` 是 `new()` 當下的本地物件引用，不會是 nil） |
 | 狀態 | **現役** |
 
 ### 症狀
@@ -285,27 +285,31 @@ Java 端 `serverStart`／`complete`／`animEvent` 的 rawget 派發都拿得到�
 動物存在的正常撫摸三個 method 全部原樣透傳，零行為差異。
 診斷每 session 只印一次（與另兩檔同款節流）。
 
-**安裝機制**：sentinel 存 serverStart wrapper 引用（三個 method 同批安裝、
-同批判斷）；`Core.ResetLua` 重載時重新包裝、後載 MOD 整支替換時 `OnGameBoot`
-復查把「他的版本」當新 original 再包一層。與另兩檔同款，詳見
-MDFX_ButcherMeatRatio 節。
+**安裝機制**：0.6.0 起改走共用骨架 `shared/Fixes/MDFX_Guard.lua`——`isServer()`
+閘門、形狀檢查（三個 method 都要在）＋一次性 `NOT installed` 診斷、marker 冪等
+（錨在 `serverStart`，三個 method 同批安裝）、立即安裝＋`OnGameBoot` 復查、
+診斷節流。行為與 0.5.0 相同，只多了 `isServer()` 閘門（單人不再安裝——那一端
+本來就永遠不會觸發）。
 
 ### 驗證
 
-`lua scripts/test_pet_animal_guard.lua` — 30 項，全綠。涵蓋：動物存在時三個
-method 全透傳、nil 時 serverStart 擋下＋`forceComplete` 恰一次＋診斷恰一次、
-`netAction` 也 nil 不炸、`pettingFinished` 靜默略過而其他 event 照常透傳、
-complete 回 false、重複載入不疊、後載 MOD 替換後復查重裝（壞形狀恢復被擋＋
-正常路徑透傳到替換版）、vanilla 缺席／部分缺席不亂補、成員快照。
-含對照組：stub vanilla 對 nil 動物確實拋錯。
+`lua scripts/test_pet_animal_guard.lua` — 32 項，全綠。涵蓋：`isServer()` 為假
+時零介入、動物存在時三個 method 全透傳、nil 時 serverStart 擋下＋`forceComplete`
+恰一次＋診斷恰一次、`netAction` 也 nil 不炸、`pettingFinished` 靜默略過而其他
+event 照常透傳、complete 回 false、重複載入不疊、後載 MOD 替換後復查重裝
+（壞形狀恢復被擋＋正常路徑透傳到替換版）、vanilla 缺席／部分缺席不亂補、
+成員快照。含對照組：stub vanilla 對 nil 動物確實拋錯。
 
 **mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
 
 | 突變 | 轉紅 |
 |------|------|
-| serverStart gate 改 `if false and ...` | 6 項 |
-| complete 改回 true | 1 項（先例檢查） |
-| OnGameBoot 復查永遠自認在位 | 2 項（替換後 guard 未恢復） |
+| serverStart 主閘拆掉 | 4 項 |
+| complete 改回 true | 3 項 |
+| animEvent 第二道保險拆掉 | 2 項 |
+| `MDFX_Guard` 拆掉 `isServer()` 閘門 | 2 項 |
+| `MDFX_Guard` 拆掉冪等 marker | 4 項 |
+| `MDFX_Guard` 拆掉診斷節流 | 1 項 |
 
 遊戲內：MP 撫摸動物並讓另一管理端立即移除該動物——修復前 3 秒後 server log
 出現 `attempted index: petAnimal` 例外；修復後 log 出現一行
@@ -316,6 +320,66 @@ complete 回 false、重複載入不疊、後載 MOD 替換後復查重裝（壞
 官方在 `ISPetAnimal:serverStart` 補上與 `ISLoadBulletsInMagazine` 同款的
 nil guard（`check_vanilla_alignment.py` 對 `if not self.animal then` 形狀有
 exithint）。
+
+---
+
+## 0.6.0 的六條 server 端 vanilla 守衛 — 索引
+
+六條都是同一型：dedicated server 的封包重建路徑（`NetTimedAction.parse`，
+`NetTimedAction.java:142-171`）餵進 vanilla 沒防到的形狀，於是在 server 端拋錯。
+共用骨架 `shared/Fixes/MDFX_Guard.lua` 負責 `isServer()` 閘門、形狀檢查＋
+一次性 `NOT installed` 診斷、marker 冪等、`OnGameBoot` 復查、診斷節流。
+
+**完整根因、取捨、行號出處與「為什麼不那樣修」都寫在各 `.lua` 檔頭**——這裡
+只留索引，避免同一份推導維護兩份。爆點行與依賴符號登記在
+`scripts/check_vanilla_alignment.py`（12 條指紋，含三個 checkWeapon 呼叫點各一條）。
+
+| 修復 | 檔案（`server/Fixes/`） | 爆點 | 頻率 | 玩家可見後果 | 退場條件 | 測試 |
+|------|------|------|------|------|------|------|
+| MDFX_WorldObjectCheckWeapon | `MDFX_WorldObjectCheckWeapon.lua` | 全域 `ISWorldObjectContextMenu` 在 server 上是 nil；`ISDestroyStuffAction.lua:312`、`ISPickUpGroundCoverItem.lua:35`、`ISRemoveBush.lua:79` 無條件呼叫 `checkWeapon` | 20–140 次/天（最大單項） | 工具最後一擊用壞時動作沒收尾、壞工具不卸裝 | 官方把 `checkWeapon` 移到 `shared/`，或三個呼叫點自己加存在檢查 | `test_world_object_check_weapon.lua`（33 項） |
+| MDFX_MilkAnimalGuard | `MDFX_MilkAnimalGuard.lua` | `ISMilkAnimal.lua:70`（同形狀另有 `:92`、`stress():41`） | 爆發日 50–320 次 | 擠奶動畫演完、桶子沒有奶 | 判準改成「桶子存在**且**有流體容器」並修掉 `:41` | `test_milk_animal_guard.lua`（43 項） |
+| MDFX_ConsolidateDrainableGuard | `MDFX_ConsolidateDrainableGuard.lua` | `ISConsolidateDrainable.lua:33` 扣來源、`:35` 目的物缺 `setUsedDelta` | 12 次/3 天 | **部分更新**：液體憑空消失、client 與 server 量不一致（本批唯一資產風險） | `:33` 之前驗兩邊型別，或 `setUsedDelta` 提到 `InventoryItem` 基類 | `test_consolidate_drainable_guard.lua`（41 項） |
+| MDFX_ClothingExtraGuard | `MDFX_ClothingExtraGuard.lua` | `ISClothingExtraAction.lua:67`（`complete:125` 缺 `isValid:6` 那道 nil guard） | 9 次/3 天 | 換裝失敗＋髒堆疊（衣物本來也不在了） | `complete()` 入口補上 `isValid:6` 同款 nil guard | `test_clothing_extra_guard.lua`（26 項） |
+| MDFX_MoveablesActionGuard | `MDFX_MoveablesActionGuard.lua` | `ISMoveablesAction.lua:308`（`place` 模式 `item` 為 nil） | 16 次/3 天 | 無——引擎本來就當「動作被拒」（`NetTimedAction.java:159-163`），只有 log 噪音 | `:308` 之前檢查 `item` | `test_moveables_action_guard.lua`（28 項） |
+| MDFX_LockDoorsGuard | `MDFX_LockDoorsGuard.lua` | `ISLockDoors.lua:46` 對 `VehiclePart` 做 `..` | 2 次/8 天 | 車門只鎖到一半（邊走邊寫留下部分更新） | `:46` 的 `part` 包上 `tostring`（像 `:42`） | `test_lock_doors_guard.lua`（33 項） |
+
+### 共用骨架的驗證
+
+`MDFX_Guard` 本身沒有獨立測試檔——它的每一項責任都被上面六支（＋
+`test_pet_animal_guard.lua`）覆蓋，mutation 也直接打在 `MDFX_Guard.lua` 上：
+
+| 突變（`MDFX_Guard.lua`） | 轉紅 |
+|------|------|
+| 拆掉 `isServer()` 閘門 | 七支測試的 [1] 段全紅（2–3 項/支，client／單人被介入） |
+| 拆掉冪等 marker 比對 | 走 `wrap` 的六支全紅（2–4 項/支，wrapper 疊第二層） |
+
+各守衛自己的防線 mutation 見下表（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
+
+| 修復 | 突變 | 轉紅 |
+|------|------|------|
+| （`MDFX_Guard`） | 拆掉診斷節流 | 七支各 1 項（log 洪水） |
+| WorldObjectCheckWeapon | 「不覆蓋既有版本」的檢查拆掉 | 2 項後中斷（蓋掉別人的實作） |
+| WorldObjectCheckWeapon | 耐久 gate `<= 0` 反轉成 `>= 0` | 3 項（正常路徑不再空轉） |
+| WorldObjectCheckWeapon | 診斷節流拆掉 | 1 項 |
+| MilkAnimalGuard | 形狀判準永真（吞掉一切） | 15 項 |
+| MilkAnimalGuard | 形狀判準永假（守衛失效） | 12 項 |
+| MilkAnimalGuard | 診斷節流拆掉 | 1 項 |
+| ConsolidateDrainableGuard | 型別判準永真（守衛失效） | 14 項（部分更新全部復發） |
+| ConsolidateDrainableGuard | 只驗來源、不驗目的物 | 11 項 |
+| ConsolidateDrainableGuard | `complete` 那道防線拆掉 | 3 項 |
+| ClothingExtraGuard | nil 判準拆掉 | 7 項 |
+| ClothingExtraGuard | 回傳值改成 true（不走 Reject） | 2 項 |
+| MoveablesActionGuard | 形狀判準拆掉 | 7 項 |
+| MoveablesActionGuard | 判準少了 `mode == "place"` 這半 | 2 項（其他模式被誤擋） |
+| LockDoorsGuard | 無門部件的預掃拆掉 | 9 項 |
+| LockDoorsGuard | 中止改成照樣呼叫原函式（恢復部分更新） | 9 項 |
+| LockDoorsGuard | 回傳值改成 true | 2 項 |
+
+### 殘留風險
+
+`ISConsolidateDrainable` 實際被當成目的物的是什麼型別，log 判斷不出來
+（只知道它沒有 `setUsedDelta`）。玩家實際損失量要在隔離環境實測才能宣稱，
+不做量化推測。
 
 ---
 
