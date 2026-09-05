@@ -22,6 +22,13 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_ButcherMeatRatio` | server | 屠宰某些動物屍體（modData 缺 `meatRatio`，多為動物 MOD 產物）時 `ButcheringUtil.lua:70` 串接 nil 拋錯，連鎖 NetTimedAction NPE；玩家花完整段動作一塊肉都拿不到，該動物永遠屠宰不了 |
 | `MDFX_ReloadSpeedGuard` | shared | 手持非槍械物品＋穿彈藥背帶（或 RELOAD_FAST 裝備）對彈匣裝彈，`ISReloadWeaponAction.lua:95` 對非武器呼叫 `getMagazineType` 拋錯；裝彈流程沒開始就中斷，「按了沒反應」 |
 | `MDFX_PetAnimalGuard` | server | 撫摸動作送到伺服器時動物已死亡／卸載，3 秒後 `ISPetAnimal.lua:88` 對 nil 拋錯；比照 vanilla 自家寫法乾淨結束動作 |
+| `MDFX_WorldObjectCheckWeapon` | server | 工具在最後一擊剛好用壞時，`ISWorldObjectContextMenu.checkWeapon` 在 dedicated server 上不存在（vanilla 只放在 `client/`），`ISDestroyStuffAction.lua:312`／`ISPickUpGroundCoverItem.lua:35`／`ISRemoveBush.lua:79` 拋錯；動作沒收尾、壞工具不卸裝 |
+| `MDFX_MilkAnimalGuard` | server | 桶子已不是流體容器時 `ISMilkAnimal.lua:70` 對 nil 解參考；擠奶動畫演完、桶子沒有奶 |
+| `MDFX_ConsolidateDrainableGuard` | server | `ISConsolidateDrainable.lua:33/35` 先扣來源再填目的物、中間不驗型別；目的物缺 `setUsedDelta` 時形成部分更新（液體憑空消失） |
+| `MDFX_ClothingExtraGuard` | server | `ISClothingExtraAction:complete` 缺 `isValid:6` 那道 nil guard，`:67` 對 nil 衣物解參考 |
+| `MDFX_MoveablesActionGuard` | server | `ISMoveablesAction.lua:308` 在 `place` 模式對 nil 物品解參考；只有 log 噪音（引擎本來就當動作被拒） |
+| `MDFX_LockDoorsGuard` | server | `ISLockDoors.lua:46` 對 `VehiclePart` 做 `..` 拋錯，且上鎖迴圈邊走邊寫；車門只鎖到一半 |
+| `MDFX_Guard`（骨架，非修復） | shared | 六條 server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
 | `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |
 
 ### 已移出
