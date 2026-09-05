@@ -1,0 +1,15 @@
+{
+    "app_id": 108600,
+    "published_file_id": "3790443858",
+    "owner_steamid64": "76561198033176898",
+    "workshop_root": "MOD/MinidoracatFixesFor42",
+    "mod_info": "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/mod.info",
+    "preview_gif": "MOD/MinidoracatFixesFor42/workshop/preview.gif",
+    "changelog": "STEAM_CHANGELOG.md",
+    "descriptions": {
+        "english": "STEAM_DESCRIPTION_EN.md",
+        "tchinese": "STEAM_DESCRIPTION.md",
+        "schinese": "STEAM_DESCRIPTION.md",
+        "japanese": "STEAM_DESCRIPTION_JP.md"
+    }
+}
