@@ -53,16 +53,16 @@ MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/
 docs/fixes.md                        修復清單（症狀／根因／修法／驗證／退場）
 scripts/test_*.lua                   離線自我檢查，lua 直接跑
 scripts/check_vanilla_alignment.py   遊戲更新後確認各修復仍對齊 vanilla
-scripts/link_workshop.ps1            開發／上傳用符號連結管理
-scripts/PZ_Test.ps1                  本機測試啟動器
+scripts/link_workshop.ps1            開發實體副本同步／歸檔管理
+scripts/PZ_Test.ps1                  啟動前自動同步的本機測試啟動器
 scripts/poster/finish_poster.py      封面合成（主視覺 → preview.png ＋ poster.png）
 ```
 
 ## 開發
 
 ```powershell
-.\link_workshop.bat     # 連結到 Zomboid\Workshop 與 Zomboid\mods
-.\PZ_Test.bat           # 啟動本機測試
+.\link_workshop.bat     # 手動同步到兩處實體副本；日常不必每次執行
+.\PZ_Test.bat           # 自動同步後啟動本機測試；規則見 ../pz-family-docs/tools.md
 lua scripts\test_butcher_meatratio.lua
 lua scripts\test_reload_speed_guard.lua
 lua scripts\test_pet_animal_guard.lua
