@@ -39,6 +39,7 @@ Project Zomboid Build 42 的常設修復合輯。只收「原版壞掉、官方�
 [url=https://discord.gg/Gur2V67]👉 加入 Discord 伺服器[/url]
 
 [h2]☕ 支持作者[/h2]
+覺得有幫助的話，請在這頁按個 👍 讚、到 GitHub 給個 ⭐ 星星，讓更多玩家找得到它。
 MOD 永遠免費，原始碼公開在 GitHub。喜歡的話可以請我喝杯咖啡，贊助會用在伺服器與 MOD 開發上。
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatFixesFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
