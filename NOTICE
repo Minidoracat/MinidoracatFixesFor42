@@ -1,0 +1,48 @@
+NOTICE — 授權範圍與第三方權利
+==============================
+
+LICENSE（MIT）條文本身不因本檔而變動；本檔只界定哪些內容是 Minidoracat 的著作、
+哪些屬第三方。
+
+MIT 涵蓋（Minidoracat 自有著作）
+--------------------------------
+- `MOD/MinidoracatFixesFor42/Contents/**` 全部 Lua（下列第 1 節標示的片段除外）、
+  `mod.info`
+- `scripts/**`（含 `test_*.lua`、`_stub.lua` 的測試 stub、fixture、假環境與斷言
+  ——這些是為重現缺陷而自行撰寫的程式，不因引用 vanilla API 或模仿其行為而
+  成為第三方著作）、`*.bat`
+- `README.md`、`CHANGELOG.md`、`docs/`、`STEAM_*.md`、`workshop.txt`、
+  `scripts/workshop_publish.json`
+- 封面：`MOD/MinidoracatFixesFor42/preview.png`、`…/42/poster.png`、
+  `MOD/MinidoracatFixesFor42/workshop/preview.gif`（家族共用管線
+  `MinidoracatLangFor42/output/workshop-covers/fixes/`：codex imagegen 底圖 ＋
+  `build_cover.py` 標題排版與動畫，提示詞存於該處 `prompt.txt`）；
+  `scripts/poster/main_art.png`、`scripts/poster/mascot.png`（舊主視覺，同一產出方式）。
+  AI 底圖的權利依生成服務使用條款歸作者，後製與整體編排為作者創作；
+  作者就其持有的一切權利以 MIT 授權。
+
+  圖上文字以 Windows 系統字型光柵化嵌入點陣圖，字型檔本身未散布。
+
+不受 MIT 涵蓋
+-------------
+
+1. Project Zomboid © The Indie Stone（非官方粉絲作品，依其 MOD 政策散布）
+
+   本專案不重新散布 vanilla 檔案，但下列位置含 vanilla Lua 的引用或改寫，
+   著作權屬 The Indie Stone，不隨 MIT 轉移：
+
+   - `server/Fixes/MDFX_WorldObjectCheckWeapon.lua` 的 `serverCheckWeapon`
+     （`client/ISUI/ISWorldObjectContextMenu.lua:896-912` 的等價實作）
+   - `shared/Fixes/MDFX_ReloadSpeedGuard.lua` 的 `fallbackSpeed`
+     （`shared/TimedActions/ISReloadWeaponAction.lua:76-83`、`:109-112` 的公式改寫）
+   - 各 `MDFX_*.lua` 檔頭註解、`scripts/check_vanilla_alignment.py` 指紋、
+     `scripts/test_*.lua` 中標示 `vanilla :行號` 的單行至數行片段
+
+2. CleanUI（第三方 MOD）
+
+   `MDFX_CleanUIConfigLoad` 只在執行期偵測與包裝，**不包含也不散布**其程式碼
+   或素材；`MDFX_LockDoorsGuard` 註解提及的 W900 Semi-Truck 亦僅為問題分析引用。
+
+商標
+----
+「Project Zomboid」、「The Indie Stone」屬各自所有人，僅作指述性使用。

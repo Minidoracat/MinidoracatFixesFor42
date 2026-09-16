@@ -102,3 +102,19 @@ uv run --no-project python -B scripts/publish_workshop.py --mode all --dry-run  
 退出碼：`0` 成功／`2` 參數或取消／`3` 未登入、帳號不是擁有者／`4` 前置檢查失敗／`5` 提交失敗／`6` 已提交但回查不符。
 網頁動態封面放 `MOD/<資料夾>/workshop/preview.gif`（不在 `Contents/`，不會下載給玩家）；遊戲內上傳器仍用 `preview.png`，
 且每次會把網頁封面覆回靜態，需要動態封面時一律改用本工具發布。
+
+## 授權
+
+本專案採 [MIT License](LICENSE)，Copyright (c) 2026 Minidoracat，涵蓋本 repo 內自製的
+Lua／Python／PowerShell 程式、文件，以及封面圖像（`preview.png`、`poster.png`、
+`workshop/preview.gif`、`scripts/poster/*.png`——以 AI 影像生成工具產出底圖後由本專案
+後製，來源見 [NOTICE](NOTICE)）。
+
+不在本授權範圍內：
+
+- Project Zomboid © The Indie Stone。本 MOD 為非官方粉絲作品，不重新散布遊戲檔案；
+  `MDFX_WorldObjectCheckWeapon.lua` 與 `MDFX_ReloadSpeedGuard.lua` 內兩段標示
+  `vanilla :行號` 的等價實作，以及各檔頭註解、`scripts/check_vanilla_alignment.py`、
+  `scripts/test_*.lua` 中的短引用，著作權仍屬 The Indie Stone，清單見 [NOTICE](NOTICE)。
+- CleanUI 等被修補的第三方 MOD 著作權屬其原作者；本專案只在執行期偵測與包裝，
+  不包含也不散布其程式碼或素材。
