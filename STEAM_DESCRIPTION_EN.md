@@ -39,8 +39,8 @@ Every fix goes through the same process before being included: locate the crash 
 [url=https://discord.gg/Gur2V67]👉 Join the Discord server[/url]
 
 [h2]☕ Support the author[/h2]
-The mod is free and always will be. If you enjoy it, consider buying me a coffee - tips go straight into servers and mod development.
-[url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url]
+The mod is free and always will be, with the source public on GitHub. If you enjoy it, consider buying me a coffee - tips go straight into servers and mod development.
+[url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatFixesFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
 [b]#fix #bugfix #vanilla #butchering #reload #Minidoracat[/b]
 
