@@ -391,7 +391,7 @@ exithint）。
 | 影響版本 | Build 42.20.4 |
 | 端 | server，只在 `isServer()` 安裝（單人的 `transmitModData` 本來就不送，`IsoObject.java:4805-4815`；客戶端不載入 `SPlantGlobalObject`） |
 | 類型 | **不是例外**，是原版的重複同步：內容沒變也照送 |
-| 狀態 | **現役**（尚未發布） |
+| 狀態 | **現役**（42.20.4-0.7.0 起） |
 
 ### 症狀
 
