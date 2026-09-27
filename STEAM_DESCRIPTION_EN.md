@@ -4,7 +4,7 @@
 [hr][/hr]
 
 [h2]🧰 What is this[/h2]
-A standing collection of fixes for Project Zomboid Build 42. It only carries guards for things that are broken in vanilla and will be retired once fixed officially — pure fixes: no balance changes, no items, no UI, no settings. Normal gameplay behaves exactly the same; the fixes only kick in where vanilla would otherwise throw, and leave a one-line diagnostic in the log.
+A standing collection of fixes for Project Zomboid Build 42. It only carries guards for things that are broken in vanilla and will be retired once fixed officially — pure fixes: no balance changes, no items, no UI, no settings. Normal gameplay behaves exactly the same; the fixes only kick in where vanilla would otherwise throw, and leave a one-line diagnostic in the log. It also removes vanilla network syncs that re-send data which did not change.
 
 Every fix is documented publicly with symptoms, root cause, approach, verification and retirement condition; anything fixed officially gets removed from this mod.
 
@@ -19,11 +19,12 @@ Every fix is documented publicly with symptoms, root cause, approach, verificati
 [*] [b]Changing clothes throws on the server when the garment is already gone[/b] (server-side). In multiplayer the item may have been dropped or replaced by the time the action reaches the server. This fix ends the action cleanly, using the same check vanilla already has in that action's own validity test.
 [*] [b]Placing furniture throws on the server when the item is already gone[/b] (server-side). No player-visible impact: the engine already treats this failure as "action rejected"; the fix simply turns the exception into a clean rejection so the log stops being flooded.
 [*] [b]Vehicle doors only lock halfway[/b] (server-side). On some vehicles (including modded ones with extra linked doors) only the first few doors actually lock. Vanilla wants to print a note and abort when it meets a seat with a part but no door, but it throws while printing that very note — and since locking happens door by door, you are left with a half-locked vehicle. This fix scans the whole vehicle first and aborts the way vanilla intended, without touching a single door.
+[*] [b]The server re-sends unchanged crop data when players pass farmland[/b] (server-side, network traffic). Every time the server loads a map area, vanilla sends each crop's name, sprite and data to nearby players — including the map's built-in dead crops — while their game does not even have that area yet, so the packets are simply dropped; then every 10 in-game minutes it re-sends the full data of plowed and dead crops that never change. This fix only sends when a crop actually changed: watering, fertilizing, growth, seeding and trampling still show up immediately, and unchanged crops are no longer re-sent.
 [*] [b]CleanUI inventory rescue[/b] (client-side, retired). CleanUI v2.7.8 shipped without one function, which kept inventory and loot windows from ever being built; official v2.7.9 fixed it. The patch detects the official version and stands down automatically; it is kept purely as regression insurance.
 [/list]
 
 [h2]🔎 How these fixes are grounded[/h2]
-Every fix goes through the same process before being included: locate the crash in real server error logs, then verify the root cause line by line against the decompiled source code of the latest game version. Several of them even have the exact same guard already written elsewhere in vanilla code — the crashing spots simply missed it, and this mod fills the gap following vanilla's own convention. After each game update, a tool re-checks that every fix still matches vanilla.
+Every fix goes through the same process before being included: locate the problem in real server error logs (or traffic captures), then verify the root cause line by line against the decompiled source code of the latest game version. Several of them even have the exact same guard already written elsewhere in vanilla code — the crashing spots simply missed it, and this mod fills the gap following vanilla's own convention. After each game update, a tool re-checks that every fix still matches vanilla.
 
 [h2]📋 Mod info[/h2]
 [list]
@@ -31,7 +32,7 @@ Every fix goes through the same process before being included: locate the crash 
 [*] [b]Supported version:[/b] Build 42.20.4+
 [*] Works in singleplayer and multiplayer (enabled by the server in MP)
 [*] No balance changes, no items, no UI, no settings
-[*] Zero interference in normal play: fixes only engage where vanilla would throw
+[*] Normal gameplay unchanged: fixes only engage where vanilla would throw, or skip re-sending data that did not change
 [*] Every fix retires once the official game fixes the underlying issue
 [/list]
 
