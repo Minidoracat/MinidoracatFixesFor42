@@ -383,6 +383,162 @@ exithint）。
 
 ---
 
+## MDFX_FarmingSyncDedupe — 原版農作物同步改成「有變才送」
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_FarmingSyncDedupe.lua` |
+| 影響版本 | Build 42.20.4 |
+| 端 | server，只在 `isServer()` 安裝（單人的 `transmitModData` 本來就不送，`IsoObject.java:4805-4815`；客戶端不載入 `SPlantGlobalObject`） |
+| 類型 | **不是例外**，是原版的重複同步：內容沒變也照送 |
+| 狀態 | **現役**（尚未發布） |
+
+### 症狀
+
+多人伺服器上，玩家走過農地時伺服器出向流量明顯墊高。正式服唯讀抓包（60 秒出向）
+裡含作物 modData 鍵名的封包 6,952 個、5.2 MB，佔出向 3.4%；其中 6,918 個是地圖內建
+枯作物（`state=destroyed`、名稱「Destroyed Farming_none」）的載入時重送，幾乎全送給同一位
+正在穿越農地的玩家、整分鐘約 100 包/秒。同批另外三份較短取樣佔 0.6–0.9%。
+
+### 根因
+
+伺服器在兩個時機把作物的名稱、sprite、整份 modData 無條件重送給範圍內所有連線
+（`GameServer.java:2887-2890`、`:2899-2905` → `INetworkPacket.sendToRelative:173-182`；
+範圍是連線的 chunk map＋`relevantRange` 8–12 chunk，`UdpConnection.java:211-232`、
+`GameServer.java:2772-2773`）：
+
+1. **載入時**。`SPlantGlobalObject:stateFromIsoObject`（`server/Farming/SPlantGlobalObject.lua:43-56`）
+   與 `stateToIsoObject`（`:58-87`）在 `isServer()` 時固定送三包（`:51-55`、`:82-86`）。
+   呼叫者是 `SGlobalObjectSystem:loadIsoObject`（`server/Map/SGlobalObjectSystem.lua:133-149`）；
+   `MOFarming.lua:126-137` 把枯作物 `vegetation_farming_01_13/14` 與各作物的 sprite／unhealthy／
+   dying／dead 四組 sprite 掛在 `MapObjects.OnLoadWithSprite`，所以伺服器每載入一個 cell
+   （`ServerMap.java:950-956` RecalcAll2 → `IsoChunk.java:3825` `MapObjects.loadGridSquare`），
+   格內每株作物三包。
+   - 這三包沒有人收得到：伺服器只卸載「沒有任何連線 `isRelevantTo`」的 cell
+     （`ServerMap.java:539`、`:589-615`），客戶端的 chunk 要等伺服器端 `loaded` 後才從
+     記憶體現場序列化（`PlayerDownloadServer.java:158-164`、`:234`）。載入當下沒有客戶端
+     持有這個 chunk，封包被 `ObjectModDataPacket.parse` 以 object is null 丟掉（`:50-56`），
+     客戶端之後拿到的 chunk 本來就含載入後的狀態。
+   - `stateFromIsoObject` 本身只讀 iso object、不寫，那三包只是 `:48-49` 註解說的
+     「MapObjects 載入程式可能改過 iso object」保險，而那也發生在同一個 chunk 載入流程裡。
+2. **定期**。`SFarmingSystem:EveryTenMinutes`（`SFarmingSystem.lua:87-128`）每次都
+   `checkPlant` → 每株非 destroyed／harvested 作物 `checkPlant2`（`:264-290`）→
+   最後無條件 `saveData`（`SPlantGlobalObject.lua:771-777`）→ `transmitModData`（`:775`）。
+   翻土、枯死、腐爛的作物值不會變，照樣每 10 遊戲分鐘整份重送。地圖內建枯作物還沒被踩過時
+   `NewDestroyed` 寫的是 `state = "destroy"`（`MOFarming.lua:43`），`isAlive()` 把它當活的，
+   所以它們也在這條路上。
+
+`ObjectModDataPacket` 每次送整份 modData（`:38-47`），客戶端載入前先 wipe
+（`KahluaTableImpl.java:292-294`）；一株作物約 22–26 個鍵、0.5–0.8 KB。
+
+### 修法
+
+只在 `isServer()` 安裝，而且**只包原版自己的函式**：`getFilenameOfClosure`
+（`LuaManager.java:7321-7323`）要指向原版 `SPlantGlobalObject.lua`、路徑不含 `/mods/`
+（與 `LuaClosure.java:170` 判斷 Vanilla／MOD 的方式相同）。別的 MOD 已覆寫的 method 不碰、
+印一行 `NOT installed`——這個 wrapper 會擋掉原函式的送包，包到別人的版本等於吞掉對方的同步。
+三個 method 各自判斷、各自安裝。
+
+| method | 原版 | 修正後 |
+|---|---|---|
+| `stateFromIsoObject`／`stateToIsoObject` | `isServer()` 時固定送 NAME、SPRITE、modData | 原函式本體照跑，但用 `setfenv` 給它一張自己的全域表，本體裡的 `isServer()` 回 false、那三包不送（`BaseLib.java:152-180`：只改這一個 closure 的 env；`KahluaThread.java:272-275` GETGLOBAL 查 `closure.env`，它呼叫的其他函式不受影響）。wrapper 比對呼叫前後，名稱變了送 NAME、sprite 物件換了送 SPRITE、modData 內容變了送 modData，順序同原版 |
+| `saveData` | 無條件 `transmitModData` | 先做原版的 `toModData`（`:774`）；「寫入前後相同」**而且**「和這一格上次實際送出的相同」才不送，其餘交給原函式照原版送 |
+
+幾個判準的理由：
+
+1. **`saveData` 不能只比寫入前後**。`setSpriteName`／`setObjectName`（`:108-121`、`:93-106`）
+   先把整份 modData 寫進 iso object 卻只送 SPRITE／NAME（`:118`、`:103`），播種（`:732-733`）、
+   生長（`SFarmingSystem.lua:288-289`、`farming_vegetableconf.lua:124-128`）、枯死與踩爛
+   （→ `deadPlant` 的 `:765`）都是這樣接著 `saveData`。到了 `saveData` 裡寫入前後幾乎總是相同，
+   只比前後會把這些真正有變的同步全部吞掉（離線突變實測：8 項轉紅）。所以基準是「上次實際送出」。
+2. **寫入前後也要比**。客戶端送來的 `ObjectModData` 會先改掉伺服器的 iso modData 再轉給其他人
+   （`ObjectModDataPacket.java:50-96`），`toModData` 蓋回原值之後只有「寫入前」看得到差異。
+3. **sprite 比物件本身**。`setSpriteFromName` 不更新 `spriteName` 欄位
+   （`IsoObject.java:1979-1982`、`getSpriteName` 的 `:2235-2237`），用名稱比會漏掉 sprite 變化。
+4. **比內容不比 table identity**。照 `KahluaTableImpl.save`（`:210-231`、`:379-401`）實際會上線的
+   型別（鍵 string／number，值 string／number／boolean）組成帶長度的字串、排序後比較，跟走訪
+   順序無關、分得出 `"1"` 與 `1`。遇到巢狀 table 或比對本身拋錯就當「看不出來」，照原版送。
+
+不做陷阱與營火：陷阱（`STrapGlobalObject.lua:30-98`）載入時同款三包，但數量遠少於作物、
+modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊戲分鐘 `fuelAmt` 都在變
+（`SCampfireSystem.lua:135-145` → `SCampfireGlobalObject.lua:262-263`），「有變才送」省不到，
+要省只能降頻，那會讓客戶端看到舊的燃料量。
+
+**安裝機制**：`MDFX_Guard.onServer`（立即一次＋`OnGameBoot` 復查）。本 session 裝過的 method
+記下來之後就不再動：後載 MOD 包了我們或換掉我們，都不接回去。`Core.ResetLua` 重載時 vanilla
+重建 class、本檔重跑，重新安裝。
+
+### 殘留風險
+
+- **基準表**按座標存上次送出的 modData 指紋（一格一條幾百字元的字串），本 session 不清；
+  上限是本 session 走過 `saveData`（且當時 iso object 在記憶體裡）的作物格數；地圖內建枯作物還是
+  `destroy` 狀態時每 10 遊戲分鐘都會走、會佔一格，踩爛成 `destroyed` 之後就不再走定期那條。
+- **被踩爛的地圖枯作物仍會送 SPRITE**。`typeOfSeed = "none"` 的作物被踩時 `destroyThis` 取不到
+  sprite，原版 `setSpriteName(nil)` 把 luaObject 的 `spriteName` 變成 nil；之後每次載入，引擎照
+  iso 的 `spriteName` 欄位另建一個 sprite（`IsoObject.java:1301-1303`），`stateToIsoObject` 又
+  `setSpriteFromName(nil)` 換成無名 placeholder（`IsoSpriteManager.java:47-48`、`:77-81`），sprite
+  物件每次都真的換了。照「有變才送」規則仍送這一包小的 SPRITE，NAME 與 modData 不送。
+- **客戶端自己改的本地 modData 不會再被定期覆蓋**。原版每 10 遊戲分鐘整份重送，順帶把客戶端的
+  本地改動蓋回去；修正後只有伺服器端真的有變才送。原版客戶端不改作物 modData（`CGlobalObject.lua:46-50`
+  只讀），只有自己改又不送的第三方 MOD 會看到差異。
+- **GOS 新增物件的廣播不在範圍內**：新建作物 luaObject 時 `newLuaObjectOnClient` →
+  `addGlobalObjectOnClient` 送給**所有**連線（`SGlobalObjectNetwork.java:91-103` → `sendPacket` `:39-62`），
+  每株作物一生一次、內容只有座標（farming 沒設 `objectSyncKeys`）。
+
+### 驗證
+
+`lua scripts/test_farming_sync_dedupe.lua` — 58 項，全綠。涵蓋：`isServer()` 為假時零介入（連原函式的
+全域表都不動）、安裝只換三個 method 不加成員、載入時沒變零封包而原版同狀態固定三包（對照組）、
+名稱／sprite 物件／modData 各自變化只補送那一項且順序同原版、`stateFromIsoObject` 零封包、
+`saveData` 無基準照送／沒變不送不呼叫原函式、`setSpriteName`／`setObjectName` 之後的
+`saveData` 必須送、iso modData 被外部改寫（客戶端轉送、MOD 直寫額外鍵）必須送、指紋與走訪順序
+無關、分得出 `"1"` 與 `1`、不上線的值變動不算變、巢狀 table 與比對失敗照原版送、基準按座標分開、
+原函式拋錯原樣外洩、別的 MOD 覆寫的 method 不碰（含 Windows 反斜線路徑的原版判斷）、形狀不符不裝、
+本檔重跑與 `OnGameBoot` 不疊、後載 MOD 換掉後不接回去、診斷一 session 一次。
+
+**mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
+
+| 突變 | 轉紅 |
+|------|------|
+| `saveData` 只比寫入前後（交接提案的判準） | 8 項（播種、`setObjectName` 後、額外鍵、無基準首送全部漏掉） |
+| `saveData` 只比上次送出、不比寫入前 | 1 項（客戶端轉送後不蓋回） |
+| 不送的路徑不做 `toModData` | 2 項 |
+| 拿掉 `setfenv`（原函式照送三包） | 7 項 |
+| 載入時不比名稱／不比 modData | 各 2 項 |
+| sprite 改比 `getSpriteName` | 2 項 |
+| 指紋不排序／巢狀 table 當成不上線／不分字串與數字 | 1／2／1 項 |
+| 指紋拿掉 `pcall` | 3 項（例外外洩） |
+| 來源判斷永真／不看 `/mods/`／不正規化反斜線 | 4／3／1 項 |
+| 拿掉 `installed` 冪等 | 1 項（復查把自己的 wrapper 當成別人的） |
+| （`MDFX_Guard`）拆掉 `isServer()` 閘門／診斷節流 | 3／4 項 |
+
+**實機**（`fixes-e2e` 的 `farming-sync`，no-Steam 專用伺服器＋MP 客戶端，同一份情境跑兩輪：
+對照組把修正檔從該輪快照拿掉＝原版，修正組照常）。在 Muldraugh 蓋 30 株作物（翻土、生長中、
+枯死、踩爛各 6，另 6 株仿地圖內建枯作物），離開到伺服器卸載再回來算一次 cell 載入，數伺服器端
+實際呼叫的送包；10 分鐘週期在客戶端的本地 modData 放哨兵，收到 `ObjectModData` 會被整份 wipe。
+
+| 量測 | 原版（對照組） | 修正後 |
+|---|---|---|
+| 第一次重載（仿地圖作物走 `stateFromIsoObject`，其餘 `stateToIsoObject`），18 次載入呼叫 | 54 包（3×18） | 0 包 |
+| 第二次重載（仿地圖作物一半踩成 `destroyed`），18 次載入呼叫 | 54 包 | 3 包（只有被踩爛的 "none" 枯作物的 SPRITE，見殘留風險） |
+| 10 分鐘週期 `saveData`（翻土／生長中／枯死／`destroy` 狀態） | 84 次呼叫、84 包 | 63 次呼叫、0 包 |
+| 客戶端哨兵保留（沒收到重送） | 翻土 0／6、枯死 0／6 | 全部 6／6 |
+
+兩輪都驗了澆水、施肥、生長、播種（翻土→播種）、踩爛、枯死、踩爛地圖枯作物（`destroy`→
+`destroyed`，名稱變、sprite 不變）七種變化：每一種伺服器端都真的變了，客戶端的名稱、sprite、
+modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正組伺服器 log 有 `installed` 與兩行
+首次 skip 診斷；兩輪收回的 console 都沒有 Lua 例外（只有開機期固定雜訊與原版 `MOWoodenWalFrame`
+的 `IsoThumpable not found`，對照組同樣出現）。
+
+### 可退場條件
+
+官方把載入時的三包與 `saveData` 的送包改成比對後才送，或拿掉載入時那三包。
+遊戲更新後跑 `python scripts/check_vanilla_alignment.py`：`:43-56`、`:58-87` 的本體（`isServer()`
+只用在結尾三包、之後直接結束）、`:771-777` 整個 `saveData` 本體、`MOFarming.lua` 的載入註冊、
+`SFarmingSystem.lua` 的定期觸發，任一改變都會 CHANGED，要人工重核。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

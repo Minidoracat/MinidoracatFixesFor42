@@ -227,6 +227,44 @@ FIXES = [
             r"'part ' \.\. tostring\(part\)",
         ],
     },
+    # ── 農作物同步「有變才送」：crash 在這裡指「原版無條件重送的形狀」──────────
+    {
+        "name": "MDFX_FarmingSyncDedupe",
+        "file": "media/lua/server/Farming/SPlantGlobalObject.lua",
+        "crash": [
+            # :43-56 / :58-87：本體裡 isServer() 只出現在結尾那三包、之後直接結束。
+            # 補丁用 setfenv 讓本體的 isServer() 回 false 來擋三包——本體若多了別的
+            # isServer() 用途或在三包之後加了程式，就會被一起擋掉／漏補，必須人工重核。
+            r"(?s)function SPlantGlobalObject:stateFromIsoObject\(isoObject\)(?:(?!isServer\(|\nfunction ).)*?"
+            r"if isServer\(\) then\s*isoObject:sendObjectChange\(IsoObjectChange\.NAME\)\s*"
+            r"isoObject:sendObjectChange\(IsoObjectChange\.SPRITE\)\s*isoObject:transmitModData\(\)\s*end\s*end",
+            r"(?s)function SPlantGlobalObject:stateToIsoObject\(isoObject\)(?:(?!isServer\(|\nfunction ).)*?"
+            r"if isServer\(\) then\s*isoObject:sendObjectChange\(IsoObjectChange\.NAME\)\s*"
+            r"isoObject:sendObjectChange\(IsoObjectChange\.SPRITE\)\s*isoObject:transmitModData\(\)\s*end\s*end",
+            # :771-777 整個本體：補丁「不送」那條路只做 getIsoObject＋toModData，
+            # 本體多了別的事就要跟著改
+            r"function SPlantGlobalObject:saveData\(\)\s*local isoObject = self:getIsoObject\(\)\s*"
+            r"if isoObject then\s*self:toModData\(isoObject:getModData\(\)\)\s*isoObject:transmitModData\(\)\s*end\s*end",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingSyncDedupe（載入觸發 MOFarming）",
+        "file": "media/lua/server/Map/MapObjects/MOFarming.lua",
+        "crash": [
+            # :126-137：枯作物與各作物 sprite 在每次 cell 載入時走 loadIsoObject
+            r'MapObjects\.OnLoadWithSprite\("vegetation_farming_01_13", LoadDestroyed, PRIORITY\)',
+            r"MapObjects\.OnLoadWithSprite\(farming_vegetableconf\.sprite\[typeOfSeed\], LoadPlant, PRIORITY\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingSyncDedupe（定期觸發 SFarmingSystem）",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "crash": [
+            # :127 EveryTenMinutes 每次都 checkPlant；:288-289 checkPlant2 最後無條件 saveData
+            r"self:checkPlant\(\)\s*end",
+            r"if sprite then luaObject:setSpriteName\(sprite\) end\s*luaObject:saveData\(\)",
+        ],
+    },
 ]
 
 
