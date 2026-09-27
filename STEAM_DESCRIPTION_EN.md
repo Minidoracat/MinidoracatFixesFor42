@@ -4,36 +4,27 @@
 [hr][/hr]
 
 [h2]🧰 What is this[/h2]
-A standing collection of fixes for Project Zomboid Build 42. It only carries guards for things that are broken in vanilla and will be retired once fixed officially — pure fixes: no balance changes, no items, no UI, no settings. Normal gameplay behaves exactly the same; the fixes only kick in where vanilla would otherwise throw, and leave a one-line diagnostic in the log. It also removes vanilla network syncs that re-send data which did not change.
-
-Every fix is documented publicly with symptoms, root cause, approach, verification and retirement condition; anything fixed officially gets removed from this mod.
+A standing collection of fixes for vanilla bugs in Project Zomboid Build 42; each fix is retired once the game fixes it officially. No balance changes, items, UI or settings — normal gameplay is unchanged.
 
 [h2]🐛 Currently included[/h2]
 [list]
-[*] [b]Butchering a broken corpse throws on the server; the animal can never be butchered[/b] (server-side). Some animal corpses (mostly from animal mods) permanently lack an internal data field, and the vanilla butchering code crashes before handing out any meat — you spend the whole butchering action, the animation plays, you get nothing, the corpse stays, and every retry crashes again. This fix cleanly rejects such corpses; butchering yields for healthy animals are untouched.
-[*] [b]Reloading does nothing[/b] (both sides). Holding a non-firearm item (flashlight, crowbar…) while wearing an ammo strap (or fast-reload tagged gear) makes the vanilla reload-speed calculation crash when loading bullets into a magazine — no bullets consumed, nothing loaded, it just looks like the key does nothing. This fix catches that case and falls back to the vanilla formula without the strap bonus; reloading with an actual firearm in hand runs the untouched vanilla code at unchanged speed.
-[*] [b]Petting an animal that just died/despawned throws on the server[/b] (server-side). In multiplayer, if the animal is already gone when the action reaches the server, the server dereferences a null reference 3 seconds later. This fix ends the action cleanly, mirroring vanilla's own guard style (the magazine-loading action already has the exact same check).
-[*] [b]An action fails to finish when a tool breaks on its very last swing[/b] (server-side). Demolishing walls, clearing ground clutter or cutting bushes: if the tool's condition hits zero on that swing, the removal itself succeeds but the action never completes properly, the broken tool is not unequipped, no replacement weapon is drawn from your bag, and the server piles up errors. This fix supplies the code vanilla ships only on the client, so all three actions benefit at once.
-[*] [b]Milking produces nothing[/b] (server-side). The animation plays out, the bucket stays empty and the action hangs until it times out. Vanilla only checks that the selected bucket still exists, not that it is still a fluid container. This fix treats such a bucket as "no usable container" and ends the action through vanilla's own exit path — pick a good bucket and try again.
-[*] [b]Liquid vanishes when pouring into another container[/b] (server-side). After merging, the source is drained but the target gained nothing, and the client shows a different amount than the server. Vanilla drains the source first and fills the target afterwards, with no validation of the target in between. This fix validates both sides before touching either one; if they do not match, nothing happens at all.
-[*] [b]Changing clothes throws on the server when the garment is already gone[/b] (server-side). In multiplayer the item may have been dropped or replaced by the time the action reaches the server. This fix ends the action cleanly, using the same check vanilla already has in that action's own validity test.
-[*] [b]Placing furniture throws on the server when the item is already gone[/b] (server-side). No player-visible impact: the engine already treats this failure as "action rejected"; the fix simply turns the exception into a clean rejection so the log stops being flooded.
-[*] [b]Vehicle doors only lock halfway[/b] (server-side). On some vehicles (including modded ones with extra linked doors) only the first few doors actually lock. Vanilla wants to print a note and abort when it meets a seat with a part but no door, but it throws while printing that very note — and since locking happens door by door, you are left with a half-locked vehicle. This fix scans the whole vehicle first and aborts the way vanilla intended, without touching a single door.
-[*] [b]The server re-sends unchanged crop data when players pass farmland[/b] (server-side, network traffic). Every time the server loads a map area, vanilla sends each crop's name, sprite and data to nearby players — including the map's built-in dead crops — while their game does not even have that area yet, so the packets are simply dropped; then every 10 in-game minutes it re-sends the full data of plowed and dead crops that never change. This fix only sends when a crop actually changed: watering, fertilizing, growth, seeding and trampling still show up immediately, and unchanged crops are no longer re-sent.
-[*] [b]CleanUI inventory rescue[/b] (client-side, retired). CleanUI v2.7.8 shipped without one function, which kept inventory and loot windows from ever being built; official v2.7.9 fixed it. The patch detects the official version and stands down automatically; it is kept purely as regression insurance.
+[*] [b]Some animal corpses can never be butchered[/b]: corpses missing data (mostly from animal mods) waste the whole action. Now cleanly rejected; normal butchering is untouched.
+[*] [b]Reloading does nothing with a non-firearm in hand and an ammo strap worn[/b]: now reloads normally using the vanilla formula.
+[*] [b]Server error when a petted animal just died or despawned[/b]: the action now ends cleanly.
+[*] [b]Actions get stuck when a tool breaks on its last swing[/b] (walls, clutter, bushes): now finish properly, unequip the broken tool and draw your best weapon.
+[*] [b]Milking produces nothing[/b]: if the bucket can no longer hold liquid, the action now just ends — use another bucket.
+[*] [b]Liquid vanishes when pouring into another container[/b]: both containers are now checked first; if either is invalid, nothing happens.
+[*] [b]Server error when changing clothes or placing furniture and the item is already gone[/b]: the action now ends cleanly.
+[*] [b]Vehicle doors only lock halfway[/b]: the whole vehicle is now checked first; if something is wrong, no door is touched.
+[*] [b]The server keeps re-sending unchanged crop data as players walk past farmland[/b]: it now only sends when a crop changes — watering, growth, trampling still show up instantly — saving server upload bandwidth.
 [/list]
-
-[h2]🔎 How these fixes are grounded[/h2]
-Every fix goes through the same process before being included: locate the problem in real server error logs (or traffic captures), then verify the root cause line by line against the decompiled source code of the latest game version. Several of them even have the exact same guard already written elsewhere in vanilla code — the crashing spots simply missed it, and this mod fills the gap following vanilla's own convention. After each game update, a tool re-checks that every fix still matches vanilla.
 
 [h2]📋 Mod info[/h2]
 [list]
 [*] [b]Mod ID:[/b] MinidoracatFixesFor42
 [*] [b]Supported version:[/b] Build 42.20.4+
-[*] Works in singleplayer and multiplayer (enabled by the server in MP)
-[*] No balance changes, no items, no UI, no settings
-[*] Normal gameplay unchanged: fixes only engage where vanilla would throw, or skip re-sending data that did not change
-[*] Every fix retires once the official game fixes the underlying issue
+[*] Singleplayer and multiplayer; in MP it is enabled by the server, and all fixes except the reload one run server-side only
+[*] The cause and verification of every fix are public on GitHub
 [/list]
 
 [h2]💬 Feedback & community[/h2]
@@ -44,7 +35,7 @@ If this helped, a 👍 on this page and a ⭐ on GitHub help other players find 
 The mod is free and always will be, with the source public on GitHub. If you enjoy it, consider buying me a coffee - tips go straight into servers and mod development.
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatFixesFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
-[b]#fix #bugfix #vanilla #butchering #reload #Minidoracat[/b]
+[b]#fix #bugfix #vanilla #butchering #reload #farming #Minidoracat[/b]
 
 Workshop ID: 3790443858
 Mod ID: MinidoracatFixesFor42
