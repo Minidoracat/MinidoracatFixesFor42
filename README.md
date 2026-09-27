@@ -5,8 +5,10 @@
 Project Zomboid Build 42 的常設修復合輯（client + server）。
 
 只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
-不加物品、不加介面、不加設定選項；正常遊玩的行為完全不變，只在原本會炸掉的
-地方乾淨接住，或拿掉原版內容沒變也照送的重複同步。每一項修復都在
+不加物品、不加介面、不加設定選項；正常遊玩的行為不變，只在原本會炸掉的
+地方乾淨接住、拿掉原版內容沒變也照送的重複同步，或讓存檔不會撐破引擎上限
+（唯一看得到的差異：沒人的區域裡，枯死／腐爛作物慢慢變成踩爛外觀的轉換會暫停，見
+`MDFX_FarmingGosPrune`）。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件；遊戲更新後跑
 `python scripts/check_vanilla_alignment.py` 一鍵確認各修復的 vanilla 前提是否仍成立。
 
@@ -29,6 +31,9 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_MoveablesActionGuard` | server | `ISMoveablesAction.lua:308` 在 `place` 模式對 nil 物品解參考；只有 log 噪音（引擎本來就當動作被拒） |
 | `MDFX_LockDoorsGuard` | server | `ISLockDoors.lua:46` 對 `VehiclePart` 做 `..` 拋錯，且上鎖迴圈邊走邊寫；車門只鎖到一半 |
 | `MDFX_FarmingSyncDedupe` | server | 伺服器每載入一塊地圖區域，原版就對區域內每株作物固定送名稱／sprite／modData 三包（`SPlantGlobalObject.lua:51-55`、`:82-86`；這時客戶端還沒有那個 chunk，收到就丟），之後每 10 遊戲分鐘再對翻土、枯死、腐爛的作物整份重送（`:775`），值沒變也送；改成有變才送 |
+| `MDFX_FarmingGosPrune` | server | 原版把載入過的每株作物（枯死、被踩爛、已收成的也算）永久留在 `gos_farming.bin`；檔案超過引擎固定的 10 MiB 存檔緩衝時被截成 0 byte，下次開機整個農作物系統清空。沒人的區域裡這類作物暫時移出存檔，區域載入時從地圖物件原樣重建；原版失去登記後回不來的踩爛／已收成作物也一併重新登記 |
+| `MDFX_FarmingClockBackup` | server | `gos_farming.bin` 讀不到時農作物時鐘 `hoursElapsed` 歸零；每 10 遊戲分鐘另存一份，讀檔失敗時還原 |
+| `MDFX_FarmingStallHeal` | server | 時鐘歸零後重新登記的作物帶著舊時鐘的 `nextGrowing`，卡住不長（原版補救只在 `stateToIsoObject`，下雨或澆水就失效）；定期檢查時把遠到不可能的 `nextGrowing` 拉回 |
 | `MDFX_Guard`（骨架，非修復） | shared | 六條 server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
 | `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |
 

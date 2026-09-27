@@ -265,6 +265,155 @@ FIXES = [
             r"if sprite then luaObject:setSpriteName\(sprite\) end\s*luaObject:saveData\(\)",
         ],
     },
+    # ── 農作物存檔三件：時鐘備份（C）、時鐘錯位自癒（A）、GOS 瘦身（B）──────────
+    {
+        "name": "MDFX_FarmingClockBackup",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "crash": [
+            # :11 讀不到 gos_farming.bin 時時鐘歸零
+            r"o\.hoursElapsed = o\.hoursElapsed or 0",
+        ],
+        "depends": [
+            # :27 時鐘只存在 GOS；:93 每遊戲小時 +1（備份排在這之後）；:586 原版 handler 在檔案載入時註冊
+            r"self\.system:setModDataKeys\(\{'hoursElapsed'\}\)",
+            r"self\.hoursElapsed = self\.hoursElapsed \+ 1",
+            r"Events\.EveryTenMinutes\.Add\(EveryTenMinutes\)",
+            r"self\.system:loadedWorldVersion\(\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingClockBackup（系統建立時機）",
+        "file": "media/lua/server/Map/SGlobalObjectSystem.lua",
+        "depends": [
+            # instance 在 OnSGlobalObjectSystemInit 建立；本補丁的 handler 註冊在它之後
+            r"local function OnSGlobalObjectSystemInit\(luaClass\)\s*luaClass\.instance = luaClass:new\(\)",
+            r"Events\.OnSGlobalObjectSystemInit\.Add\(function\(\) OnSGlobalObjectSystemInit\(luaClass\) end\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingStallHeal",
+        "file": "media/lua/server/Farming/SPlantGlobalObject.lua",
+        "crash": [
+            # :43-56 stateFromIsoObject 沒有時鐘補救（本體不出現 lastWaterHour）
+            r"(?s)function SPlantGlobalObject:stateFromIsoObject\(isoObject\)(?:(?!lastWaterHour|\nfunction ).)*?\nend",
+        ],
+        "formula": [
+            # :66-74 補救的觸發與重設方式，本補丁照抄
+            r"if self\.lastWaterHour and self\.lastWaterHour > SFarmingSystem\.instance\.hoursElapsed then",
+            r'getCore\(\):getDebug\(\) and getDebugOptions\(\):getBoolean\("Cheat\.Farming\.FastGrow"\) then\s*'
+            r"self\.nextGrowing = SFarmingSystem\.instance\.hoursElapsed \+ 1\s*else\s*"
+            r"self\.nextGrowing = SFarmingSystem\.instance\.hoursElapsed \+ farming_vegetableconf\.props\[self\.typeOfSeed\]\.timeToGrow",
+            r"self\.lastWaterHour = SFarmingSystem\.instance\.hoursElapsed\s*self:noise\('reset lastWaterHour/nextGrowing",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingStallHeal（生長判斷與下雨）",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "crash": [
+            # :278 時鐘錯位的作物永遠過不了這行；:309 下雨把 lastWaterHour 改成新時鐘、讓原版補救失效
+            r"if luaObject\.nextGrowing and self\.hoursElapsed >= luaObject\.nextGrowing then",
+            r"luaObject\.lastWaterHour = self\.hoursElapsed",
+        ],
+        "depends": [
+            r"function SFarmingSystem:checkPlant2\(luaObject\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingStallHeal（LIMIT 的公式來源）",
+        "file": "media/lua/server/Farming/farming_vegetableconf.lua",
+        "formula": [
+            # :79 offset ±12；:86、:108 倍率 1/FarmingSpeedNew（最小 0.1 在 SandboxOptions.java:232，本腳本查不到 Java）
+            r"return ZombRand\(25\)-12",
+            r"nextTime = nextTime \* calcNextTimeFactor\(\)",
+            r"nextTime = nextTime / sandboxTime",
+            # :284-285 rotTime；:297 timeToGrow + 三個修正項；:356、:360 badPlant
+            r"local rotTime = prop\.rotTime or math\.floor\(prop\.timeToGrow/2\)",
+            r"calcNextGrowing\(nextGrowing, prop\.timeToGrow \+ water \+ waterMax \+ diseaseLvl\)",
+            r"calcNextGrowing\(nextGrowing, 30\)",
+            r"calcNextGrowing\(nextGrowing, 50\)",
+            # 三個修正項合計 < 50：calcWater 的「差 10% 以內」分支、calcDisease 的 < 30 分支
+            r"elseif waterLvl >= math\.floor\(waterMin /  1\.10\) then\s*return waterMin - waterLvl;",
+            r"elseif diseaseLvl < 30 then\s*return diseaseLvl;",
+        ],
+        "depends": [
+            # 遠期判斷只在這五個排程函式都出自本檔時啟用（getFilenameOfClosure 比對來源）
+            r"function calcNextGrowing\(nextGrowing, nextTime\)",
+            r"function calcNextTimeFactor\(\)",
+            r"function randomGrowthOffset\(\)",
+            r"function badPlant\(water, waterMax, diseaseLvl, plant, nextGrowing, updateNbOfGrow\)",
+            r"farming_vegetableconf\.grow = function\(planting, nextGrowing, updateNbOfGrow\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（重新登記缺口）",
+        "file": "media/lua/server/Map/MapObjects/MOFarming.lua",
+        "crash": [
+            # 原版沒替 trampledSprite 註冊 OnLoad → 失去登記的踩爛／已收成作物回不來
+            r"\A(?![\s\S]*trampledSprite)",
+        ],
+        "depends": [
+            # 本補丁 priority 6 要高於原版的 5，dead／rotten 才會先重建、再由原版 LoadPlant 同步
+            r"local PRIORITY = 5",
+            r"MapObjects\.OnLoadWithSprite\(farming_vegetableconf\.deadSprite\[typeOfSeed\], LoadPlant, PRIORITY\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（移出期間原版不做的事）",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "crash": [
+            # :265 destroyed／harvested 直接 return；:267-270 dead／rotten 只有 1/5000 變 destroyed；
+            # :256 plowFadeCheck 沒載入就 return；:133、:147 水量／健康只處理活的
+            r'if \(not luaObject\) or \(luaObject\.state == "destroyed"\) or \(luaObject\.state == "harvested"\) then return end',
+            r"if \(not\s+luaObject:isAlive\(\)\) and ZombRand\(5000\) == 0 then\s*luaObject:destroyThis\(\)\s*return\s*end",
+            r"(?s)function SFarmingSystem:plowFadeCheck\(luaObject\)(?:(?!\nfunction ).)*?local square = luaObject:getSquare\(\)\s*if not square then return end",
+            r"function SFarmingSystem:lowerWaterLvlAndUpDisease\(\)\s*for i=1,self:getLuaObjectCount\(\) do\s*local luaObject = self:getLuaObjectByIndex\(i\)\s*if luaObject:isAlive\(\) then",
+            r'if luaObject:isAlive\(\) and luaObject\.state ~= "plow" then',
+            # :400-404 伴生作物擋病蟲害只看鄰格 nbOfGrow >= 3 與 *Bane、不看 state → 這類不移出
+            r"if luaObject2\.nbOfGrow >= 3 then\s*local prop2 = farming_vegetableconf\.props\[luaObject2\.typeOfSeed\]\s*"
+            r"if prop2\.aphidsBane then aphidsBane = true end\s*if prop2\.fliesBane then fliesBane = true end\s*"
+            r"if prop2\.slugsBane then slugsBane = true end",
+        ],
+        "formula": [
+            # 比對用的 26 個鍵（SFarmingSystem.lua:30-34），本補丁的 KEYS 照抄
+            r"self\.system:setObjectModDataKeys\(\{\s*'state', 'nbOfGrow', 'typeOfSeed', 'fertilizer', 'mildewLvl',\s*"
+            r"'aphidLvl', 'fliesLvl', 'slugsLvl', 'hasWeeds',  'waterLvl', 'waterNeeded', 'waterNeededMax',\s*"
+            r"'lastWaterHour', 'nextGrowing', 'hasSeed', 'hasVegetable',\s*"
+            r"'health', 'badCare', 'exterior', 'spriteName', 'objectName', 'cursed', 'compost', 'bonusYield', 'naturalLight',\s*"
+            r"'owner'\}\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（作物物件）",
+        "file": "media/lua/server/Farming/SPlantGlobalObject.lua",
+        "crash": [
+            # :47 stateFromIsoObject 用 IsoObject 的 spriteName 欄位（setSpriteFromName 不更新它）→ 本補丁不走它
+            r"self\.spriteName = isoObject:getSpriteName\(\)",
+        ],
+        "depends": [
+            r'return self\.state ~= "destroyed" and self\.state ~= "dead" and self\.state ~= "rotten" and self\.state ~= "harvested"',
+            r"function SPlantGlobalObject:initNew\(\)",
+            r"function SPlantGlobalObject:fromModData\(modData\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（sprite 分組）",
+        "file": "media/lua/server/Farming/farming_vegetableconf.lua",
+        "depends": [
+            r'if plant\.state == "destroyed" or plant\.state == "harvested" then\s*spriteType = "trampledSprite"',
+            r'elseif plant\.state == "dead" or plant\.state == "rotten" then\s*spriteType = "deadSprite"',
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（GOS 基底）",
+        "file": "media/lua/server/Map/SGlobalObjectSystem.lua",
+        "depends": [
+            # :95-102 移除會通知客戶端；:143-147 重新登記的建立順序，本補丁照抄
+            r"self:removeLuaObjectOnClient\(luaObject\)\s*self\.system:removeObject\(luaObject\.globalObject\)",
+            r"local globalObject = self\.system:newObject\(square:getX\(\), square:getY\(\), square:getZ\(\)\)\s*"
+            r"local luaObject = self:newLuaObject\(globalObject\)\s*luaObject:stateFromIsoObject\(isoObject\)",
+            r"function SGlobalObjectSystem:getIsoObjectOnSquare\(square\)",
+        ],
+    },
 ]
 
 

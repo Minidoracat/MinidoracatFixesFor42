@@ -539,6 +539,131 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 
 ---
 
+## 農作物存檔三件 — `MDFX_FarmingGosPrune`／`MDFX_FarmingClockBackup`／`MDFX_FarmingStallHeal`
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_FarmingGosPrune.lua`、`MDFX_FarmingClockBackup.lua`、`MDFX_FarmingStallHeal.lua` |
+| 影響版本 | Build 42.20.4 |
+| 端 | server：dedicated server 與單人都生效（存檔機制兩邊相同）；MP 客戶端在檔頭 `isClient()` 早退 |
+| 類型 | **原版存檔上限造成的整份資料遺失**，以及它的兩個後遺症 |
+| 狀態 | 未發布（`CHANGELOG.md` 的 `[Unreleased]`） |
+
+三支各有一個獨立的缺陷與退場條件，但來自同一次事故，放在同一節。每支的完整推導、行號出處
+與「為什麼不那樣修」寫在各自的 `.lua` 檔頭；這裡記事故、決策與驗證。
+
+### 症狀（正式服唯讀調查）
+
+- 某次例行存檔時伺服器記錄連續 6 次 `BufferOverflowException`（堆疊經過 `KahluaTableImpl.save`），
+  `gos_farming.bin` 變成 0 byte；下一次開機 `SGlobalObjectSystem.load> Exception thrown`
+  （`newLimit < 0: (-1 < 0)`），農作物系統從空狀態啟動。
+- 事故前 4 小時的備份裡，檔案從 7.67 MB（15,412 個物件）長到 9.93 MB（20,100 個，
+  上限的 94.7%）。新增的 4,724 個有 2,470 個集中在同一個 256×256 區域，是地圖內建農田第一次被
+  載入時整片登記。20,100 個裡 destroyed 70%、rotten 14%、seeded 6%、dead 4%、plow 2%、
+  harvested 2%。
+- 清空後作物隨玩家移動重新登記。之後的檔案裡 241 株生長中作物有 189 株的 `nextGrowing`
+  比時鐘多約 30,900 小時；其中 4 株在這一局被澆過水，原版的補救已經觸發不了。
+
+### 根因
+
+1. **存檔撐破固定緩衝、而且先截斷檔案**（`MDFX_FarmingGosPrune` 處理累積、`MDFX_FarmingClockBackup`
+   處理後果）。`SGlobalObjectSystem.save()`（`SGlobalObjectSystem.java:273-298`）在 `:279` 先開
+   `FileOutputStream`，才往 10,485,760 byte 的 `SliceY.SliceBuffer`（`SliceY.java:10`）序列化；溢出的
+   例外在 `:294` 被吞掉，檔案停在 0 byte。原版把載入過的每株作物永久留在檔案裡，會移出的只有
+   `plowFadeCheck`（`SFarmingSystem.lua:253-262`：30 天後、有載入時、每 10 遊戲分鐘 1/20000），
+   實際上只增不減。
+2. **時鐘歸零**。時鐘 `hoursElapsed` 只存在這個檔案（`SFarmingSystem.lua:27`），讀不到時
+   `:11` 把它設成 0；從地圖物件重新登記的作物帶著舊時鐘的 `nextGrowing`。
+3. **原版補救有缺口**（`MDFX_FarmingStallHeal`）。補救只寫在 `stateToIsoObject`
+   （`SPlantGlobalObject.lua:66-76`），第一次重新登記走的 `stateFromIsoObject`（`:43-56`）沒有；
+   觸發條件 `lastWaterHour > hoursElapsed` 一遇到下雨（`SFarmingSystem.lua:309`）或澆水
+   （`SPlantGlobalObject.lua:513`）就失效。
+4. **踩爛／已收成作物回不來**（`MDFX_FarmingGosPrune` 的重建部分）。它們用 `trampledSprite`，
+   `MOFarming.lua:126-137` 沒替這組註冊 OnLoad（394 個名稱，與已註冊的四組零重疊）；失去 GOS
+   登記後農作選單（`ISFarmingMenu.lua` 一律 `getLuaObjectOnSquare`）找不到，那格無法移除或翻土。
+
+### 修法
+
+| 修復 | 做什麼 | 關鍵判準 |
+|---|---|---|
+| `MDFX_FarmingGosPrune` | ① 常駐重建：對每種作物的 trampledSprite／deadSprite 註冊 OnLoad（priority 4242），格子載入時地圖物件是 destroyed／harvested／dead／rotten、`modData.spriteName` 等於畫面 sprite、這格沒有 luaObject，就 `fromModData` 原樣重建並通知客戶端。② 移出：每 10 遊戲分鐘掃一次，所在格沒載入的這四種作物，先前在載入時確認過「地圖物件能重建出逐鍵相同的條目」、之後沒變，連續兩次掃到且相隔 ≥30 秒真實時間，才用原版 `removeLuaObject` 移出，每次最多 100 株 | 只移出 hook 一定能重建成一模一樣的；伴生作物（`nbOfGrow >= 3` 且有 `*Bane`）與 `-nosave` 不移出 |
+| `MDFX_FarmingClockBackup` | 每 10 遊戲分鐘把時鐘抄進 GlobalModData；開機時 `loadedWorldVersion()` 還是 -1（沒讀完）且備份比現在大就還原 | 備份與 GOS 同一輪存檔；新世界沒有備份 |
+| `MDFX_FarmingStallHeal` | 包 `checkPlant2`：生長中作物 `lastWaterHour` 領先時鐘，或 `nextGrowing` 遠過原版在任何沙盒下排得出來的上限（`max(T) × 10 + 12`，原版 14,952 小時），就把 `nextGrowing` 拉回 `hoursElapsed + timeToGrow` | 只會提前、不會延後；`lastWaterHour` 領先才重設；排程函式被別的 MOD 換掉時遠期判斷關閉 |
+
+**設計審查**（實作前交給 oracle 對照原版與反編譯原始碼逐條核對，C 直接通過，A、B 依意見修改後通過）：
+
+- B 的移出判準與重建 hook 共用同一個 `rebuildable`：`fromModData` 在 `modData.spriteName` 為 nil 時
+  會自己補值（`SPlantGlobalObject.lua:807-809`），只比重建結果會把 hook 拒絕重建的作物也移出，
+  從此回不來。
+- B 排除伴生作物：`diseaseThis`（`SFarmingSystem.lua:396-405`）替鄰格擋病蟲害時只看鄰居
+  `nbOfGrow >= 3` 與 `*Bane`、不看 state，收成過的洋蔥、大蒜田在原版會一直保護旁邊的活作物。
+  原版 55 種作物有 11 種帶 bane。
+- B 的 priority 從 6 改成 4242：同 priority 會互相取代（`MapObjects.java:148-151`），6 是
+  「比原版高一格」最常見的選擇，被別的 MOD 取代時 hook 會靜默消失。
+- B 的等待理由是 `ServerChunkLoader` 的競態：已被存檔執行緒拿走、正在寫的 chunk 不會被之後的讀取
+  等待；再加 30 秒真實時間，是因為全員睡覺快轉時 10 遊戲分鐘可能不到 1 秒。
+- A 只往前調：時鐘由 C 還原後，最後一次存檔之後才卸載的 chunk 可能帶著略新的 `lastWaterHour`，
+  照原版無條件寫會把本來幾小時後就要長的作物往後延幾百小時。
+
+### 與原版的差異與殘留風險
+
+- **移出期間，dead／rotten 每 10 遊戲分鐘 1/5000 變成 destroyed 的外觀轉換暫停**，格子再載入後照常。
+  這也讓它們較晚進入 `plowFadeCheck` 的清除範圍。這是本 MOD 唯一看得到的行為差異，使用者已同意。
+- **移出之後 chunk 是唯一的來源**：chunk 存檔失敗（`ServerChunkLoader.java:449-463` 只記 log；
+  `IsoChunk.java:4280-4282` 先記 checksum 再寫檔，之後同內容的存檔會被跳過），或改過的客戶端在最後一次
+  掃描到卸載之間改了那格的 modData（`ObjectModDataPacket.java:21-27,46-58` 不驗來源），重建出來的就是
+  那份內容。原版客戶端不送農作物 modData。
+- **整個 MOD 移除時**，被移出、所在區域之後沒再載入過的踩爛／已收成作物會變回原版的孤兒；
+  dead／rotten 會由原版 `LoadPlant` 走 `stateFromIsoObject` 重新登記。移出部分可以先單獨退場，
+  重建部分要等官方替 trampledSprite 註冊 OnLoad。三份 Workshop 描述都有寫。
+- **效益只及於本 session 載入又卸載過的區域**，而且 `spriteName` 為 nil 的條目永遠不移出
+  （例如還沒播種就被踩的翻土格：`trampledSprite["none"]` 不存在，`getSpriteName` 回 nil）。
+  事故時的 20,100 個物件裡，這類 destroyed 有 236 個。
+- **重建時的新增封包送給所有連線**，一個 cell 載入的封包數＝該 cell 被移出的作物數×連線數；
+  移出每次最多 100 株，重建端沒有上限。
+- **原版翻土格（`vegetation_farming_01_1`）也沒註冊 OnLoad**，失去 GOS 登記後同樣回不來；
+  它不在移出範圍、也不是本節三支要修的，E2E 第二場次只記數量不判定。
+
+### 驗證
+
+離線測試（假環境照原版形狀，mutation 一律「抽掉防線 → 轉紅 → 還原後 sha256 相同」）：
+
+| 測試 | 項數 | mutation（全部轉紅） |
+|---|---|---|
+| `test_farming_gos_prune.lua` | 108 | 拿掉伴生檢查、`isNoSave`、兩次掃描等待、30 秒下限、移出前再比一次、驗證時的比對、`rebuildable` 的 spriteName 檢查、只認註冊過的 sprite、每次上限、hook 的「已有 luaObject」檢查、hook 的狀態檢查、失敗時的回滾、priority 改回 5、逐種 pcall，共 14 項 |
+| `test_farming_clock_backup.lua` | 38 | 拿掉 `isClient` 閘門、`loadedWorldVersion` 判斷、「備份比時鐘大」判斷、備份型別檢查、record 的 `checked` 防線、`checked = true`、兩處 pcall、instance 型別檢查，共 10 項 |
+| `test_farming_stall_heal.lua` | 72 | 拿掉 seeded 判斷、兩個觸發條件、LIMIT 的 ×10／+12／+50／rotTime、FastGrow、pcall、marker、「只往前」、「lastWaterHour 領先才重設」、原版來源檢查（整段、`/mods/`、反斜線、大小寫、檔名、pcall）等，共 32 項 |
+
+`python scripts/check_vanilla_alignment.py` 為三支登記了爆點、依賴符號與公式係數（`SandboxOptions.java:232`
+的 FarmingSpeedNew 下限 0.1 是 Java，腳本查不到，記在 `MDFX_FarmingStallHeal.lua` 檔頭）。
+
+**實機**（`fixes-e2e` 的 `farming-gos`，no-Steam 專用伺服器＋MP 客戶端，同一輪兩個場次；另跑一次單人）：
+時鐘先設 30000 模擬老伺服器，在 Muldraugh 蓋 25 株（生長中 4、枯死 4、腐爛 4、踩爛 4、已收成 4、翻土 2，
+另 3 株 `nextGrowing` 設在 30,900 小時後，其中 1 株 `lastWaterHour` 也領先時鐘）。
+
+| 場次 | 做什麼 | 結果 |
+|---|---|---|
+| 1 | 一次 `EveryTenMinutes` | 3 株錯位作物拉回 432 小時後（`timeToGrow`），4 株健康作物 `nextGrowing` 不變；時鐘備份＝30000 |
+| 1 | 傳送 828 格外、伺服器卸載農地後每 10 秒掃一次 | 35–45 秒後四類 16 株全部移出，其餘 9 株留著；附近地圖農田的 102 株枯／腐作物一起移出（第一批剛好 100）；客戶端鏡像只少了這些 |
+| 1 | 回到農地 | 16 株重建，26 鍵與離開前逐一相同；客戶端鏡像補回；客戶端地圖物件的名稱／sprite／modData 與伺服器一致 |
+| 1→2 | RCON quit 正常存檔，把 `gos_farming.bin` 截成 0 byte | 開機出現與正式服同一行 `SGlobalObjectSystem.load> … newLimit < 0: (-1 < 0)` |
+| 2 | 開機＋回到農地 | 時鐘 0 → 30000（`loadedWorldVersion = -1`）；四類 16 株由 hook 重建、與上一場次逐鍵相同；7 株生長中作物（原版 `LoadPlant` 重新登記）沒有一株卡在舊時鐘；翻土格 0/2（原版缺口，見上） |
+
+單人跑第一場次同樣全部通過（25 項）。MP 兩個場次的伺服器 log（`SERVER STARTED` 之後）與兩種模式的客戶端 log 都沒有
+`already an object at`、`NOT installed` 或堆疊帶本 MOD 路徑的例外。
+
+### 可退場條件
+
+- `MDFX_FarmingGosPrune` 移出：官方讓 GOS 存檔不再受 10 MiB 緩衝限制，或不再先截斷檔案。
+  重建：官方替 trampledSprite 註冊 OnLoad。
+- `MDFX_FarmingClockBackup`：官方讓讀檔失敗不再把時鐘歸零（或存檔不再留下 0 byte 檔）。
+- `MDFX_FarmingStallHeal`：官方在 `stateFromIsoObject` 也補上時鐘補救、補救不再只看 `lastWaterHour`；
+  或讀檔失敗不再讓時鐘歸零。
+
+遊戲更新後跑 `python scripts/check_vanilla_alignment.py`，任一條 CHANGED 都要人工重核。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |
