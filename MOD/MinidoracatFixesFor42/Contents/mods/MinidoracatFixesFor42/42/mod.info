@@ -2,5 +2,5 @@ name=Minidoracat Fixes for B42
 id=MinidoracatFixesFor42
 description=[B42]原版錯誤的常設修復合輯，官方修好就退場。目前修：有些動物屍體永遠屠宰不了、手拿非槍械＋彈藥背帶時裝彈沒反應、撫摸或換裝或擺家具時伺服器出錯、工具最後一擊用壞時動作卡住、擠奶擠不出東西、倒液體時液體消失、車門只鎖到一半、走過農田時伺服器重送沒變的作物資料、農作物存檔過大被清空後作物停止生長。不改平衡、不加物品介面或設定，正常遊玩不變。
 poster=poster.png
-modversion=42.20.4-0.7.0
+modversion=42.20.4-0.8.0
 versionMin=42.20.4
