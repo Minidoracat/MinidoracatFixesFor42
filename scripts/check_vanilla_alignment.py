@@ -11,6 +11,10 @@
            變了 → fallback 公式要跟著更新
   exithint vanilla 出現自帶防護的跡象 → 提示評估退場（人工確認，不自動判定）
 
+爆點在 Java 的修復（MDFX_StaleRoomGuard）用 `class` 條目：以 `javap -c -p`
+反組譯本機 projectzomboid.jar 裡的該類別，再對反組譯文字比對同樣四類指紋。
+需要 PATH 上有 JDK 25 以上的 javap（PZ 自帶的 jre64 沒有 javap）；找不到算 MISSING。
+
 用法（repo 根目錄）：
     python scripts/check_vanilla_alignment.py [PZ安裝目錄]
 預設安裝目錄 D:/SteamLibrary/steamapps/common/ProjectZomboid，
@@ -22,6 +26,8 @@ exithint 只提示不影響 exit code。
 
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 DEFAULT_PZ_HOME = r"D:/SteamLibrary/steamapps/common/ProjectZomboid"
@@ -414,11 +420,92 @@ FIXES = [
             r"function SGlobalObjectSystem:getIsoObjectOnSquare\(square\)",
         ],
     },
+    {
+        "name": "MDFX_StaleRoomGuard（爆點：ParameterFirearmRoomSize）",
+        "class": "zombie.audio.parameters.ParameterFirearmRoomSize",
+        "crash": [
+            # getRoomSize（ParameterFirearmRoomSize.java:38-39）：getRoomDef() 的回傳值直接 getArea()，中間沒有 null 檢查
+            r"// Method zombie/iso/areas/IsoRoom\.getRoomDef:\(\)Lzombie/iso/RoomDef;\s+\d+: invokevirtual #\d+\s+"
+            r"// Method zombie/iso/RoomDef\.getArea:\(\)I",
+        ],
+        "exithint": [
+            # 官方若先檢查 getRoomDef() 的回傳值，兩個呼叫之間會多出 dup／astore／ifnull 之類的指令
+            r"// Method zombie/iso/areas/IsoRoom\.getRoomDef:\(\)Lzombie/iso/RoomDef;\s+\d+: (?:dup|astore|ifnull|ifnonnull)",
+        ],
+    },
+    {
+        "name": "MDFX_StaleRoomGuard（成因：WorldRegionToMetaGrid）",
+        "class": "zombie.iso.areas.isoregion.metagrid.WorldRegionToMetaGrid",
+        "crash": [
+            # removeIsoRoom（:432-434）把被移除房間的 def 設成 null
+            r"private void removeIsoRoom\(zombie\.iso\.areas\.IsoRoom, boolean\);(?:(?!\n  \S)[\s\S])*?"
+            r"aconst_null\s+\d+: putfield\s+#\d+\s+// Field zombie/iso/areas/IsoRoom\.def:Lzombie/iso/RoomDef;",
+            # updateSquares（:601-610）只重設 chunkIsDirty 的區塊
+            r"private void updateSquares\(\);(?:(?!\n  \S)[\s\S])*?// Method chunkIsDirty:\(Lzombie/iso/IsoChunk;\)Z",
+        ],
+    },
+    {
+        "name": "MDFX_StaleRoomGuard（前提：房間只在區域資料交換後重建）",
+        "class": "zombie.iso.areas.isoregion.IsoRegions",
+        "depends": [
+            # update（IsoRegions.java:206-214）：先交換 DataRoot，再 clientProcessBuildings——本補丁靠交換偵測重建
+            r"public static void update\(\);(?:(?!\n  \S)[\s\S])*?IsoRegionWorker\.getRootBuffer:(?:(?!\n  \S)[\s\S])*?"
+            r"IsoRegionWorker\.setRootBuffer:(?:(?!\n  \S)[\s\S])*?DataRoot\.clientProcessBuildings:\(\)V",
+            r"public static zombie\.iso\.areas\.isoregion\.data\.DataChunk getDataChunk\(int, int\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleRoomGuard（前提：玩家更新在房間重建之前）",
+        "class": "zombie.iso.IsoWorld",
+        "depends": [
+            # updateWorld（IsoWorld.java:2935-2937）：IsoCell.update（爆點）→ IsoRegions.update（重建），OnTick 在這之後
+            r"private void updateWorld\(\);\s+Code:\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field currentCell:Lzombie/iso/IsoCell;\s+"
+            r"\d+: invokevirtual #\d+\s+// Method zombie/iso/IsoCell\.update:\(\)V\s+"
+            r"\d+: invokestatic\s+#\d+\s+// Method zombie/iso/areas/isoregion/IsoRegions\.update:\(\)V",
+        ],
+    },
+    {
+        "name": "MDFX_StaleRoomGuard（依賴：IsoGridSquare）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            r"public zombie\.iso\.areas\.IsoRoom getRoom\(\);",
+            r"public void setRoomID\(long\);",
+            r"public void RecalcProperties\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleRoomGuard（依賴：IsoRoom）",
+        "class": "zombie.iso.areas.IsoRoom",
+        "depends": [
+            r"public zombie\.iso\.RoomDef getRoomDef\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleRoomGuard（依賴：IsoMetaGrid）",
+        "class": "zombie.iso.IsoMetaGrid",
+        "depends": [
+            r"public zombie\.iso\.RoomDef getRoomAt\(int, int, int\);",
+        ],
+    },
 ]
 
 
 def line_of(content, match):
     return content.count("\n", 0, match.start()) + 1
+
+
+def javap_text(pz_home, cls):
+    """反組譯 projectzomboid.jar 裡的類別；失敗時回 (None, 原因)。"""
+    javap = shutil.which("javap")
+    if not javap:
+        return None, "PATH 上找不到 javap（需要 JDK 25 以上）"
+    jar = os.path.join(pz_home, "projectzomboid.jar")
+    proc = subprocess.run([javap, "-c", "-p", "-cp", jar, cls],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        lines = (proc.stderr or proc.stdout).strip().splitlines()
+        return None, lines[0] if lines else f"javap exit {proc.returncode}"
+    return proc.stdout, None
 
 
 def main():
@@ -438,14 +525,22 @@ def main():
 
     for fix in FIXES:
         print(f"\n== {fix['name']} ==")
-        path = os.path.join(pz_home, fix["file"])
-        if not os.path.isfile(path):
-            print(f"  MISSING  vanilla 檔不存在：{fix['file']}")
-            print("           修復目標整檔消失，需人工重新核對（線上會印 NOT installed）")
-            problems += 1
-            continue
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
+        if "class" in fix:
+            content, why = javap_text(pz_home, fix["class"])
+            if content is None:
+                print(f"  MISSING  無法反組譯 {fix['class']}：{why}")
+                print("           類別消失或 javap 不可用，需人工重新核對")
+                problems += 1
+                continue
+        else:
+            path = os.path.join(pz_home, fix["file"])
+            if not os.path.isfile(path):
+                print(f"  MISSING  vanilla 檔不存在：{fix['file']}")
+                print("           修復目標整檔消失，需人工重新核對（線上會印 NOT installed）")
+                problems += 1
+                continue
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
 
         for pat in fix.get("crash", []):
             m = re.search(pat, content)

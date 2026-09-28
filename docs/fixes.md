@@ -664,6 +664,139 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 
 ---
 
+## MDFX_StaleRoomGuard — 自建建築改建後，指著已移除房間的格子讓客戶端斷線
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_StaleRoomGuard.lua` |
+| 影響版本 | Build 42.20.4 |
+| 端 | client：MP 客戶端與單人都生效；專用伺服器不執行（爆點與成因都在 `!GameServer.server` 分支，本檔在 `client/`） |
+| 類型 | 原版留下的**壞格子資料**，在原版讀到之前修好；不包裝任何原版函式 |
+| 狀態 | **未發布**（CHANGELOG `[Unreleased]`） |
+
+### 症狀（正式服唯讀調查）
+
+- 玩家回報「靠近某棟玩家建築就跳錯並被踢出伺服器」「在那裡拆牆或蓋牆就一直跳錯然後斷線」。
+  伺服器連線紀錄是客戶端自己送出的斷線（`disconnection-notification`），伺服器沒有踢人；
+  同一棟建築附近的玩家約 3 小時內各斷線十多次，常常 2–4 人在幾秒內一起斷線。
+- 玩家 `console.txt`：
+
+  ```
+  ERROR: General ... IngameState.updateInternal> Exception thrown
+    java.lang.NullPointerException: Cannot invoke "zombie.iso.RoomDef.getArea()" because the return value of
+    "zombie.iso.areas.IsoRoom.getRoomDef()" is null at ParameterFirearmRoomSize.getRoomSize(ParameterFirearmRoomSize.java:42).
+      ... IsoGameCharacter.updateEmitter ← IsoPlayer.updateInternal2 ← IsoCell.ProcessObjects
+  LOG  : Lua ... removing all player data
+  LOG  : General ... STATE: exit zombie.gameStates.IngameState
+  ```
+
+- 同一份 log 前面大量的 `Error with packet of type: ItemStats`（`ContainerID.findObject` 的 `containingItem`
+  是 null）只是噪音：`GameClient.mainLoopDealWithNetData` 對單一封包的例外只記錄並丟掉那個封包
+  （`GameClient.java:562-581`），不會斷線。
+
+### 根因（兩層，行號為 42.20.4 反編譯快照）
+
+1. **爆點**：`ParameterFirearmRoomSize.getRoomSize`（`:38-39`）對玩家腳下格子的房間直接
+   `getRoomDef().getArea()`，沒有 null 檢查。客戶端每一幀替每一位玩家（本地與遠端都算，
+   `IsoPlayer.java:2135-2136` 的 `if (!GameServer.server) updateEmitter()`）更新聲音參數時都會算它；
+   例外傳到 `IngameState.updateInternal`，原版存一份當機副本後 `doDisconnect("crash")`
+   （`IngameState.java:1553-1588`）。所以只要一位玩家站在這種格子上，所有看得到他的客戶端會同時斷線。
+2. **成因**：牆／地板變動後，客戶端的 `WorldRegionToMetaGrid.clientProcessBuildings`（`:59`）把附近的
+   自建建築整批移除再重建。移除時 `removeIsoRoom`（`:432-434`）把舊房間的 `def` 設成 null，之後的
+   `updateSquares`（`:601-610`）卻只重設被標記的區塊；標記只來自「仍掛著建築的區域」
+   （`removeUserDefinedBuildingsFromCell`，`:206-214`）與新建築的區域。區域資料又是兩份 `DataRoot`
+   輪流交換（`IsoRegions.java:206-214`），建築只指派給當時上線的那一份，而 `processDirtyChunks`
+   重算前還會先清掉變動區塊的建築（`DataRoot.java:200`）——拆牆後房間不再封閉時，原本房間的格子常常
+   一格都沒被標記：`roomId` 還是舊值，`getRoom()`（`IsoGridSquare.java:9643-9645`）回傳那個 `def` 已是
+   null 的舊房間。實機 E2E：3×3 房間拆掉一面牆，9 格全部變成這種狀態。
+
+### 修法
+
+在 `OnTick` 修好每位玩家周圍的失效格子。引擎每一幀依序是 `IsoCell.update`（玩家移動、讀聲音參數＝爆點）
+→ `IsoRegions.update`（重建房間＝失效格子在這裡產生）（`IsoWorld.java:2935-2937`）→ Lua `OnTick`
+（`IngameState.java:1507`、`:1534`），`OnTick` 剛好落在「產生」與「下一幀讀取」之間。
+
+- **修什麼**：格子的房間 `getRoomDef()` 是 nil，而且地圖上這個位置已經沒有房間（`IsoMetaGrid.getRoomAt` 回 nil）
+  → `setRoomID(-1)`，再 `RecalcProperties()` 讓室外旗標跟著更新（`IsoGridSquare.java:7703`）。這就是原版
+  `updateSquares` 對有被標記的格子做的事。地圖上仍有房間的形狀不該出現，遇到就不動、印一行診斷：
+  房間 id 大於 2^53（`RoomID.java:4-7`），經過 Lua 數字會失真，不自己拼回去。
+- **什麼時候查**（不是每幀掃描）：
+  1. 每位玩家每幀只比對腳下格子換了沒（MP：`getOnlinePlayers()` 清單的 `get` ＋ `getCurrentSquare`，
+     每人 2 次 Java 呼叫；清單是 `GameClient` 快取、5 秒沒更新的遠端玩家會被移出，`GameClient.java:520-530`、`:1614-1623`）。
+  2. 換格子時檢查新位置上下三層、周圍 3×3 共 27 格。一幀移動不到一格，腳下與下一步踩得到的格子永遠是檢查過的。
+  3. 房間只會在重建時失效，而重建前一定交換 `DataRoot`；兩份各有自己的 `DataChunk` 物件（`DataRoot.java:18-66`），
+     所以每幀只問一次某個已知區塊的 `IsoRegions.getDataChunk` 是不是同一個物件，換了就重新檢查所有玩家周圍。
+     MP 客戶端的區域資料是全伺服器的（登入時要完整資料，之後伺服器對所有連線廣播變動，
+     `IsoRegionWorker.java:305-331`），任何一處施工都會觸發交換，重新檢查的成本見下表。
+  4. 還沒找到任何區域資料時，每 30 幀在玩家所在與相鄰區塊找一次；找到的當下全部重新檢查一次
+     （它可能在被看到之前就重建過）。
+- 自己出錯：`pcall` 包住，印一行 `disabled for this session` 後本次開機停用，不外洩、不洗版。
+
+### 效能（實機量測）
+
+多人客戶端（42.20.4，E2E `stale-room --define mode=bench`）在遊戲裡直接呼叫補丁的每幀函式，以
+`getTimestampMs` 量 1 萬–20 萬次取平均、扣掉空迴圈。GameProfiler 的 span 只到 `Lua - OnTick` 這一層，
+分不出單一 callback 的次微秒成本，所以用放大量測。量測時同一台機器還有其他 PZ 程序在跑（非獨佔），數字偏保守。
+
+| 項目 | 成本 |
+|------|------|
+| Java 呼叫（getSquare／getRoom／getCurrentSquare） | 0.19／0.14／0.12 µs |
+| 每幀固定成本：1／10／30 位玩家 | 1.5／6.7／28.9 µs |
+| 玩家換格子時的 27 格檢查（每次） | 13.8 µs |
+| 最壞情況：10 位玩家每幀都換格子 | 138 µs／幀 |
+
+60 FPS 一幀 16,700 µs：平常 10 位玩家約 0.04%，30 位約 0.17%。一般走動每人每秒換 2–5 格，10 人約每幀 0.5 次檢查（約 7 µs）。
+區域資料交換時的全面重新檢查＝玩家數 × 13.8 µs，只發生在有人施工的那一幀。
+
+### 已知限制
+
+- 一幀內移動超過一格（傳送、網路校正、極快的載具）時，落點若剛好是失效格子，仍會走原版的崩潰路徑。
+- 只修玩家周圍的格子；沒有玩家靠近的失效格子留著不動（原版只在有人站上去時才會出錯）。
+
+### 驗證
+
+`lua scripts/test_stale_room_guard.lua` — 34 項，全綠。假引擎照每一幀的順序（玩家移動並讀腳下房間 →
+區域資料交換與重建 → OnTick）跑：靜止玩家腳下／身旁的房間失效、走進很早以前失效的格子（東西向與南北向）、
+上樓踏進上層失效格子、探針晚到、移動中取得探針、探針區塊消失、地圖上仍有房間、單人、玩家離開後可被回收、
+自身錯誤只印一次並停用，以及「靜止 100 幀零逐格查詢、每人每幀 2 次呼叫、換一格只查 27 格」的成本不變式。
+
+**mutation 驗證**（`lua scripts/test_stale_room_guard.lua --mutants`，13 個全部抓到）：
+
+| 突變 | 轉紅 |
+|------|------|
+| 拿掉區域資料交換偵測 | 9 項 |
+| 只查腳下這一欄（x）／這一列（y） | 3 項／6 項 |
+| 只查同一層 | 2 項 |
+| 不看地圖就重設 | 3 項 |
+| 不跑 RecalcProperties／先 RecalcProperties 再 setRoomID | 各 1 項 |
+| 拿掉 pcall | 3 項 |
+| 不清掉離開玩家的格位 | 1 項 |
+| 每幀都全部重查（效能退化） | 3 項 |
+| 探針到手不補查／不定期找探針／移動時不順手取探針 | 1／2／1 項 |
+
+實機 E2E（`fixes-e2e` skill 的 `stale-room`）：伺服器在玩家腳下蓋一間 3×3、有屋頂的自建房間，客戶端確認房間
+成立後拆掉南牆中段。
+
+| 場次 | 結果 |
+|------|------|
+| MP 對照組（修正檔從本輪拿掉） | 拆牆後下一幀 `ParameterFirearmRoomSize.getRoomSize` NPE → `removing all player data` → 回主選單，堆疊與正式服玩家的 log 相同；伺服器連線紀錄是客戶端送出的 `disconnection-notification` |
+| MP 修正組 | 9 格失效格子在重建的同一幀就修好（每幀巡視的情境 hook 一次都沒看到失效格子），沒有例外，房間消失後繼續玩 5 秒 |
+| 單人修正組 | 同上，9 格全部修好、沒有例外 |
+
+情境要先在同一帶放一面孤立的牆，讓伺服器先「發現」這些區塊，再蓋房間；在從未變動過的區塊第一次施工時，
+實測客戶端收到的區域資料沒有牆（伺服器端有），房間根本不成立。這是原版區域同步的另一個問題，與本修正無關。
+
+`python scripts/check_vanilla_alignment.py` 以 `javap` 反組譯本機 jar 比對 7 條 Java 指紋：爆點（`getRoomDef` 後直接
+`getArea`）、成因（`removeIsoRoom` 清 def、`updateSquares` 只看 `chunkIsDirty`）、兩個前提（`IsoRegions.update` 先交換
+再重建、`IsoWorld.updateWorld` 先更新玩家再重建）與依賴的 API。
+
+### 可退場條件
+
+官方在 `getRoomSize` 補上 null 檢查（`check_vanilla_alignment.py` 對「`getRoomDef` 後接 dup／astore／ifnull」有 exithint），
+或 `updateSquares` 也重設被移除房間的格子（成因指紋會 CHANGED）。遊戲更新後跑該腳本，任一條 CHANGED 都要人工重核。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |
