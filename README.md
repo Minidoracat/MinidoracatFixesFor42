@@ -24,7 +24,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_ButcherMeatRatio` | server | 屠宰某些動物屍體（modData 缺 `meatRatio`，多為動物 MOD 產物）時 `ButcheringUtil.lua:70` 串接 nil 拋錯，連鎖 NetTimedAction NPE；玩家花完整段動作一塊肉都拿不到，該動物永遠屠宰不了 |
 | `MDFX_ReloadSpeedGuard` | shared | 手持非槍械物品＋穿彈藥背帶（或 RELOAD_FAST 裝備）對彈匣裝彈，`ISReloadWeaponAction.lua:95` 對非武器呼叫 `getMagazineType` 拋錯；裝彈流程沒開始就中斷，「按了沒反應」 |
 | `MDFX_PetAnimalGuard` | server | 撫摸動作送到伺服器時動物已死亡／卸載，3 秒後 `ISPetAnimal.lua:88` 對 nil 拋錯；比照 vanilla 自家寫法乾淨結束動作 |
-| `MDFX_WorldObjectCheckWeapon` | server | 工具在最後一擊剛好用壞時，`ISWorldObjectContextMenu.checkWeapon` 在 dedicated server 上不存在（vanilla 只放在 `client/`），`ISDestroyStuffAction.lua:312`／`ISPickUpGroundCoverItem.lua:35`／`ISRemoveBush.lua:79` 拋錯；動作沒收尾、壞工具不卸裝 |
+| `MDFX_WorldObjectCheckWeapon` | server | **已退場**（42.21 官方把 `checkWeapon` 搬到 shared 的 `ItemUtils.checkWeapon`；補丁偵測到就不安裝，保留為 regression 保險）。42.20.4：工具在最後一擊剛好用壞時，`ISWorldObjectContextMenu.checkWeapon` 在 dedicated server 上不存在，`ISDestroyStuffAction.lua:312`／`ISPickUpGroundCoverItem.lua:35`／`ISRemoveBush.lua:79` 拋錯；動作沒收尾、壞工具不卸裝 |
 | `MDFX_MilkAnimalGuard` | server | 桶子已不是流體容器時 `ISMilkAnimal.lua:70` 對 nil 解參考；擠奶動畫演完、桶子沒有奶 |
 | `MDFX_ConsolidateDrainableGuard` | server | `ISConsolidateDrainable.lua:33/35` 先扣來源再填目的物、中間不驗型別；目的物缺 `setUsedDelta` 時形成部分更新（液體憑空消失） |
 | `MDFX_ClothingExtraGuard` | server | `ISClothingExtraAction:complete` 缺 `isValid:6` 那道 nil guard，`:67` 對 nil 衣物解參考 |
@@ -34,7 +34,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_FarmingGosPrune` | server | 原版把載入過的每株作物（枯死、被踩爛、已收成的也算）永久留在 `gos_farming.bin`；檔案超過引擎固定的 10 MiB 存檔緩衝時被截成 0 byte，下次開機整個農作物系統清空。沒人的區域裡這類作物暫時移出存檔，區域載入時從地圖物件原樣重建；原版失去登記後回不來的踩爛／已收成作物也一併重新登記 |
 | `MDFX_FarmingClockBackup` | server | `gos_farming.bin` 讀不到時農作物時鐘 `hoursElapsed` 歸零；每 10 遊戲分鐘另存一份，讀檔失敗時還原 |
 | `MDFX_FarmingStallHeal` | server | 時鐘歸零後重新登記的作物帶著舊時鐘的 `nextGrowing`，卡住不長（原版補救只在 `stateToIsoObject`，下雨或澆水就失效）；定期檢查時把遠到不可能的 `nextGrowing` 拉回 |
-| `MDFX_StaleRoomGuard` | client | 拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，格子仍指著 def 已是 nil 的房間；任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單。在下一幀之前修好每位玩家周圍的這類格子（平常只比對玩家腳下是否換格） |
+| `MDFX_StaleRoomGuard` | client | **已退場**（42.21 官方在移除自建建築時一併重設它覆蓋的格子；補丁只在找到失效格子時動作，保留為 regression 保險）。42.20.4：拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單 |
 | `MDFX_Guard`（骨架，非修復） | shared | 六條 server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
 | `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |
 

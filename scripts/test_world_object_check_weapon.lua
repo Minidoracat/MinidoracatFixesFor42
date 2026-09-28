@@ -5,7 +5,8 @@
 --   * isServer() 為假時完全不安裝、不建立任何全域（client／單人零介入）
 --   * 全域缺席時建表並只填 checkWeapon，印一次 installed 診斷
 --   * 全域已存在（別的 MOD 先建了表）時只補 checkWeapon，不動其他成員
---   * checkWeapon 已由別人提供時不覆蓋（官方修好／後載 MOD 自帶）
+--   * checkWeapon 已由別人提供時不覆蓋（後載 MOD 自帶）
+--   * 官方已提供 ItemUtils.checkWeapon（42.21 起）→ 已退場：不建立全域、不印診斷
 --   * 補上的實作與 vanilla :896-912 等價：
 --       手持物耐久 > 0 → 整段不做事（零行為差異）
 --       耐久 <= 0 或空手 → removeFromHands → getBestWeapon → 裝備（雙手武器補副手）
@@ -25,6 +26,7 @@ local function resetEnv(asServer)
     S.reset({ server = asServer })
     serverCommands = {}
     ISWorldObjectContextMenu = nil
+    ItemUtils = nil
     sendServerCommand = function(chr, module, command, args)
         serverCommands[#serverCommands + 1] = { chr = chr, module = module, command = command, args = args }
     end
@@ -174,6 +176,22 @@ ISWorldObjectContextMenu.checkWeapon = function() theirCalls = theirCalls + 1 en
 local replacement = ISWorldObjectContextMenu.checkWeapon
 S.fireBoot()
 T.check("7 後載 MOD 的版本不被蓋掉", ISWorldObjectContextMenu.checkWeapon == replacement)
+
+-- ── 7b. 官方已修（42.21 的 ItemUtils.checkWeapon）→ 退場 ────────────
+T.section("[7b] 官方提供 ItemUtils.checkWeapon 時不安裝")
+resetEnv(true)
+ItemUtils = { checkWeapon = function() end }
+S.load(FIX)
+T.check("7b 不建立全域", ISWorldObjectContextMenu == nil)
+T.check("7b 不印 installed 診斷", not S.printed("installed"))
+S.fireBoot()
+T.check("7b OnGameBoot 復查也不建立", ISWorldObjectContextMenu == nil)
+
+resetEnv(true)
+ItemUtils = { getContainers = function() end }
+S.load(FIX)
+T.check("7b ItemUtils 缺 checkWeapon（42.20.x）→ 照舊安裝", type(ISWorldObjectContextMenu) == "table"
+    and type(ISWorldObjectContextMenu.checkWeapon) == "function")
 
 -- ── 8. 對照組：沒有本補丁時三個呼叫點確實會炸 ──────────────────
 T.section("[8] 對照組")

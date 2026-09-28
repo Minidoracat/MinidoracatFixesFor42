@@ -10,6 +10,8 @@
   formula  fallback 複製的公式係數行（只有 MDFX_ReloadSpeedGuard 有）；
            變了 → fallback 公式要跟著更新
   exithint vanilla 出現自帶防護的跡象 → 提示評估退場（人工確認，不自動判定）
+  retired  已退場修復所依據的官方修正還在 → 補丁不介入；消失 → 人工核對
+           官方是否撤回修正、補丁要不要復役
 
 爆點在 Java 的修復（MDFX_StaleRoomGuard）用 `class` 條目：以 `javap -c -p`
 反組譯本機 projectzomboid.jar 裡的該類別，再對反組譯文字比對同樣四類指紋。
@@ -96,51 +98,32 @@ FIXES = [
     },
     # ── 0.6.0 的六條 server 端 vanilla 守衛 ──────────────────────────────
     {
-        "name": "MDFX_WorldObjectCheckWeapon（vanilla 本體）",
-        "file": "media/lua/client/ISUI/ISWorldObjectContextMenu.lua",
-        "crash": [
-            # 本補丁複製的就是這個函式本體；它還在 client/ 就代表 server 上仍然缺席
-            r"ISWorldObjectContextMenu\.checkWeapon = function\(chr\)",
-        ],
-        "depends": [
-            # 逐行等價的實作面：這些行變了就要同步改寫補丁裡的副本
-            r"if not weapon or weapon:getCondition\(\) <= 0 then",
-            r"weapon = chr:getInventory\(\):getBestWeapon\(chr:getDescriptor\(\)\)",
-            r"if weapon:isTwoHandWeapon\(\) and not chr:getSecondaryHandItem\(\) then",
-            # 官方自己就預期它會在 server 端執行（本補丁的立論依據）
-            r"sendServerCommand\(chr, 'ui', 'dirtyUI', \{ \}\);",
+        # 42.21 已退場：官方把 checkWeapon 搬到 shared 的 ItemUtils，補丁偵測到就不安裝
+        "name": "MDFX_WorldObjectCheckWeapon（已退場：ItemUtils）",
+        "file": "media/lua/shared/Items/ItemUtils.lua",
+        "retired": [
+            r"ItemUtils\.checkWeapon = function\(chr\)",
         ],
     },
     {
-        "name": "MDFX_WorldObjectCheckWeapon（呼叫點 ISDestroyStuffAction）",
+        "name": "MDFX_WorldObjectCheckWeapon（已退場：呼叫點 ISDestroyStuffAction）",
         "file": "media/lua/shared/TimedActions/ISDestroyStuffAction.lua",
-        "crash": [
-            # :311-312 complete 尾段，damageCheck 為真時無條件呼叫 client-only 全域
-            r"if sledge and sledge:damageCheck\(0,2,false\) then\s*\n\s*ISWorldObjectContextMenu\.checkWeapon\(self\.character\)",
-        ],
-        "exithint": [
-            # 官方若自己加了存在檢查
-            r"if ISWorldObjectContextMenu",
+        "retired": [
+            r"if sledge and sledge:damageCheck\(0,2,false\) then\s*\n\s*ItemUtils\.checkWeapon\(self\.character\)",
         ],
     },
     {
-        "name": "MDFX_WorldObjectCheckWeapon（呼叫點 ISPickUpGroundCoverItem）",
+        "name": "MDFX_WorldObjectCheckWeapon（已退場：呼叫點 ISPickUpGroundCoverItem）",
         "file": "media/lua/shared/TimedActions/ISPickUpGroundCoverItem.lua",
-        "crash": [
-            r"if self\.weapon and self\.weapon:damageCheck\(0,4,false\) then\s*\n\s*ISWorldObjectContextMenu\.checkWeapon\(self\.character\)",
-        ],
-        "exithint": [
-            r"if ISWorldObjectContextMenu",
+        "retired": [
+            r"if self\.weapon and self\.weapon:damageCheck\(0,4,false\) then\s*\n\s*ItemUtils\.checkWeapon\(self\.character\)",
         ],
     },
     {
-        "name": "MDFX_WorldObjectCheckWeapon（呼叫點 ISRemoveBush）",
+        "name": "MDFX_WorldObjectCheckWeapon（已退場：呼叫點 ISRemoveBush）",
         "file": "media/lua/shared/TimedActions/ISRemoveBush.lua",
-        "crash": [
-            r"if self\.weapon and self\.weapon:damageCheck\(0,4,false\) then\s*\n\s*ISWorldObjectContextMenu\.checkWeapon\(self\.character\)",
-        ],
-        "exithint": [
-            r"if ISWorldObjectContextMenu",
+        "retired": [
+            r"if self\.weapon and self\.weapon:damageCheck\(0,4,false\) then\s*\n\s*ItemUtils\.checkWeapon\(self\.character\)",
         ],
     },
     {
@@ -434,13 +417,14 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_StaleRoomGuard（成因：WorldRegionToMetaGrid）",
+        # 42.21 官方已修成因；補丁（沒有失效格子時不做事）留著當 regression 保險
+        "name": "MDFX_StaleRoomGuard（成因已由官方修正：WorldRegionToMetaGrid）",
         "class": "zombie.iso.areas.isoregion.metagrid.WorldRegionToMetaGrid",
-        "crash": [
-            # removeIsoRoom（:432-434）把被移除房間的 def 設成 null
-            r"private void removeIsoRoom\(zombie\.iso\.areas\.IsoRoom, boolean\);(?:(?!\n  \S)[\s\S])*?"
-            r"aconst_null\s+\d+: putfield\s+#\d+\s+// Field zombie/iso/areas/IsoRoom\.def:Lzombie/iso/RoomDef;",
-            # updateSquares（:601-610）只重設 chunkIsDirty 的區塊
+        "retired": [
+            # removeUserDefinedBuildingsFromCell：移除自建建築前先把它覆蓋的所有 chunk 標成 dirty
+            r"private int removeUserDefinedBuildingsFromCell\(int, int\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method markBuildingChunksDirty:\(Lzombie/iso/BuildingDef;\)V",
+            # updateSquares 重設 dirty chunk 的每一格（官方修正靠它生效）
             r"private void updateSquares\(\);(?:(?!\n  \S)[\s\S])*?// Method chunkIsDirty:\(Lzombie/iso/IsoChunk;\)Z",
         ],
     },
@@ -573,6 +557,15 @@ def main():
             if m:
                 print(f"  NOTICE   vanilla 出現自帶防護跡象（:{line_of(content, m)}）：/{pat}/")
                 print("           人工核對是否可讓本修復退場（見 docs/fixes.md 該節退場條件）")
+
+        for pat in fix.get("retired", []):
+            m = re.search(pat, content)
+            if m:
+                print(f"  OK       官方修正仍在（:{line_of(content, m)}）— 補丁已退場、不必介入")
+            else:
+                print(f"  CHANGED  官方修正形狀已變：/{pat}/")
+                print("           人工核對官方是否撤回修正、補丁要不要復役")
+                problems += 1
 
     print()
     if problems:

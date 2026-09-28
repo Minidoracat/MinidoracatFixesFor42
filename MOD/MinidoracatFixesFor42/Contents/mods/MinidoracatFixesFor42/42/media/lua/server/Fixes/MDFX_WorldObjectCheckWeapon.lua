@@ -72,6 +72,10 @@ client／單人完全不安裝（`MDFX_Guard.onServer` 的 `isServer()` 閘門�
 
 【退場條件】
 官方把 `checkWeapon` 移到 `shared/`（或在三個 shared 呼叫點自己加存在檢查）。
+**42.21 已退場**：官方把它搬成 `shared/Items/ItemUtils.lua` 的 `ItemUtils.checkWeapon`
+（本體與 vanilla :896-912 等價，含同一個 `isServer()` 分支），三個 shared 呼叫點改呼叫它，
+`ISWorldObjectContextMenu.checkWeapon` 整支刪除。`ItemUtils.checkWeapon` 存在時本檔不安裝
+（不建立 server 端的 `ISWorldObjectContextMenu` 全域、不印診斷），保留為 regression 保險。
 遊戲更新後跑 `python scripts/check_vanilla_alignment.py` 確認 vanilla 形狀是否已變。
 ]]
 
@@ -94,7 +98,9 @@ local function serverCheckWeapon(chr)
 end
 
 MDFX_Guard.onServer(function()
-    -- 已經有人提供（官方修好、別的 MOD 補了、或本檔上一輪裝過）→ 不介入。
+    -- 官方 42.21 起在 shared 提供 ItemUtils.checkWeapon，呼叫點也改用它 → 已退場，不介入。
+    if type(ItemUtils) == "table" and type(ItemUtils.checkWeapon) == "function" then return end
+    -- 已經有人提供（別的 MOD 補了、或本檔上一輪裝過）→ 不介入。
     if type(ISWorldObjectContextMenu) == "table" and type(ISWorldObjectContextMenu.checkWeapon) == "function" then return end
     ISWorldObjectContextMenu = ISWorldObjectContextMenu or {}
     ISWorldObjectContextMenu.checkWeapon = serverCheckWeapon

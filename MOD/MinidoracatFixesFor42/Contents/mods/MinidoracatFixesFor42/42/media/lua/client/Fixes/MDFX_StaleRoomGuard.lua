@@ -45,6 +45,9 @@ setRoomID(-1)，再 RecalcProperties() 讓室外旗標跟著更新（IsoGridSqua
 
 【退場條件】
 官方在 getRoomSize 補上 null 檢查，或 updateSquares 也重設失效房間的格子。
+**42.21 已退場**：removeUserDefinedBuildingsFromCell 移除每棟自建建築前先 markBuildingChunksDirty，
+updateSquares 會重設舊房間覆蓋的每一格（實機對照組拆牆後失效格子 0 幀）。本檔只在找到失效格子時
+才動作，保留為 regression 保險；爆點本身仍沒有 null 檢查。
 遊戲更新後跑 `python scripts/check_vanilla_alignment.py`（本修復登記的是 Java 指紋）。
 ]]
 

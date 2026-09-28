@@ -95,12 +95,16 @@ AnimalAvatarDefinition＋hook 時可達）。兩者都是 client 端、無 serve
 
 ### 驗證
 
-`lua scripts/test_butcher_meatratio.lua` — 29 項，全綠。涵蓋：正常屍體完全透傳
+`lua scripts/test_butcher_meatratio.lua` — 30 項，全綠。涵蓋：正常屍體完全透傳
 （參數、回傳、呼叫次數）、壞屍體擋下＋診斷恰一次、`meatRatio=0` 不誤攔而
 string／boolean 攔下、carcass=nil 擋下、getModData 拋錯時 fail-open、重複載入
 不疊 wrapper、後載 MOD 整支替換後 `OnGameBoot` 復查重新包裝（壞形狀恢復被擋、
 正常路徑透傳到替換版）、vanilla 缺席不亂補、成員快照（只新增 sentinel）。
 含對照組：同一壞屍體直打 stub vanilla 確實拋錯。
+
+carcass=nil 時診斷不再進 `pcall` 取 `AnimalType`：正式服 42.21 實見 `ISGetAnimalBones.lua:49` 以 nil 屍體呼叫，
+診斷那段 `pcall` 對 nil 解參考，錯誤雖被接住，Kahlua 仍印整段 `attempted index: getModData of non-table` ERROR 堆疊
+（家族 `pitfalls.md`：包在 `pcall` 裡只會印一段堆疊）。測試 [4] 以計數版 `pcall` 斷言補丁內部沒有被接住的錯誤。
 
 **mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
 
@@ -109,6 +113,7 @@ string／boolean 攔下、carcass=nil 擋下、getModData 拋錯時 fail-open、
 | 早退 gate 改 `if false then` | 12 項（例外外洩、原函式被呼叫、診斷缺席…） |
 | 型別判準退化回 `== nil` | 2 項（string／boolean 放行） |
 | OnGameBoot 復查永遠自認在位 | 2 項（替換後 guard 未恢復） |
+| 診斷的 `carcass ~= nil` 檢查拿掉 | 1 項（補丁內部出現被 pcall 接住的錯誤） |
 
 遊戲內：對缺欄位屍體發起屠宰——修復前 server log 出現 `__concat` 例外且零產出；
 修復後動作正常完成、log 出現一行 `[MinidoracatFixes] butcher aborted`、不再有例外。
@@ -332,16 +337,25 @@ exithint）。
 
 **完整根因、取捨、行號出處與「為什麼不那樣修」都寫在各 `.lua` 檔頭**——這裡
 只留索引，避免同一份推導維護兩份。爆點行與依賴符號登記在
-`scripts/check_vanilla_alignment.py`（12 條指紋，含三個 checkWeapon 呼叫點各一條）。
+`scripts/check_vanilla_alignment.py`（`MDFX_WorldObjectCheckWeapon` 42.21 退場後，改登記「官方修正仍在」的 4 條 retired 指紋：`ItemUtils.checkWeapon` 與三個呼叫點）。
 
 | 修復 | 檔案（`server/Fixes/`） | 爆點 | 頻率 | 玩家可見後果 | 退場條件 | 測試 |
 |------|------|------|------|------|------|------|
-| MDFX_WorldObjectCheckWeapon | `MDFX_WorldObjectCheckWeapon.lua` | 全域 `ISWorldObjectContextMenu` 在 server 上是 nil；`ISDestroyStuffAction.lua:312`、`ISPickUpGroundCoverItem.lua:35`、`ISRemoveBush.lua:79` 無條件呼叫 `checkWeapon` | 20–140 次/天（最大單項） | 工具最後一擊用壞時動作沒收尾、壞工具不卸裝 | 官方把 `checkWeapon` 移到 `shared/`，或三個呼叫點自己加存在檢查 | `test_world_object_check_weapon.lua`（33 項） |
+| MDFX_WorldObjectCheckWeapon | `MDFX_WorldObjectCheckWeapon.lua` | 全域 `ISWorldObjectContextMenu` 在 server 上是 nil；`ISDestroyStuffAction.lua:312`、`ISPickUpGroundCoverItem.lua:35`、`ISRemoveBush.lua:79` 無條件呼叫 `checkWeapon` | 20–140 次/天（最大單項） | 工具最後一擊用壞時動作沒收尾、壞工具不卸裝 | **42.21 已退場**：官方把 `checkWeapon` 搬成 `shared/Items/ItemUtils.lua` 的 `ItemUtils.checkWeapon`，三個呼叫點改呼叫它；偵測到就不安裝 | `test_world_object_check_weapon.lua`（37 項） |
 | MDFX_MilkAnimalGuard | `MDFX_MilkAnimalGuard.lua` | `ISMilkAnimal.lua:70`（同形狀另有 `:92`、`stress():41`） | 爆發日 50–320 次 | 擠奶動畫演完、桶子沒有奶 | 判準改成「桶子存在**且**有流體容器」並修掉 `:41` | `test_milk_animal_guard.lua`（43 項） |
 | MDFX_ConsolidateDrainableGuard | `MDFX_ConsolidateDrainableGuard.lua` | `ISConsolidateDrainable.lua:33` 扣來源、`:35` 目的物缺 `setUsedDelta` | 12 次/3 天 | **部分更新**：液體憑空消失、client 與 server 量不一致（本批唯一資產風險） | `:33` 之前驗兩邊型別，或 `setUsedDelta` 提到 `InventoryItem` 基類 | `test_consolidate_drainable_guard.lua`（41 項） |
 | MDFX_ClothingExtraGuard | `MDFX_ClothingExtraGuard.lua` | `ISClothingExtraAction.lua:67`（`complete:125` 缺 `isValid:6` 那道 nil guard） | 9 次/3 天 | 換裝失敗＋髒堆疊（衣物本來也不在了） | `complete()` 入口補上 `isValid:6` 同款 nil guard | `test_clothing_extra_guard.lua`（26 項） |
 | MDFX_MoveablesActionGuard | `MDFX_MoveablesActionGuard.lua` | `ISMoveablesAction.lua:308`（`place` 模式 `item` 為 nil） | 16 次/3 天 | 無——引擎本來就當「動作被拒」（`NetTimedAction.java:159-163`），只有 log 噪音 | `:308` 之前檢查 `item` | `test_moveables_action_guard.lua`（28 項） |
 | MDFX_LockDoorsGuard | `MDFX_LockDoorsGuard.lua` | `ISLockDoors.lua:46` 對 `VehiclePart` 做 `..` | 2 次/8 天 | 車門只鎖到一半（邊走邊寫留下部分更新） | `:46` 的 `part` 包上 `tostring`（像 `:42`） | `test_lock_doors_guard.lua`（33 項） |
+
+**`MDFX_WorldObjectCheckWeapon` 42.21 退場**：42.21 的 `ItemUtils.checkWeapon`（`ItemUtils.lua:16-34`）與舊版
+`ISWorldObjectContextMenu.checkWeapon` 等價（含同一個 `isServer()` 分支），`ISWorldObjectContextMenu.checkWeapon` 整支刪除，
+`ISDestroyStuffAction.lua:340-341`、`ISPickUpGroundCoverItem.lua:34-35`、`ISRemoveBush.lua:78-79` 改呼叫它。補丁在
+`onServer` 先看 `ItemUtils.checkWeapon`，是 function 就不建立 server 端的 `ISWorldObjectContextMenu` 全域、不印診斷，
+保留為 regression 保險（mutation：拿掉這道檢查 → [7b] 3 項轉紅）。正式服 42.21 第一場（約 3 小時）仍有一次
+`checkWeapon called on the server`：原版已不呼叫舊名，呼叫者是 NicksSledgehammerFix（整支覆寫
+`ISDestroyStuffAction:complete`，自帶 `if ISWorldObjectContextMenu then` 檢查）。退場後 server 上表是 nil，它照自己的
+設計跳過換裝、不拋錯，回到本 MOD 0.6.0 之前的狀態；該 MOD 在 42.21 單人（客戶端有表、沒有 `checkWeapon`）會拋錯，屬它自己要跟進的改名。
 
 ### 共用骨架的驗證
 
@@ -669,10 +683,10 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 | 項目 | 內容 |
 |------|------|
 | 檔案 | `client/Fixes/MDFX_StaleRoomGuard.lua` |
-| 影響版本 | Build 42.20.4 |
+| 影響版本 | Build 42.20.4（42.21 已由官方修正成因） |
 | 端 | client：MP 客戶端與單人都生效；專用伺服器不執行（爆點與成因都在 `!GameServer.server` 分支，本檔在 `client/`） |
 | 類型 | 原版留下的**壞格子資料**，在原版讀到之前修好；不包裝任何原版函式 |
-| 狀態 | **現役**（42.20.4-0.9.0 起） |
+| 狀態 | **已退場**（42.21 官方修正成因；補丁沒有失效格子時不做事，保留為 regression 保險） |
 
 ### 症狀（正式服唯讀調查）
 
@@ -786,14 +800,26 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 情境要先在同一帶放一面孤立的牆，讓伺服器先「發現」這些區塊，再蓋房間；在從未變動過的區塊第一次施工時，
 實測客戶端收到的區域資料沒有牆（伺服器端有），房間根本不成立。這是原版區域同步的另一個問題，與本修正無關。
 
-`python scripts/check_vanilla_alignment.py` 以 `javap` 反組譯本機 jar 比對 7 條 Java 指紋：爆點（`getRoomDef` 後直接
-`getArea`）、成因（`removeIsoRoom` 清 def、`updateSquares` 只看 `chunkIsDirty`）、兩個前提（`IsoRegions.update` 先交換
-再重建、`IsoWorld.updateWorld` 先更新玩家再重建）與依賴的 API。
+`python scripts/check_vanilla_alignment.py` 以 `javap` 反組譯本機 jar 比對 Java 指紋：爆點（`getRoomDef` 後直接
+`getArea`）、成因的官方修正（retired：`removeUserDefinedBuildingsFromCell` 呼叫 `markBuildingChunksDirty`、`updateSquares`
+只看 `chunkIsDirty`）、兩個前提（`IsoRegions.update` 先交換再重建、`IsoWorld.updateWorld` 先更新玩家再重建）與依賴的 API。
+
+### 42.21 退場
+
+42.21 的 `WorldRegionToMetaGrid.removeUserDefinedBuildingsFromCell` 在移除每棟自建建築之前先
+`markBuildingChunksDirty(buildingDef)`，把建築 `overlappedChunks`（`BuildingDef.CalculateBounds` 由所有房間 rect 外擴一格算出，
+`addRoomsOf` 合併樓層時重算）的每個 chunk 標成 dirty；`updateSquares` 因此會以 `getRoomAt` 重設舊房間覆蓋的每一格。
+42.20.4 的缺口正是這些格子沒被標記（見上方「根因」第 2 點）。`removeIsoRoom` 清 `def` 的動作搬進新的 `IsoRoom.clear(boolean)`，行為不變。
+
+實機：42.21 跑 `stale-room` 對照組（修正檔從本輪拿掉），房間成立（`enclosed=true roofed=1 size=9 building=true`）、拆掉南牆後
+30 秒內沒有崩潰，情境每幀巡視看到失效格子 **0 幀**（42.20.4 同一情境拆牆後下一幀就斷線）。
+
+爆點 `ParameterFirearmRoomSize.getRoomSize` 仍沒有 null 檢查，所以補丁不刪：它只在找到失效格子時才動作，42.21 下平常只剩每幀的腳下比對。
 
 ### 可退場條件
 
-官方在 `getRoomSize` 補上 null 檢查（`check_vanilla_alignment.py` 對「`getRoomDef` 後接 dup／astore／ifnull」有 exithint），
-或 `updateSquares` 也重設被移除房間的格子（成因指紋會 CHANGED）。遊戲更新後跑該腳本，任一條 CHANGED 都要人工重核。
+已達成（42.21 官方修正成因）。`check_vanilla_alignment.py` 的 retired 指紋若轉 CHANGED，表示官方撤回或改寫了這段修正，
+要重跑 `stale-room` 對照組確認失效格子是否復發；爆點若補上 null 檢查（exithint），補丁可整支移除。
 
 ---
 

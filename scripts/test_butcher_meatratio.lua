@@ -123,10 +123,19 @@ check("3 boolean 值攔下（:70 串接會炸）", #originalCalls == 1)
 realPrint("[4] carcass=nil 擋下")
 resetEnv()
 loadFix()
-ok = pcall(ButcheringUtil.butcherAnimalFromGround, nil, player, false)
+-- Kahlua 被 pcall 接住的錯誤仍會印整段 ERROR 堆疊：補丁自己不能在 nil 上觸發錯誤
+local caught, realPcall = 0, pcall
+pcall = function(...)
+    local r = table.pack(realPcall(...))
+    if not r[1] then caught = caught + 1 end
+    return table.unpack(r, 1, r.n)
+end
+ok = realPcall(ButcheringUtil.butcherAnimalFromGround, nil, player, false)
+pcall = realPcall
 check("4 不拋例外", ok)
 check("4 原函式未被呼叫（ISGetAnimalBones 沒有 body guard，這裡補上）", #originalCalls == 0)
 check("4 診斷標明 carcass=nil", printed("carcass=nil"))
+check("4 補丁內部沒有被 pcall 接住的錯誤（不在 nil 上取 modData）", caught == 0)
 
 -- ── 5. getModData 拋錯：fail-open ──────────────────────────────
 realPrint("[5] getModData 拋錯時 fail-open")

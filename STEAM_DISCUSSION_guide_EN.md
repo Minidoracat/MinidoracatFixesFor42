@@ -30,11 +30,11 @@
 [b]Fix[/b]: like vanilla's own code, the action ends cleanly and the client cancels it.
 [b]Scope[/b]: MP server only. [b]Retired[/b]: when vanilla adds the check.
 
-[h3]4. Actions get stuck when a tool breaks on its last swing[/h3]
+[h3]4. Actions get stuck when a tool breaks on its last swing (fixed officially in Build 42.21, retired)[/h3]
 [b]Symptom[/b]: demolishing walls, clearing clutter or cutting bushes, if the tool breaks on that swing the action doesn't finish and the broken tool stays in hand.
 [b]Cause[/b]: vanilla's broken-tool swap is client-only, so dedicated servers lack it, yet all three actions call it there.
 [b]Fix[/b]: an equivalent server copy unequips the broken tool and draws the best usable weapon.
-[b]Scope[/b]: dedicated server (SP and clients have it). [b]Retired[/b]: steps aside automatically once the game or another mod provides it.
+[b]Scope[/b]: dedicated server (SP and clients have it). [b]Retired[/b]: Build 42.21 moved the code to a shared file servers also load; this fix detects it and no longer adds its copy.
 
 [h3]5. Milking produces nothing[/h3]
 [b]Symptom[/b]: the animation plays, the bucket stays empty, the action hangs. Rare, but in bursts.
@@ -77,11 +77,11 @@
 [/list]
 [b]Scope[/b]: server and SP. [b]Retired[/b]: per part, once vanilla lifts the size limit, recognizes these crops on load, or stops resetting the clock.
 
-[h3]11. Players near a player-built house get kicked back to the main menu after walls are removed or rebuilt[/h3]
+[h3]11. Players near a player-built house get kicked back to the main menu after walls are removed or rebuilt (fixed officially in Build 42.21, retired)[/h3]
 [b]Symptom[/b]: after someone removes or rebuilds a wall of a player-built house, nearby players (often several at once) are dropped to the main menu; it works again after reconnecting until someone builds nearby again. The player's console.txt shows an error about ParameterFirearmRoomSize / RoomDef.getArea(). ItemStats errors seen at the same time are unrelated noise.
 [b]Cause[/b]: after walls or floors change, vanilla removes and rebuilds nearby player-built buildings but leaves some squares pointing at the room that no longer exists. Every frame each player's game asks how big the room under every visible player is (for gunshot sound); such a square throws, and vanilla then disconnects.
 [b]Fix[/b]: right after a rebuild, or when a player steps onto a new square, the squares around each player are checked; any still pointing at a removed room is reset before the next frame to what vanilla should have given it (not in a room). Squares the map still marks as a room are never touched. Normally it costs one cheap comparison per player per frame. When it acts, console.txt shows [MinidoracatFixes] MDFX_StaleRoomGuard repaired square.
-[b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it, but players only get the new version after the server updates the mod. [b]Retired[/b]: when vanilla checks before asking the room size, or updates those squares when rebuilding.
+[b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it. [b]Retired[/b]: Build 42.21 now updates those squares when rebuilding, so this fix finds nothing to repair there; it stays in the mod in case a later update breaks it again.
 
 [h2]⚠️ Known limitations[/h2]
 [list]

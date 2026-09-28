@@ -95,9 +95,12 @@ local function install()
             if not warnedBadCorpse then
                 warnedBadCorpse = true
                 local animalType = "carcass=nil"
-                pcall(function()
-                    animalType = tostring(carcass:getModData()["AnimalType"])
-                end)
+                -- nil 不進 pcall：Kahlua 被 pcall 接住的錯誤仍會印整段 ERROR 堆疊（正式服 42.21 實見）
+                if carcass ~= nil then
+                    pcall(function()
+                        animalType = tostring(carcass:getModData()["AnimalType"])
+                    end)
+                end
                 print("[MinidoracatFixes] butcher aborted: corpse modData lacks usable meatRatio (animal="
                     .. animalType
                     .. "); vanilla ButcheringUtil.lua:70 would throw. Further occurrences suppressed this session. See docs/fixes.md MDFX_ButcherMeatRatio")
