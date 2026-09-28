@@ -3,34 +3,38 @@
 
 [hr][/hr]
 
-[h2]🧰 What is this[/h2]
-A standing collection of fixes for vanilla bugs in Project Zomboid Build 42; each fix is retired once the game fixes it officially. No balance changes, items, UI or settings — normal gameplay is unchanged.
+A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix retired once the game fixes it officially, no balance changes.
+
+[h2]📦 Requirements[/h2]
+[list]
+[*] Supported version: Build 42.20.4+
+[*] Singleplayer and multiplayer; in MP the server enables it, and all fixes except the reload one run server-side only
+[*] Before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
+[/list]
 
 [h2]🐛 Currently included[/h2]
 [list]
-[*] [b]Some animal corpses can never be butchered[/b]: corpses missing data (mostly from animal mods) waste the whole action. Now cleanly rejected; normal butchering is untouched.
-[*] [b]Reloading does nothing with a non-firearm in hand and an ammo strap worn[/b]: now reloads normally using the vanilla formula.
-[*] [b]Server error when a petted animal just died or despawned[/b]: the action now ends cleanly.
-[*] [b]Actions get stuck when a tool breaks on its last swing[/b] (walls, clutter, bushes): now finish properly, unequip the broken tool and draw your best weapon.
-[*] [b]Milking produces nothing[/b]: if the bucket can no longer hold liquid, the action now just ends — use another bucket.
-[*] [b]Liquid vanishes when pouring into another container[/b]: both containers are now checked first; if either is invalid, nothing happens.
-[*] [b]Server error when changing clothes or placing furniture and the item is already gone[/b]: the action now ends cleanly.
-[*] [b]Vehicle doors only lock halfway[/b]: the whole vehicle is now checked first; if something is wrong, no door is touched.
-[*] [b]The server keeps re-sending unchanged crop data as players walk past farmland[/b]: it now only sends when a crop changes — watering, growth, trampling still show up instantly — saving server upload bandwidth.
-[*] [b]The farming save grows too large, gets wiped, and crops stop growing[/b]: vanilla keeps dead and trampled crops in the save forever; past the engine's size limit the whole file comes out empty and the farming clock resets. Now such crops in areas nobody is in are moved out of the save and restored exactly when someone returns (while out, dead crops don't slowly turn into trampled ones); the farming clock is also backed up, and crops that were already stuck grow again.
+[*] Some animal corpses can never be butchered
+[*] Reloading does nothing with a non-firearm in hand and an ammo strap worn
+[*] Server error when a petted animal just died or despawned
+[*] Actions get stuck when a tool breaks on its last swing
+[*] Milking produces nothing
+[*] Liquid vanishes when pouring into another container
+[*] Server error when changing clothes or placing furniture and the item is already gone
+[*] Vehicle doors only lock halfway
+[*] The server keeps re-sending unchanged crop data near farmland
+[*] The farming save grows too large, gets wiped, and crops stop growing
 [/list]
+📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3790443858/586187095760095607/]Fixes Guide: Fix List & Details[/url]
 
-[h2]📋 Mod info[/h2]
-[list]
-[*] [b]Mod ID:[/b] MinidoracatFixesFor42
-[*] [b]Supported version:[/b] Build 42.20.4+
-[*] Singleplayer and multiplayer; in MP it is enabled by the server, and all fixes except the reload one run server-side only
-[*] The cause and verification of every fix are public on GitHub
-[*] Before removing this mod: trampled/harvested crops that were moved out of the save, in areas nobody has revisited, can no longer be handled with the farming menu
-[/list]
+[h2]🔗 More Minidoracat mods[/h2]
+All my mods are in the [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat Mods for B42 collection[/url] — pick what you need.
 
 [h2]💬 Feedback & community[/h2]
-[url=https://discord.gg/Gur2V67]👉 Join the Discord server[/url]
+[list]
+[*] [url=https://github.com/Minidoracat/MinidoracatFixesFor42/issues]GitHub Issues[/url]
+[*] [url=https://discord.gg/Gur2V67]Discord[/url]
+[/list]
 
 [h2]☕ Support the author[/h2]
 If this helped, a 👍 on this page and a ⭐ on GitHub help other players find it.
