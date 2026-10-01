@@ -220,13 +220,16 @@ FIXES = [
         "name": "MDFX_GiveWaterAnimalGuard",
         "file": "media/lua/shared/TimedActions/Animals/ISGiveWaterToAnimal.lua",
         "crash": [
-            # :102-105 server 時長 -1：new() 不碰動物，nil 也建得起動作，只剩 30 分鐘上限
+            # :102-105 server 時長 -1：new() 不碰動物與水容器，nil 也建得起動作，只剩 30 分鐘上限
             r"function ISGiveWaterToAnimal:getDuration\(\)\s*if isServer\(\) then\s*return -1",
             # :97-100 每 400 ms 模擬一次 update 事件
             r'emulateAnimEvent\(self\.netAction, period, "update", nil\)',
             # :82-85 update 分支第一行就對動物取值（update() :33 有同一行，所以連函式頭一起比）
             r'function ISGiveWaterToAnimal:animEvent\(event, parameter\)\s*if isServer\(\) then\s*'
             r'if event == "update" then\s*self\.animal:getStats\(\):remove\(CharacterStat\.THIRST',
+            # :85-87 先扣口渴、再對水容器取值（:87 sendSyncEntity 只在 animEvent，update() :33-34 不會誤中）
+            r"self\.animal:getStats\(\):remove\(CharacterStat\.THIRST, 0\.05 \* self\.animal:getThirstBoost\(\)\);\s*"
+            r"self\.item:getFluidContainer\(\):removeFluid\(0\.05, false\);\s*self\.item:sendSyncEntity\(nil\)",
             # :76-78 complete 同樣無條件取值
             r'"id", self\.animal:getOnlineID\(\),',
         ],
@@ -237,9 +240,59 @@ FIXES = [
             r"self\.netAction:forceComplete\(\);",
         ],
         "exithint": [
-            # 官方若補上動物的 nil 檢查
+            # 官方若補上動物或水容器的 nil 檢查
             r"if\s+not\s+self\.animal\s+then",
+            r"if\s+not\s+self\.item\s+then",
         ],
+    },
+    # ── MDFX_AnimalCompleteGuard：四個動作在 server 只有 complete 碰動物 ──────────────
+    {
+        "name": "MDFX_AnimalCompleteGuard（牽繩）",
+        "file": "media/lua/shared/TimedActions/Animals/ISAttachAnimalToPlayer.lua",
+        "crash": [
+            # complete :42（牽上）／:50（解開）對動物取值
+            r"function ISAttachAnimalToPlayer:complete\(\)\s*if not self\.remove then\s*if self\.animal:getData\(\):getAttachedTree\(\) then",
+            r"self\.character:getAttachedAnimals\(\):remove\(self\.animal\);\s*self\.animal:getData\(\):setAttachedPlayer\(nil\);",
+            # 前提：server 端沒有 serverStart／animEvent 先碰動物
+            r"\A(?![\s\S]*function ISAttachAnimalToPlayer:(?:serverStart|animEvent)\b)",
+        ],
+        "depends": [r"function\s+ISAttachAnimalToPlayer:complete\s*\("],
+        "exithint": [r"if\s+not\s+self\.animal\s+then"],
+    },
+    {
+        "name": "MDFX_AnimalCompleteGuard（拴樹）",
+        "file": "media/lua/shared/TimedActions/Animals/ISAttachAnimalToTree.lua",
+        "crash": [
+            # complete :42（解開）／:47（拴上）對動物取值
+            r"function ISAttachAnimalToTree:complete\(\)\s*if self\.remove then\s*self\.animal:getData\(\):setAttachedTree\(nil\);",
+            r"self\.animal:getData\(\):setAttachedTree\(self\.tree\);",
+            r"\A(?![\s\S]*function ISAttachAnimalToTree:(?:serverStart|animEvent)\b)",
+        ],
+        "depends": [r"function\s+ISAttachAnimalToTree:complete\s*\("],
+        "exithint": [r"if\s+not\s+self\.animal\s+then"],
+    },
+    {
+        "name": "MDFX_AnimalCompleteGuard（裝拖車）",
+        "file": "media/lua/shared/TimedActions/Animals/ISAddAnimalInTrailer.lua",
+        "crash": [
+            # complete :76（從地上）對動物取值；:66（從手上）把動物交給 Java 的 addAnimalFromHandsInTrailer
+            r'self\.vehicle:getAreaDist\("AnimalEntry", self\.animal:getSquare\(\):getX\(\)',
+            r"self\.vehicle:addAnimalFromHandsInTrailer\(self\.animal, self\.character\)",
+            r"\A(?![\s\S]*function ISAddAnimalInTrailer:(?:serverStart|animEvent)\b)",
+        ],
+        "depends": [r"function\s+ISAddAnimalInTrailer:complete\s*\("],
+        "exithint": [r"function ISAddAnimalInTrailer:complete\(\)\s*if\s+not\s+self\.animal"],
+    },
+    {
+        "name": "MDFX_AnimalCompleteGuard（手餵）",
+        "file": "media/lua/shared/TimedActions/Animals/ISFeedAnimalFromHand.lua",
+        "crash": [
+            # complete :46 第一行就對動物取值
+            r"function ISFeedAnimalFromHand:complete\(\)\s*self\.animal:getBehavior\(\):setBlockMovement\(false\);",
+            r"\A(?![\s\S]*function ISFeedAnimalFromHand:(?:serverStart|animEvent)\b)",
+        ],
+        "depends": [r"function\s+ISFeedAnimalFromHand:complete\s*\("],
+        "exithint": [r"if\s+not\s+self\.animal\s+then"],
     },
     # ── 農作物同步「有變才送」：crash 在這裡指「原版無條件重送的形狀」──────────
     {

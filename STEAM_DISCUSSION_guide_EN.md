@@ -84,10 +84,16 @@
 [b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it. [b]Retired[/b]: Build 42.21 now updates those squares when rebuilding, so this fix finds nothing to repair there; it stays in the mod in case a later update breaks it again.
 
 [h3]12. Watering an animal the server no longer knows makes the server error nonstop[/h3]
-[b]Symptom[/b]: in MP the watering action hangs at the end of its bar, the animal gets no water and none is used; meanwhile the server logs an error every 0.4 s until the player cancels, does something else, leaves, or the server restarts (up to 30 minutes).
-[b]Cause[/b]: the server can't find the animal being watered (the two sides briefly disagree; the root cause is still being traced). Vanilla starts anyway and errors on every sip, so its "stop when full or out of water" check is never reached.
-[b]Fix[/b]: on the first sip the server ends the action cleanly and the client cancels it; water and XP are untouched. One server log line per action records the player and position to help trace the cause (up to 20 per start). Normal watering is unchanged.
-[b]Scope[/b]: MP server only. [b]Retired[/b]: when vanilla checks for a missing animal.
+[b]Symptom[/b]: in MP the watering action hangs at the end of its bar; meanwhile the server logs an error every 0.4 s until the player cancels, does something else, leaves, or the server restarts (up to 30 minutes).
+[b]Cause[/b]: the server can't find the animal being watered, or the player's water container (the two sides briefly disagree; the root cause is still being traced). Vanilla starts anyway and errors on every sip, so its "stop when full or out of water" check is never reached. With a missing container it's worse: each sip takes thirst off the animal before erroring, quenching it without using any water.
+[b]Fix[/b]: on the first sip the server ends the action cleanly and the client cancels it; the animal, water and XP are untouched. One server log line per action records the player and position to help trace the cause (up to 20 per start). Normal watering is unchanged.
+[b]Scope[/b]: MP server only. [b]Retired[/b]: when vanilla checks for a missing animal or container.
+
+[h3]13. Leashing, tying, loading into a trailer or hand-feeding an animal the server no longer knows makes the server error[/h3]
+[b]Symptom[/b]: in MP the action finishes without effect and the server logs an error.
+[b]Cause[/b]: as above, the server can't find the animal. These four don't hang, but each errors once at the end; the action never happened anyway.
+[b]Fix[/b]: the server rejects the action outright without the error, logging the player and position the same way (one line per action, up to 20 per start). Normal use is unchanged.
+[b]Scope[/b]: MP server only. [b]Retired[/b]: each one separately, once vanilla adds its check.
 
 [h2]⚠️ Known limitations[/h2]
 [list]
@@ -97,7 +103,7 @@
 [*] Milking and doors can error in SP too, but only MP cases are on record, so only MP is handled.
 [*] Player-built house disconnect: a player who jumps more than one square in a single frame (teleport, lag correction, a very fast vehicle) onto such a square can still be disconnected.
 [*] Broken corpses have other client-side error spots (e.g. trailer menu), not covered.
-[*] Watering: leashing, tying to a tree, hand-feeding and loading into a trailer error only once in the same situation and aren't covered; the log line has no ID of the requested animal (lost when the server parses it).
+[*] Watering and the other animal actions: the log line has no ID of the requested animal (lost when the server parses it). Loading an animal into a trailer from your hands while the server thinks you hold an animal errors when the action is created; not covered.
 [/list]
 
 [h2]🧹 Before removing this mod[/h2]
@@ -110,7 +116,7 @@
 [h2]❓ FAQ[/h2]
 [list]
 [*] [b]Items on corpses (e.g. a red digital watch) can't be picked up?[/b] Not covered or investigated yet; report on GitHub Issues with the item, a screenshot and log, noting if pure vanilla does it too.
-[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering fix logs one per action, up to 20, to help trace the cause); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
+[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
 [*] [b]Load order?[/b] Usually irrelevant: if a later mod replaces the same vanilla code, most fixes re-attach at startup and keep its changes; crop sync steps aside.
 [*] [b]CleanUI inventory fix?[/b] Retired: CleanUI v2.7.9 fixed it; the patch stays dormant.
 [*] [b]Trailer / multi-tile furniture debris fixes?[/b] Removed in 0.4.0, unmaintained.

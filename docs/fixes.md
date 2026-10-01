@@ -823,13 +823,13 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 
 ---
 
-## MDFX_GiveWaterAnimalGuard — 餵水動作在伺服器找不到動物時每 400 ms 拋錯、停不下來
+## MDFX_GiveWaterAnimalGuard — 餵水動作在伺服器找不到動物或水容器時每 400 ms 拋錯、停不下來
 
 | 項目 | 內容 |
 |------|------|
 | 檔案 | `server/Fixes/MDFX_GiveWaterAnimalGuard.lua` |
 | 影響版本 | Build 42.21.0 |
-| 端 | server，且只在 `isServer()` 安裝（單人與客戶端的 `self.animal` 是 `new()` 當下的本地物件，不會是 nil） |
+| 端 | server，且只在 `isServer()` 安裝（單人與客戶端的動物與水容器是 `new()` 當下的本地物件，不會是 nil） |
 | 類型 | 前置判準包裝原版 `animEvent`／`complete`，每個動作記一行診斷 |
 | 狀態 | **未發布**（CHANGELOG `[Unreleased]`） |
 
@@ -847,27 +847,35 @@ attempted index: getStats of non-table: null
 ```
 
 同一段時間原版的牽繩（`ISAttachAnimalToPlayer.complete`）與裝拖車（`ISAddAnimalInTrailer.complete`）也因為同樣的
-原因對 nil 動物拋錯，但各只一次；沒裝任何畜牧介面 MOD 的時期也出現過。問題在伺服器不認得 client 指定的動物，
-與發起動作的介面無關。client 為什麼會拿著伺服器不認得的動物還沒查到，本修正的診斷紀錄就是為了追它。
+原因對 nil 動物拋錯，但各只一次（由 `MDFX_AnimalCompleteGuard` 處理）；沒裝任何畜牧介面 MOD 的時期也出現過。問題在
+伺服器不認得 client 指定的動物，與發起動作的介面無關。client 為什麼會拿著伺服器不認得的動物還沒查到，本修正的
+診斷紀錄就是為了追它。
+
+同一支 `animEvent` 還有另一個形狀：動物在、但伺服器找不到 client 指定的水容器。原版每 400 ms 先扣動物 0.05 口渴
+才拋錯，一滴水都沒用就把動物餵到不渴，30 分鐘到時還以成功結束。這個形狀沒有正式服實據，與動物 nil 同一種成因、
+同一個迴圈，使用者同意一併處理。
 
 ### 根因（行號為 42.21.0 原版 Lua 與反編譯快照）
 
 1. **動作照樣建立**：client 把動物寫成 online ID（`PZNetKahluaTableImpl.java:404-407`），server 以
-   `AnimalInstanceManager.get(id)` 解回（`AnimalID.java:22-25`），查不到就是 nil（`PZNetKahluaTableImpl.java:598-601`），
-   而且參數表照位置保留這個 nil（`load` 直接寫入底層 map，`:516-522`），後面的物品參數不會錯位。
-   `NetTimedAction.parse`（`NetTimedAction.java:142-171`）用它呼叫 `new()`（`ISGiveWaterToAnimal.lua:124-133`）：
-   只做欄位賦值，`getDuration()` 在 server 第一行就回 -1（`:102-105`），不碰動物，所以 `new()` 成功、動作被接受。
+   `AnimalInstanceManager.get(id)` 解回（`AnimalID.java:22-25`），查不到就是 nil（`PZNetKahluaTableImpl.java:598-601`）；
+   水容器以「容器＋物品 ID」傳送，server 在那個容器裡 `getItemWithID` 找不到也是 nil（`:473-478`）。參數表照位置保留
+   nil（`load` 直接寫入底層 map，`:516-522`），後面的參數不會錯位。`NetTimedAction.parse`（`NetTimedAction.java:142-171`）
+   用它們呼叫 `new()`（`ISGiveWaterToAnimal.lua:124-133`）：只做欄位賦值，`getDuration()` 在 server 第一行就回 -1
+   （`:102-105`），兩個都不碰，所以 `new()` 成功、動作被接受。
 2. **每 400 ms 拋一次**：`serverStart`（`:97-100`）以 `emulateAnimEvent` 每 `timePerUse × 20`＝400 ms 模擬一次 `update`。
-   `animEvent` 在 `:85` 第一行就對動物取值，後面「喝飽或水用完就 `self.netAction:forceComplete()`」（`:90-92`）永遠到不了。
+   `animEvent` 第一行（`:85`）對動物取值、第二行（`:86`）對水容器取值，後面「喝飽或水用完就
+   `self.netAction:forceComplete()`」（`:90-92`）永遠到不了。水容器 nil 時 `:85` 已經扣掉口渴。
 3. **不會自己結束**：時長 -1 經 `NetTimedAction.getDuration`（`:78`）原樣保留，`Action.setTimeData`（`Action.java:30-31`）
    把它換成 `AnimEventEmulator.getDurationMax()`＝30 分鐘。在那之前只有 client 取消（`GeneralActionPacket.java:44` →
    `ActionManager.remove`，`ActionManager.java:160-191`）、同一玩家開始新動作（`NetTimedActionPacket.java:70`）、
    玩家斷線（`GameServer.java:4440` → `ActionManager.disconnectPlayer`，`:245-256`）或伺服器重啟會結束它。
-   30 分鐘到時模擬事件被移除（`AnimEventEmulator.java:46`），`perform` 呼叫 `complete`，`:77` 再對 nil 取值拋一次，
+   30 分鐘到時模擬事件被移除（`AnimEventEmulator.java:46`），`perform` 呼叫 `complete`：動物 nil 時 `:77` 再拋一次，
    `pcallBoolean` 回 null（`KahluaThread.java:1329-1338`）、拆箱例外被 `NetTimedAction.perform`（`:132-139`）接住回 false，
-   走 Reject。client 的動作在 `waitForFinished` 下一直等伺服器結果（`BaseAction.java:174-176`）。
-   伺服器上若有 MOD 改寫 `getDuration`（例如把 client 算好的 maxTime 帶到 server 的時長同步修正），時長就不是 -1：
-   動作會在那個時間到時走 `complete`、在 `:77` 再拋一次後 Reject。本修正不依賴時長：先到的是模擬事件還是 `complete`，都會結束並拒絕動作。
+   走 Reject；水容器 nil 時 `complete` 只碰動物、回 true，以成功結束。client 的動作在 `waitForFinished` 下一直等伺服器
+   結果（`BaseAction.java:174-176`）。伺服器上若有 MOD 改寫 `getDuration`（例如把 client 算好的 maxTime 帶到 server 的
+   時長同步修正），時長就不是 -1，動作會在那個時間到時走 `complete`。本修正不依賴時長：先到的是模擬事件還是
+   `complete`，都會結束並拒絕動作。
 
 server 端會被呼叫的 Lua 只有 `getDuration`（含 `adjustMaxTime`，-1 不調整）、`serverStart`、`animEvent`、`complete`；
 `ISGiveWaterToAnimal` 與 `ISBaseTimedAction` 都沒有 `serverStop`。`isUsingTimeout`（`NetTimedAction.java:53`）只在 client
@@ -877,20 +885,20 @@ server 端會被呼叫的 Lua 只有 `getDuration`（含 `adjustMaxTime`，-1 �
 
 只在 `isServer()` 包裝兩個 method（共用骨架 `MDFX_Guard`）：
 
-| method | 動物為 nil 時 | 依據 |
-|--------|--------------|------|
-| `animEvent` | event 是 `"update"`：`netAction:forceComplete()`、記一行、return，不呼叫原函式；**其他 event 原樣透傳** | vanilla `:90-92` 自己的結束方式；原版對其他 event 什麼都不做（`:84`） |
-| `complete` | 記一行（同一動作已記過就不再記）、回 `false` | `NetTimedAction.perform` 把 false 交給 `ActionManager.update`（`ActionManager.java:87-97`）走 Reject、通知 client 取消；原版在這裡拋錯時也被接成 false，結局相同 |
+| method | 動物或水容器為 nil 時 | 依據 |
+|--------|---------------------|------|
+| `animEvent` | event 是 `"update"`：`netAction:forceComplete()`、記一行、return，不呼叫原函式（所以也不會先扣口渴）；**其他 event 原樣透傳** | vanilla `:90-92` 自己的結束方式；原版對其他 event 什麼都不做（`:84`） |
+| `complete` | 記一行（同一動作已記過就不再記）、回 `false` | `NetTimedAction.perform` 把 false 交給 `ActionManager.update`（`ActionManager.java:87-97`）走 Reject、通知 client 取消。動物 nil：原版在這裡拋錯也被接成 false，結局相同。水容器 nil：原版會回 true，但伺服器其實沒做這個動作，拒絕才對，也與動物 nil 一致 |
 
 `forceComplete` 把結束時間設成現在（`NetTimedAction.java:173-175`）。server 每幀先跑含模擬事件的 `UpdateStuff`
 （`IngameState.java:1559`，模擬事件在 `:662`），再跑 `updateManagers`（`:1645`，`ActionManager.update` 在 `:1659`），
 所以同一幀就呼叫 `complete`：一個動作只走一次 `animEvent`，client 送出後約 0.4 秒收到拒絕。
-動物存在時兩個 method 原樣透傳，正常餵水零行為差異。
+動物與水容器都在時兩個 method 原樣透傳，正常餵水零行為差異。
 
 刻意不做的事：
 
-- 不補 `self.item` 為 nil（`:86`，動物在、物品不在）：同一支 `animEvent` 的另一個形狀，沒有正式服實據，照原版外洩。
-  原版在這個形狀下 `:85` 先扣口渴再在 `:86` 拋錯，每 400 ms 一次，動物會被免費餵到不渴。
+- 物品在、但不是流體容器（`getFluidContainer()` 回 nil，同樣在 `:86` 拋錯）不處理：成因是物品被換掉，不是伺服器
+  解析不到，沒有實據，照原版外洩。
 - 不替 client 找附近另一隻動物接手：伺服器不認得玩家指定的動物，猜一隻等於發明行為。
 - 不攔 `serverStart`：爆點與原版的結束路徑都在 `animEvent`，多等的 0.4 秒不影響結果。
 
@@ -901,14 +909,17 @@ server 端會被呼叫的 Lua 只有 `getDuration`（含 `adjustMaxTime`，-1 �
 印一次上限提示，之後照樣拒絕、不再記錄。正式服每輪 0–3 次，上限只防異常時洗版。
 
 ```
-[MinidoracatFixes] MDFX_GiveWaterAnimalGuard nilAnimal n=<本 session 第幾個> player="<帳號>" x=<格> y=<格> z=<層> item=<物品全名|nil> via=<animEvent|complete>; the server has no such animal, so the watering action is rejected instead of throwing at ISGiveWaterToAnimal.lua:85 every 400 ms. See docs/fixes.md MDFX_GiveWaterAnimalGuard
-[MinidoracatFixes] MDFX_GiveWaterAnimalGuard nilAnimal limit=20 reached; further watering actions without a server-side animal are still rejected but not logged this session. See docs/fixes.md MDFX_GiveWaterAnimalGuard
+[MinidoracatFixes] MDFX_GiveWaterAnimalGuard nilAnimal n=<本 session 第幾個> player="<帳號>" x=<格> y=<格> z=<層> item=<物品全名|nil> via=<animEvent|complete>; the server has no such animal, so the watering action is rejected instead of erroring every 400 ms. See docs/fixes.md MDFX_GiveWaterAnimalGuard
+[MinidoracatFixes] MDFX_GiveWaterAnimalGuard nilItem n=<本 session 第幾個> player="<帳號>" x=<格> y=<格> z=<層> animal=<種類>#<online ID> via=<animEvent|complete>; the server cannot find the water container in the player's inventory, so the watering action is rejected instead of watering for free and erroring every 400 ms. See docs/fixes.md MDFX_GiveWaterAnimalGuard
+[MinidoracatFixes] MDFX_GiveWaterAnimalGuard limit=20 reached; further watering actions the server cannot resolve are still rejected but not logged this session. See docs/fixes.md MDFX_GiveWaterAnimalGuard
 ```
 
-- grep：`MDFX_GiveWaterAnimalGuard nilAnimal n=` 只抓每個動作那一行；`MDFX_GiveWaterAnimalGuard nilAnimal` 連上限提示一起抓。
+- grep：`MDFX_GiveWaterAnimalGuard nil` 抓每個動作那一行（兩種）；`MDFX_GiveWaterAnimalGuard` 連上限提示一起抓。
 - 欄位以空白分隔、固定順序；`player` 一律加雙引號（帳號可以有空白），座標是玩家所在格（`math.floor`），
-  角色是 nil 時寫 `player=? x=? y=? z=?`，物品是 nil 時寫 `item=nil`（表示連物品也沒解析到）。
+  角色是 nil 時寫 `player=? x=? y=? z=?`。動物與水容器都 nil 時記成 `nilAnimal ... item=nil`。
+  `nilItem` 的 `animal=` 是伺服器上那頭動物的種類與 online ID（client 指定的就是它）。
 - 時間用 console 每行開頭的時間戳。`via=animEvent` 是正常路徑；`via=complete` 表示動作沒走過模擬事件就到了 `complete`。
+- 訊息刻意不寫原版檔名行號：監控用 `grep 'ISGiveWaterToAnimal.lua'` 數原版錯誤時，不會把這行算進去。
 - **沒有 client 指定的動物 ID**：它在 `AnimalID.parse` 就只剩解析結果，Lua 拿不到；要記 ID 得在 Java 端
   （`NetTimedActionPacket` 解析參數時）處理。
 
@@ -920,66 +931,170 @@ server 端會被呼叫的 Lua 只有 `getDuration`（含 `adjustMaxTime`，-1 �
 | 動作 | server 時長 | nil 動物能不能走到 `animEvent` |
 |------|------------|------------------------------|
 | `ISGiveWaterToAnimal` | -1（`:102-105`） | **能**：`new()` 不碰動物 → 本修正 |
-| `ISMilkAnimal` | -1（`:218-246`） | 不能：`new()` 在 `:266` 先對 `animal:getMilkAnimPreset()` 取值，`parse` 收到例外直接拒絕（`NetTimedAction.java:159-163`）；`serverStart` 也在 `:212` 先取值、註冊不到模擬事件 |
-| `ISShearAnimal` | 正數，由 `getDuration`（`:138-143`）對動物取值算出 | 不能：`new()` 在 `:160` 呼叫 `getDuration` 就拋錯，動作建立不起來 |
+| `ISMilkAnimal` | -1（`:218-246`） | 不能：`new()` 在 `:266` 先對 `animal:getMilkAnimPreset()` 取值，`parse` 時拋一次錯（記一次堆疊）就被拒絕（`NetTimedAction.java:159-163`）；`serverStart` 也在 `:212` 先取值 |
+| `ISShearAnimal` | 正數，由 `getDuration`（`:138-143`）對動物取值算出 | 不能：`new()` 在 `:160` 呼叫 `getDuration`，`parse` 時拋一次錯就被拒絕 |
 
 `ISLureAnimal` 時長也是 -1、也重複模擬事件，但 server 端不用 `self.animal`。
 
-只拋一次、不會重複的動物動作（時長是正數、沒有模擬事件，`new()` 不碰動物，到時間 `complete` 對 nil 取值拋一次，
-`perform` 回 false 走 Reject）：`ISAttachAnimalToPlayer.complete`（`:42`／`:50`）、`ISAddAnimalInTrailer.complete`（`:76`，
-從手上放入走 `:66` 交給 Java）、`ISAttachAnimalToTree.complete`（`:42`／`:47`）、`ISFeedAnimalFromHand.complete`（`:46`）。
-前兩個在正式服 log 有實據。這次不處理，有需要再比照 `MDFX_ClothingExtraGuard` 在 `complete` 入口回 false。
-`ISPickupAnimal.complete` 先以 `isValid()`（`:6`）擋掉 nil 動物（`:42-44`），不會拋錯。
+只拋一次、不會重複的動物動作（時長是正數、沒有模擬事件，`new()` 不碰動物，到時間 `complete` 對 nil 取值拋一次）：
+牽繩、拴樹、裝拖車、手餵，見下一節 `MDFX_AnimalCompleteGuard`。`ISPickupAnimal.complete` 先以 `isValid()`（`:6`）擋掉
+nil 動物（`:42-44`），不會拋錯。擠奶與剪毛在 parse 時那一次錯沒有正式服實據，不處理。
 
 ### 驗證
 
-`lua scripts/test_give_water_animal_guard.lua` — 74 項，全綠。假引擎照 42.21.0 反編譯快照驅動 server 端整條路徑
+`lua scripts/test_give_water_animal_guard.lua` — 81 項，全綠。假引擎照 42.21.0 反編譯快照驅動 server 端整條路徑
 （`parse` → `setTimeData` → `serverStart` → 每幀 100 ms 先模擬事件、再動作管理 → `perform`／Reject），原版
 `ISGiveWaterToAnimal` 的 server 端 method 照行號抄成 stub。涵蓋：`isServer()` 為假時零介入；正常餵水兩種結束（喝飽、
 水用完）與原版逐事件相同（口渴、水量、XP、時間、Done、`setThirst`）；動物為 nil 時只走一次模擬事件、零例外、
 在 0.4 秒以 Reject 結束並通知 client、水量與 XP 不變、診斷恰一行且欄位齊全；對照組（不載入修正）每 400 ms 拋一次、
-動作一直掛著，30 分鐘上限到時 `complete` 再拋一次、`perform` 失敗走 Reject；`netAction` 為 nil 時走到上限由 `complete`
-記一行；同一動作重複事件只記一行；25 個動作只記 20 行＋一次上限提示；`self.item` 為 nil、原函式自己拋錯照原版外洩，
-非 `update` 事件照常交給原函式；重複載入不疊、後載 MOD 替換後復查重裝；vanilla 缺席／部分缺席不亂補；成員快照；
-角色與物品都是 nil 時診斷不炸；別的 MOD 把 server 時長改成正數時（例如帶 client 的 maxTime），修正照樣在第一個模擬事件結束、
-時長比 0.4 秒短則由 `complete` 先擋下。
+動作一直掛著，30 分鐘上限到時 `complete` 再拋一次、`perform` 失敗走 Reject；動物在、水容器 nil 時修正一樣在 0.4 秒拒絕、
+不扣口渴、記一行 `nilItem`，對照組則每次事件白扣口渴再拋錯、30 分鐘時以 Done 結束；`netAction` 為 nil 時走到上限由
+`complete` 記一行；同一動作重複事件只記一行；25 個動作只記 20 行＋一次上限提示；物品不是流體容器、原函式自己拋錯照原版
+外洩，非 `update` 事件照常交給原函式；重複載入不疊、後載 MOD 替換後復查重裝；vanilla 缺席／部分缺席不亂補；成員快照；
+角色與物品都是 nil 時診斷不炸；別的 MOD 把 server 時長改成正數時（例如帶 client 的 maxTime），修正照樣在第一個模擬事件
+結束、時長比 0.4 秒短則由 `complete` 先擋下。
 
-**mutation 驗證**（`lua scripts/test_give_water_animal_guard.lua --mutants`，12 個全部抓到；含拿掉整支修正與共用骨架三道防線）：
+**mutation 驗證**（`lua scripts/test_give_water_animal_guard.lua --mutants`，15 個全部抓到；含拿掉整支修正與共用骨架三道防線）：
 
 | 突變 | 轉紅 |
 |------|------|
-| 不載入修正 | 27 項 |
-| `animEvent` 不判 nil（一律交給原函式） | 19 項 |
+| 不載入修正 | 30 項 |
+| `animEvent` 不判 nil（一律交給原函式） | 22 項 |
 | `animEvent` 攔下所有 event | 1 項 |
-| `animEvent` 不 `forceComplete` | 9 項 |
-| `animEvent` 不記診斷 | 2 項 |
-| `complete` 不判 nil | 10 項 |
-| `complete` 回 true | 6 項 |
-| 每個動作不只記一次 | 3 項 |
+| `animEvent` 只判動物、不判水容器 | 3 項 |
+| `animEvent` 不 `forceComplete` | 10 項 |
+| `animEvent` 不記診斷 | 3 項 |
+| `complete` 不判 nil | 12 項 |
+| `complete` 只判動物、不判水容器 | 2 項 |
+| `complete` 回 true | 7 項 |
+| 每個動作不只記一次 | 4 項 |
+| 水容器 nil 也記成 `nilAnimal` | 1 項 |
 | 沒有 session 上限 | 2 項 |
 | `MDFX_Guard` 拆掉 `isServer()` 閘門／冪等 marker／診斷節流 | 3／2／1 項 |
 
-`python scripts/check_vanilla_alignment.py` 登記 4 條爆點（server 時長 -1、`update` 模擬事件、`animEvent` 第一行取值、
-`complete` 取值）、3 個依賴符號與「官方補上 nil 檢查」的退場提示。
+`python scripts/check_vanilla_alignment.py` 登記 5 條爆點（server 時長 -1、`update` 模擬事件、`animEvent` 第一行對動物取值、
+`:85-87` 先扣口渴再對水容器取值、`complete` 取值）、3 個依賴符號與「官方補上動物或水容器 nil 檢查」的退場提示。
 
-實機 E2E（`fixes-e2e` skill 的 `give-water`，MP 專用伺服器，42.21.0）：伺服器在玩家旁生一頭牛，客戶端直接排原版餵水動作。
-nil 動物用「舊物件」重現：伺服器 `removeAnimal` 後，客戶端拿手上原本那個 IsoAnimal 排動作，伺服器 `AnimalID.parse` 查無此 ID，
-`self.animal` 是 nil——與正式服同一條解析路徑。
+實機 E2E（`fixes-e2e` skill 的 `give-water`，MP 專用伺服器，42.21.0，修正組與對照組各跑兩輪）：伺服器在玩家旁生牛，客戶端直接排原版
+餵水動作。動物 nil 用「舊物件」重現：伺服器 `removeAnimal` 後，客戶端拿手上原本那個 IsoAnimal 排動作，伺服器 `AnimalID.parse`
+查無此 ID——與正式服同一條解析路徑。水容器 nil 用客戶端自己 `AddItem` 的水桶（伺服器沒有這個物品 ID）。
 
 | 場次 | 結果 |
 |------|------|
-| MP 對照組（修正檔從本輪拿掉） | nil 動作排入後約 0.45 秒起，每約 0.48 秒一次 `Lua(Vanilla).animEvent> Exception thrown`（`attempted index: getStats of non-table: null`、`ISGiveWaterToAnimal.lua:85`，堆疊與正式服相同），8 秒內 16 次；客戶端動作 8 秒後仍在跑，情境取消後才停；水量、XP 不變 |
-| MP 修正組 | 排入 0.43 秒後伺服器記一行 `MDFX_GiveWaterAnimalGuard nilAnimal n=1 player="test" … item=Base.Bucket via=animEvent`（座標與客戶端排入時相同），客戶端 0.5 秒內被拒絕結束；`SERVER STARTED` 之後沒有任何例外；水量、XP 不變 |
-| 正常餵水（兩組各兩種） | 喝飽結束（口渴 0.12、水 1 L）與水用完結束（口渴 0.9、水 0.15 L）兩組逐字相同：都是 3 次事件，口渴 -0.12／-0.15、水 -0.15 L、Husbandry XP +1.5 |
+| 對照組，動物 nil | 排入後約 0.45 秒起，每約 0.48 秒一次 `Lua(Vanilla).animEvent> Exception thrown`（`attempted index: getStats of non-table: null`、`ISGiveWaterToAnimal.lua:85`，堆疊與正式服相同），8 秒內 16 次；客戶端動作 8 秒後仍在跑，情境取消後才停；水量、XP 不變（兩輪相同） |
+| 對照組，水容器 nil | 8 秒內 17 次例外（`getFluidContainer of non-table: null`、`:86`）；伺服器端牛的口渴 0.90 → 0.50（4 秒）→ 0.10（7.5 秒），取消後停在 0.05，真水桶 1 L 沒少——白餵實機確認 |
+| 修正組，動物 nil | 排入約 0.45 秒後伺服器記一行 `MDFX_GiveWaterAnimalGuard nilAnimal n=1 player="test" … item=Base.Bucket via=animEvent`（座標與客戶端排入時相同），客戶端 0.5 秒內被拒絕結束；水量、XP 不變（兩輪相同） |
+| 修正組，水容器 nil | 記一行 `nilItem n=2 … animal=cow#<那頭牛的 online ID> via=animEvent`，客戶端 0.48 秒被拒絕；伺服器端口渴 0.90 → 0.90、真水桶與 XP 不變 |
+| 修正組整體 | `SERVER STARTED` 之後排除 `[MinidoracatFixes]` 行，沒有任何 `Exception thrown`／`NOT installed`／`Perform failed` |
+| 正常餵水（四次各兩種） | 喝飽結束（口渴 0.12、水 1 L）與水用完結束（口渴 0.9、水 0.15 L）四次逐字相同：都是 3 次事件，口渴 -0.12／-0.15、水 -0.15 L、Husbandry XP +1.5 |
 
 數原版例外要用 `Lua(Vanilla).animEvent> Exception thrown`：每次例外 `getStats of non-table` 印兩行、`ISGiveWaterToAnimal.lua:85`
-印三行，而本修正的診斷行自己也含 `ISGiveWaterToAnimal.lua:85` 字樣。
+印三行。
 
 ### 可退場條件
 
-官方在 `animEvent`（或 `serverStart`）與 `complete` 補上 `self.animal` 的 nil 檢查（`check_vanilla_alignment.py` 對
-`if not self.animal then` 形狀有 exithint）。官方只補一半時（例如只在 `animEvent` 結束動作），`complete` 仍會對 nil
-取值拋一次，屆時評估只留 `complete` 那一半。
+官方在 `animEvent`（或 `serverStart`）與 `complete` 補上動物與水容器的 nil 檢查（`check_vanilla_alignment.py` 對
+`if not self.animal then`／`if not self.item then` 形狀有 exithint）。官方只補一半時（例如只在 `animEvent` 結束動作），
+`complete` 仍會對 nil 取值拋一次，屆時評估只留 `complete` 那一半。
+
+---
+
+## MDFX_AnimalCompleteGuard — 牽繩、拴樹、裝拖車、手餵在伺服器找不到動物時 complete 拋錯
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_AnimalCompleteGuard.lua` |
+| 影響版本 | Build 42.21.0 |
+| 端 | server，且只在 `isServer()` 安裝（同上，單人與客戶端的動物是本地物件） |
+| 類型 | 前置判準包裝四個原版動作的 `complete`，每個動作記一行診斷 |
+| 狀態 | **未發布**（CHANGELOG `[Unreleased]`） |
+
+### 症狀
+
+多人遊戲對一隻伺服器不認得的動物牽繩、拴樹、裝進拖車或手餵：動作跑完後伺服器拋一次錯（整段堆疊＋`Perform failed`），
+動作被拒絕，什麼都沒發生。正式服 log 實據：牽繩（`ISAttachAnimalToPlayer.lua:42`）與裝拖車（`ISAddAnimalInTrailer.lua:76`）
+在 `MDFX_GiveWaterAnimalGuard` 出事的同一段時間各出現過，沒裝畜牧介面 MOD 的時期也有；拴樹、手餵是同形狀，使用者同意一併處理。
+
+### 根因（行號為 42.21.0 原版 Lua 與反編譯快照）
+
+成因與上一節相同：client 指定的動物，server 用 online ID 查不到（`AnimalID.java:22-25`），`NetTimedAction.parse` 照樣用 nil
+建立動作。這四個動作的 `new()` 都不碰動物、`getDuration()` 回正數（只看 `isTimedActionInstant`），server 端也沒有
+`serverStart`／`animEvent`，所以時間到時 `complete` 第一次對動物取值才拋錯：
+
+| 動作 | 爆點 |
+|------|------|
+| `ISAttachAnimalToPlayer`（牽繩） | `:42` 牽上、`:50` 解開：`self.animal:getData()` |
+| `ISAttachAnimalToTree`（拴樹） | `:42` 解開、`:47` 拴上：`self.animal:getData()` |
+| `ISAddAnimalInTrailer`（裝拖車） | `:76` 從地上：`self.animal:getSquare()`；`:66` 從手上：交給 `addAnimalFromHandsInTrailer` |
+| `ISFeedAnimalFromHand`（手餵） | `:46`：`self.animal:getBehavior()` |
+
+`pcallBoolean` 回 null、`NetTimedAction.perform` 的 catch 回 false，動作走 Reject（`ActionManager.java:87-97`），client 收到後
+取消。從手上放入時，`addAnimalFromHandsInTrailer` 的 `IsoAnimal` 多載第一行就把參數加進拖車的動物清單
+（`BaseVehicle.java:10614-10616`），下一行才對它取值；Kahlua 對 nil 選到這個多載的話，拖車清單會留下一個 null（推論，未實測）。
+
+### 修法
+
+只在 `isServer()` 包裝四個 class 的 `complete`：`self.animal` 是 nil → 記一行、回 `false`（同樣走 Reject），不呼叫原函式；
+動物存在時原樣透傳。結局與原版相同，只是不拋錯、不會碰到上面那個多載，並留下玩家與位置供追查。
+裝拖車原版在取值前先跑 `self.vehicle:updateParts()`（`:63`），nil 時本修正不跑：它只為「新加入的動物」結算經過的時間，
+沒有動物加入就沒有要結算的對象，車輛之後的更新照常處理。四個 class 各自 `wrap`（各自的形狀檢查、`NOT installed`、
+marker），某一個形狀變了只影響它自己。
+
+刻意不做的事：
+
+- 裝拖車從手上放入、而玩家物品欄裡有動物物品時，`new()` 的 `getAnimalInventoryItem(animal)`（`:101`，
+  `ItemContainer.java:796-810`）就會對 nil 取值，在 parse 時拋一次錯就被拒絕。那不在 `complete`，也沒有正式服實據，不包 `new`。
+- `ISPickupAnimal.complete` 先以 `isValid()` 擋掉 nil 動物（`:42-44`），不需要。
+
+### 診斷紀錄
+
+與 `MDFX_GiveWaterAnimalGuard` 同一套：每個動作一行（`complete` 每個動作只走一次），每 session 最多 20 行（四個動作共用），
+超過後由 `MDFX_Guard.warnOnce` 印一次上限提示，之後照樣拒絕、不再記錄。訊息同樣不寫原版檔名行號。
+
+```
+[MinidoracatFixes] MDFX_AnimalCompleteGuard nilAnimal n=<本 session 第幾個> action=<ISAttachAnimalToPlayer|ISAttachAnimalToTree|ISAddAnimalInTrailer|ISFeedAnimalFromHand> player="<帳號>" x=<格> y=<格> z=<層> [remove=<true|false>|fromHand=<true|false>]; the server has no such animal, so the action is rejected instead of erroring in complete. See docs/fixes.md MDFX_AnimalCompleteGuard
+[MinidoracatFixes] MDFX_AnimalCompleteGuard limit=20 reached; further animal actions without a server-side animal are still rejected but not logged this session. See docs/fixes.md MDFX_AnimalCompleteGuard
+```
+
+`remove` 是牽繩／拴樹的「解開」，`fromHand` 是裝拖車的「從手上放入」，手餵沒有額外欄位。玩家與座標欄位格式同上一節。
+
+### 驗證
+
+`lua scripts/test_animal_complete_guard.lua` — 45 項，全綠。四個 `complete` 照原版行號抄成 stub，`perform` 以 pcall 模擬
+`pcallBoolean`（出錯或不是 true 都是 Reject）。涵蓋：`isServer()` 為假時零介入；動物存在時四個都原樣透傳（回傳值、牽上／解開、
+拴上、進拖車、餵到）；動物為 nil 時四個都回 false、不拋錯、不呼叫原函式、各記一行且欄位齊全、拖車清單與 `updateParts` 都沒動；
+對照組四個都拋錯，裝拖車從手上放入時 `IsoAnimal` 多載先把 nil 加進清單；四個共用每 session 20 行上限＋一次提示；動物存在時
+原函式的錯（例如載具解析不到）照原版外洩；重複載入不疊、後載 MOD 替換後復查重裝；缺一個 class 只影響它自己；成員快照；
+角色也是 nil 時診斷不炸。
+
+**mutation 驗證**（`lua scripts/test_animal_complete_guard.lua --mutants`，10 個全部抓到）：
+
+| 突變 | 轉紅 |
+|------|------|
+| 不載入修正 | 26 項 |
+| `complete` 不判 nil | 22 項 |
+| `complete` 回 true | 7 項 |
+| 不記診斷 | 8 項 |
+| `remove`／`fromHand` 欄位拿掉 | 3 項 |
+| 沒有 session 上限 | 2 項 |
+| 漏包手餵 | 13 項 |
+| `MDFX_Guard` 拆掉 `isServer()` 閘門／冪等 marker／診斷節流 | 1／1／1 項 |
+
+`python scripts/check_vanilla_alignment.py` 每個動作一條：`complete` 的爆點行（裝拖車另登記 `:66`）、「server 端沒有
+`serverStart`／`animEvent`」的前提、`complete` 依賴符號與 nil 檢查的退場提示。
+
+實機 E2E（同一個 `give-water` 情境）：客戶端用 `addAnimal`＋`addToWorld` 在自己這邊生一頭伺服器沒有的牛（client 的 online ID
+伺服器查不到），旁邊擺一棵樹與一台牲畜拖車，依序排牽繩、拴樹、裝拖車（從地上）、手餵（伺服器給的蘋果）。
+
+| 場次 | 結果 |
+|------|------|
+| 對照組 | 每個動作兩次 `Exception thrown`：先是 `Lua(Vanilla).complete> … attempted index: getData／getData／getSquare／getBehavior of non-table: null`（`ISAttachAnimalToPlayer.lua:42`、`ISAttachAnimalToTree.lua:47`、`ISAddAnimalInTrailer.lua:76`、`ISFeedAnimalFromHand.lua:46`），接著 `NetTimedAction.perform> … NullPointerException … Perform failed`；動作都被拒絕結束 |
+| 修正組 | 四行 `MDFX_AnimalCompleteGuard nilAnimal n=1..4 action=<Class> player="test" …`（牽繩、拴樹帶 `remove=false`，裝拖車帶 `fromHand=false`），沒有任何例外；動作都在 0.8–3.1 秒內被拒絕結束，沒牽上、蘋果沒被吃掉 |
+| 安裝面 | 修正組伺服器上四個 marker 都是現任 `complete`；客戶端不安裝 |
+
+### 可退場條件
+
+四個各自獨立：官方在哪個 class 的 `complete`（或 `isValid`）補上 `self.animal` 的 nil 檢查，就把那一個移出。
 
 ---
 

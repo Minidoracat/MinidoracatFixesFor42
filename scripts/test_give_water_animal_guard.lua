@@ -13,9 +13,10 @@
 --   * isServer() 為假時完全不安裝
 --   * 正常餵水（喝飽結束、水用完結束）與原版逐事件相同：口渴、水量、XP、事件數、Done、setThirst
 --   * 動物為 nil：只走一次模擬事件、零例外、以 Reject 結束並通知 client、診斷恰一行且欄位齊全
+--   * 動物在、水容器為 nil：同上，而且不先扣口渴；原版則每次事件白扣口渴再拋錯，30 分鐘時以 Done 結束
 --   * 對照組：原版每個模擬事件都拋錯、動作一直掛著；30 分鐘上限到時 complete 再拋一次、perform 失敗走 Reject
 --   * 每個動作只記一行（animEvent 之後的 complete、同一動作重複事件都不再記）；每 session 上限 20 行＋一次上限提示
---   * 不吞不認識的錯誤：self.item 為 nil、原函式自己拋錯都照原版外洩；非 update 事件照常交給原函式
+--   * 不吞不認識的錯誤：物品不是流體容器、原函式自己拋錯都照原版外洩；非 update 事件照常交給原函式
 --   * 重複載入不疊 wrapper；後載 MOD 整支替換後 OnGameBoot 復查重新包裝
 --   * vanilla 缺席／部分缺席時不亂補、不炸；除 marker 外不動 class 既有成員
 --   * 別的 MOD 把 server 時長改成正數時照樣在第一個模擬事件結束；時長短於 0.4 秒由 complete 先擋下
@@ -205,6 +206,7 @@ local function newAnimal(thirst, id)
     function a:getStats() return stats end
     function a:getThirstBoost() return 1.0 end -- 牛：AnimalDefinitions.java:129 預設 1.0
     function a:getOnlineID() return id or 7 end
+    function a:getAnimalType() return "cow" end
     function a:getThirst() return stats.thirst end
     return a
 end
@@ -265,7 +267,7 @@ local function runSuite(srcs, quiet)
         assert(load(srcs.fix, "=MDFX_GiveWaterAnimalGuard.lua"))()
     end
     local function diagCount()
-        return S.printCount("MDFX_GiveWaterAnimalGuard nilAnimal n=")
+        return S.printCount("MDFX_GiveWaterAnimalGuard nilAnimal n=") + S.printCount("MDFX_GiveWaterAnimalGuard nilItem n=")
     end
 
     -- 一次完整的正常餵水，逐事件記下口渴／水量／XP
@@ -404,24 +406,27 @@ local function runSuite(srcs, quiet)
     check("7 25 個動作全部 Reject、零例外", rejects == 25 and #E.errors == 0)
     check("7 只記前 20 行", diagCount() == 20, diagCount())
     check("7 第 20 行編號正確", S.printed("nilAnimal n=20 "))
-    check("7 上限提示恰一次", S.printCount("MDFX_GiveWaterAnimalGuard nilAnimal limit=20 reached") == 1)
+    check("7 上限提示恰一次", S.printCount("MDFX_GiveWaterAnimalGuard limit=20 reached") == 1)
 
     -- 8 ───────────────────────────────────────────────────────────
     section("[8] 不吞不認識的錯誤")
-    local function nilItemRun(withFix)
+    -- 物品在、但不是流體容器：:85 先扣口渴、:86 拋錯——成因不同（物品被換掉），本補丁不接
+    local function nonFluidRun(withFix)
         resetEnv(true)
         if withFix then loadFix() end
         local animal = newAnimal(0.5, 7)
-        request(newPlayer("tester", 10.7, 20.2, 0), animal, nil)
+        local item = newItem(1000)
+        function item:getFluidContainer() return nil end
+        request(newPlayer("tester", 10.7, 20.2, 0), animal, item)
         runFor(2000)
         return #E.errors, E.fired, animal.stats.thirst, S.printCount("[MinidoracatFixes]"), E.errors[1]
     end
-    local e0, f0, t0 = nilItemRun(false)
-    local e1, f1, t1, p1, err1 = nilItemRun(true)
-    check("8 self.item 為 nil：照原版每次事件在 :86 拋錯（不遮蔽）", e1 == f1 and e1 == e0 and f1 == f0 and e1 == 5,
+    local e0, f0, t0 = nonFluidRun(false)
+    local e1, f1, t1, p1, err1 = nonFluidRun(true)
+    check("8 物品不是流體容器：照原版每次事件在 :86 拋錯（不遮蔽）", e1 == f1 and e1 == e0 and f1 == f0 and e1 == 5,
         e1 .. "/" .. f1 .. " vs " .. e0 .. "/" .. f0)
-    check("8 self.item 為 nil：錯誤指向物品、口渴照原版變化", err1 ~= nil and err1:find("item", 1, true) ~= nil and t1 == t0, err1)
-    check("8 self.item 為 nil：不印本補丁的診斷", p1 == 0)
+    check("8 物品不是流體容器：口渴照原版變化", t1 == t0 and t1 < 0.5, t1)
+    check("8 物品不是流體容器：不印本補丁的診斷", p1 == 0, err1)
 
     resetEnv(true)
     loadFix()
@@ -529,6 +534,35 @@ local function runSuite(srcs, quiet)
     check("13 時長比 0.4 秒短：complete 先到，回 false 走 Reject、由 complete 記一行",
         E.fired == 0 and E.verdictAt[1] == 100 and E.verdicts[1] == "Reject" and #E.errors == 0 and S.printed("via=complete;"))
 
+    -- 14 ──────────────────────────────────────────────────────────
+    section("[14] 動物在、水容器為 nil")
+    local function nilItemRun(withFix, ms)
+        resetEnv(true)
+        if withFix then loadFix() end
+        local animal = newAnimal(0.5, 7)
+        local nilItemAction = request(newPlayer("tester", 10.7, 20.2, 0), animal, nil)
+        runFor(ms)
+        return animal, nilItemAction
+    end
+    local animal14, na14 = nilItemRun(false, 10000)
+    check("14 原版：每個模擬事件先扣口渴、再在 :86 拋錯（10 秒 25 次）",
+        E.fired == 25 and #E.errors == 25 and E.errors[1]:find("item", 1, true) ~= nil, E.errors[1])
+    check("14 原版：一滴水都沒用就把動物餵到不渴", animal14.stats.thirst == 0 and E.xp == 0)
+    check("14 原版：動作一直是 Accept、client 等不到結果", na14.state == "Accept" and #E.verdicts == 0)
+    runFor(DURATION_MAX)
+    check("14 原版：30 分鐘上限到時 complete 回 true、以成功（Done）結束",
+        E.verdicts[1] == "Done" and E.performFailed == 0 and #E.commands == 1)
+
+    animal14, na14 = nilItemRun(true, 60000)
+    check("14 修正：只走一次模擬事件、零例外、在 0.4 秒以 Reject 結束",
+        E.fired == 1 and #E.errors == 0 and E.verdicts[1] == "Reject" and E.verdictAt[1] == 400,
+        E.fired .. "/" .. #E.errors .. "/" .. tostring(E.verdicts[1]))
+    check("14 修正：原函式沒被呼叫，口渴、XP 不變，沒送 setThirst",
+        V.animEvent == 0 and V.complete == 0 and animal14.stats.thirst == 0.5 and E.xp == 0 and #E.commands == 0)
+    check("14 修正：記一行 nilItem，帶動物種類與 online ID",
+        diagCount() == 1 and S.printed('MDFX_GiveWaterAnimalGuard nilItem n=1 player="tester" x=10 y=20 z=0 animal=cow#7 via=animEvent;'),
+        S.prints[1])
+
     return checks, failures
 end
 
@@ -536,16 +570,23 @@ end
 local MUTANTS = {
     { name = "不載入修正", whole = "fix" },
     { name = "animEvent 不判 nil（一律交給原函式）", file = "fix",
-        from = 'if self.animal or event ~= "update" then', to = "if true then" },
+        from = 'if (self.animal and self.item) or event ~= "update" then', to = "if true then" },
     { name = "animEvent 攔下所有 event", file = "fix",
-        from = 'if self.animal or event ~= "update" then', to = "if self.animal then" },
+        from = 'if (self.animal and self.item) or event ~= "update" then', to = "if self.animal and self.item then" },
+    { name = "animEvent 只判動物、不判水容器", file = "fix",
+        from = 'if (self.animal and self.item) or event ~= "update" then', to = 'if self.animal or event ~= "update" then' },
     { name = "animEvent 不 forceComplete", file = "fix",
         from = "                if self.netAction then self.netAction:forceComplete() end\n", to = "" },
     { name = "animEvent 不記診斷", file = "fix", from = '                record(self, "animEvent")\n', to = "" },
     { name = "complete 不判 nil", file = "fix",
-        from = "if self.animal then return originals.complete(self) end", to = "if true then return originals.complete(self) end" },
+        from = "if self.animal and self.item then return originals.complete(self) end",
+        to = "if true then return originals.complete(self) end" },
+    { name = "complete 只判動物、不判水容器", file = "fix",
+        from = "if self.animal and self.item then return originals.complete(self) end",
+        to = "if self.animal then return originals.complete(self) end" },
     { name = "complete 回 true", file = "fix", from = "                return false\n", to = "                return true\n" },
-    { name = "每個動作不只記一次", file = "fix", from = "    if self.MDFX_giveWaterNilAnimal then return end\n", to = "" },
+    { name = "每個動作不只記一次", file = "fix", from = "    if self.MDFX_giveWaterUnresolved then return end\n", to = "" },
+    { name = "水容器 nil 也記成 nilAnimal", file = "fix", from = "    if not self.animal then\n", to = "    if true then\n" },
     { name = "沒有 session 上限", file = "fix", from = "if logged > LOG_LIMIT then", to = "if false then" },
     { name = "MDFX_Guard 拆掉 isServer() 閘門", file = "guard",
         from = 'if type(isServer) == "function" and isServer() then', to = "if true then" },
