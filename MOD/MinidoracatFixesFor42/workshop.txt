@@ -26,6 +26,7 @@ description=[*] Server error when changing clothes or placing furniture and the 
 description=[*] Vehicle doors only lock halfway
 description=[*] The server keeps re-sending unchanged crop data near farmland
 description=[*] The farming save grows too large, gets wiped, and crops stop growing
+description=[*] Watering an animal the server no longer knows makes the server error nonstop and the action never ends
 description=[/list]
 description=📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3790443858/586187095760095607/]Fixes Guide: Fix List & Details[/url]
 description=

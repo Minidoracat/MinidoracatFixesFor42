@@ -216,6 +216,31 @@ FIXES = [
             r"'part ' \.\. tostring\(part\)",
         ],
     },
+    {
+        "name": "MDFX_GiveWaterAnimalGuard",
+        "file": "media/lua/shared/TimedActions/Animals/ISGiveWaterToAnimal.lua",
+        "crash": [
+            # :102-105 server 時長 -1：new() 不碰動物，nil 也建得起動作，只剩 30 分鐘上限
+            r"function ISGiveWaterToAnimal:getDuration\(\)\s*if isServer\(\) then\s*return -1",
+            # :97-100 每 400 ms 模擬一次 update 事件
+            r'emulateAnimEvent\(self\.netAction, period, "update", nil\)',
+            # :82-85 update 分支第一行就對動物取值（update() :33 有同一行，所以連函式頭一起比）
+            r'function ISGiveWaterToAnimal:animEvent\(event, parameter\)\s*if isServer\(\) then\s*'
+            r'if event == "update" then\s*self\.animal:getStats\(\):remove\(CharacterStat\.THIRST',
+            # :76-78 complete 同樣無條件取值
+            r'"id", self\.animal:getOnlineID\(\),',
+        ],
+        "depends": [
+            r"function\s+ISGiveWaterToAnimal:animEvent\s*\(",
+            r"function\s+ISGiveWaterToAnimal:complete\s*\(",
+            # 補丁走的 vanilla 結束路徑（:91）
+            r"self\.netAction:forceComplete\(\);",
+        ],
+        "exithint": [
+            # 官方若補上動物的 nil 檢查
+            r"if\s+not\s+self\.animal\s+then",
+        ],
+    },
     # ── 農作物同步「有變才送」：crash 在這裡指「原版無條件重送的形狀」──────────
     {
         "name": "MDFX_FarmingSyncDedupe",

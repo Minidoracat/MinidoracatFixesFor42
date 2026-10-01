@@ -30,12 +30,13 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_ClothingExtraGuard` | server | `ISClothingExtraAction:complete` 缺 `isValid:6` 那道 nil guard，`:67` 對 nil 衣物解參考 |
 | `MDFX_MoveablesActionGuard` | server | `ISMoveablesAction.lua:308` 在 `place` 模式對 nil 物品解參考；只有 log 噪音（引擎本來就當動作被拒） |
 | `MDFX_LockDoorsGuard` | server | `ISLockDoors.lua:46` 對 `VehiclePart` 做 `..` 拋錯，且上鎖迴圈邊走邊寫；車門只鎖到一半 |
+| `MDFX_GiveWaterAnimalGuard` | server | 餵水動作送到伺服器時找不到那隻動物（`self.animal` 為 nil）：原版伺服器時長 -1、每 400 ms 模擬一次事件，`ISGiveWaterToAnimal.lua:85` 每次都對 nil 拋錯，動作停不下來（最久 30 分鐘）。改成結束並拒絕動作，每個動作在伺服器記一行玩家與位置供追查（每次開機最多 20 行） |
 | `MDFX_FarmingSyncDedupe` | server | 伺服器每載入一塊地圖區域，原版就對區域內每株作物固定送名稱／sprite／modData 三包（`SPlantGlobalObject.lua:51-55`、`:82-86`；這時客戶端還沒有那個 chunk，收到就丟），之後每 10 遊戲分鐘再對翻土、枯死、腐爛的作物整份重送（`:775`），值沒變也送；改成有變才送 |
 | `MDFX_FarmingGosPrune` | server | 原版把載入過的每株作物（枯死、被踩爛、已收成的也算）永久留在 `gos_farming.bin`；檔案超過引擎固定的 10 MiB 存檔緩衝時被截成 0 byte，下次開機整個農作物系統清空。沒人的區域裡這類作物暫時移出存檔，區域載入時從地圖物件原樣重建；原版失去登記後回不來的踩爛／已收成作物也一併重新登記 |
 | `MDFX_FarmingClockBackup` | server | `gos_farming.bin` 讀不到時農作物時鐘 `hoursElapsed` 歸零；每 10 遊戲分鐘另存一份，讀檔失敗時還原 |
 | `MDFX_FarmingStallHeal` | server | 時鐘歸零後重新登記的作物帶著舊時鐘的 `nextGrowing`，卡住不長（原版補救只在 `stateToIsoObject`，下雨或澆水就失效）；定期檢查時把遠到不可能的 `nextGrowing` 拉回 |
 | `MDFX_StaleRoomGuard` | client | **已退場**（42.21 官方在移除自建建築時一併重設它覆蓋的格子；補丁只在找到失效格子時動作，保留為 regression 保險）。42.20.4：拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單 |
-| `MDFX_Guard`（骨架，非修復） | shared | 六條 server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
+| `MDFX_Guard`（骨架，非修復） | shared | server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
 | `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |
 
 ### 已移出
