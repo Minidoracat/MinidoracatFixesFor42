@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### 修正
+
+- **MOD 設定重開遊戲就回到預設、或一次全部消失**。主選單和存檔啟用的 MOD 不同時（每個存檔各自選 MOD），
+  在主選單按一次選項的套用或確定，當下沒載入的 MOD 的設定就會被原版存成黏在一起的一行，之後那些 MOD 的設定
+  讀不回來、再存一次就永久消失；主選單沒有任何 MOD 有設定時按套用，所有 MOD 的設定會一次清空。本修正讓原版
+  每筆設定各存一行，讀取時把已經黏在一起的設定拆開、重新套上；主選單沒有 MOD 設定時按套用也不再清空。
+  已經被清掉的設定救不回來。只在玩家自己的遊戲裡生效：要防主選單的情況，主選單的 MOD 清單也要啟用本 MOD；
+  多人遊戲在伺服器有啟用本 MOD 時才會在遊戲中生效。
+
+  > 技術要點：只改 `Zomboid/Lua/ModOptions.ini` 的存讀方式，不改任何 MOD 的設定值；EquipmentUI、ContextMenuCleanup
+  > 這類自己也包了存讀的 MOD 不受影響，載入順序不限。修好黏行時 console.txt 會印一行
+  > `[MinidoracatFixes] MDFX_ModOptionsPersist split N glued records into one per line`。
+
 ## [42.21.0-0.11.0] - 2026-10-02
 
 ### 修正

@@ -7,7 +7,7 @@
 [h2]🚀 Quick start[/h2]
 [list]
 [*] Build 42.20.4+. Subscribe and enable; no settings, sandbox options or keys. In MP the server enables it.
-[*] Vanilla bugs only; no balance changes, items or UI. Fixes act only where vanilla would error (plus two farming fixes against duplicate traffic and save overflow), are rechecked after game updates and removed once officially fixed.
+[*] Vanilla bugs only; no balance changes, items or UI. Fixes act only where vanilla would error (plus two farming fixes against duplicate traffic and save overflow, and one that stops vanilla from losing mod settings), are rechecked after game updates and removed once officially fixed.
 [/list]
 
 [h2]🐛 Fix details[/h2]
@@ -95,6 +95,12 @@
 [b]Fix[/b]: the server rejects the action outright without the error, logging the player and position the same way (one line per action, up to 20 per start). Normal use is unchanged.
 [b]Scope[/b]: MP server only. [b]Retired[/b]: each one separately, once vanilla adds its check.
 
+[h3]14. Mod settings reset to defaults after a restart, or all vanish at once[/h3]
+[b]Symptom[/b]: some mods' settings (ESC → Options → Mods) are back to defaults after a restart, or every mod's settings vanish at once. No error is shown.
+[b]Cause[/b]: all mod settings share one file, one per line. When saving, vanilla writes back the settings of mods that aren't loaded right now without line breaks, gluing them into one line; the next read only sees the first entry, and the next save drops the rest for good. It happens when the main menu and a save enable different mods and you press Apply/Accept in the main menu. If no mod has settings in the main menu, Apply saves without reading the file first and empties it.
+[b]Fix[/b]: each setting is saved on its own line; glued lines are split, checked and applied on load (left untouched if they can't be split cleanly); saving before anything was read keeps the settings already in the file. No setting value is changed, and mods that read/write settings themselves keep working.
+[b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it. To protect the main menu, enable this mod in the main-menu mod list too; in MP it works in-game only if the server enables it. [b]Retired[/b]: once vanilla saves line breaks and stops overwriting from an empty main menu.
+
 [h2]⚠️ Known limitations[/h2]
 [list]
 [*] While moved out, dead/rotten crops pause their slow change to the trampled look until someone returns. The only visible difference.
@@ -104,6 +110,7 @@
 [*] Player-built house disconnect: a player who jumps more than one square in a single frame (teleport, lag correction, a very fast vehicle) onto such a square can still be disconnected.
 [*] Broken corpses have other client-side error spots (e.g. trailer menu), not covered.
 [*] Watering and the other animal actions: the log line has no ID of the requested animal (lost when the server parses it). Loading an animal into a trailer from your hands while the server thinks you hold an animal errors when the action is created; not covered.
+[*] Mod settings already wiped or dropped by vanilla can't be recovered; set them again once.
 [/list]
 
 [h2]🧹 Before removing this mod[/h2]
@@ -116,7 +123,7 @@
 [h2]❓ FAQ[/h2]
 [list]
 [*] [b]Items on corpses (e.g. a red digital watch) can't be picked up?[/b] Not covered or investigated yet; report on GitHub Issues with the item, a screenshot and log, noting if pure vanilla does it too.
-[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
+[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings fix logs in the player's own console.txt); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
 [*] [b]Load order?[/b] Usually irrelevant: if a later mod replaces the same vanilla code, most fixes re-attach at startup and keep its changes; crop sync steps aside.
 [*] [b]CleanUI inventory fix?[/b] Retired: CleanUI v2.7.9 fixed it; the patch stays dormant.
 [*] [b]Trailer / multi-tile furniture debris fixes?[/b] Removed in 0.4.0, unmaintained.

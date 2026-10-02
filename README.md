@@ -6,7 +6,7 @@ Project Zomboid Build 42 的常設修復合輯（client + server）。
 
 只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
 不加物品、不加介面、不加設定選項；正常遊玩的行為不變，只在原本會炸掉的
-地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步，或讓存檔不會撐破引擎上限
+地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空，或讓存檔不會撐破引擎上限
 （唯一看得到的差異：沒人的區域裡，枯死／腐爛作物慢慢變成踩爛外觀的轉換會暫停，見
 `MDFX_FarmingGosPrune`）。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件；遊戲更新後跑
@@ -36,6 +36,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_FarmingGosPrune` | server | 原版把載入過的每株作物（枯死、被踩爛、已收成的也算）永久留在 `gos_farming.bin`；檔案超過引擎固定的 10 MiB 存檔緩衝時被截成 0 byte，下次開機整個農作物系統清空。沒人的區域裡這類作物暫時移出存檔，區域載入時從地圖物件原樣重建；原版失去登記後回不來的踩爛／已收成作物也一併重新登記 |
 | `MDFX_FarmingClockBackup` | server | `gos_farming.bin` 讀不到時農作物時鐘 `hoursElapsed` 歸零；每 10 遊戲分鐘另存一份，讀檔失敗時還原 |
 | `MDFX_FarmingStallHeal` | server | 時鐘歸零後重新登記的作物帶著舊時鐘的 `nextGrowing`，卡住不長（原版補救只在 `stateToIsoObject`，下雨或澆水就失效）；定期檢查時把遠到不可能的 `nextGrowing` 拉回 |
+| `MDFX_ModOptionsPersist` | client | 原版 `PZAPI.ModOptions` 存檔把當下沒載入的 MOD 的設定寫回時不加換行（`ModOptions.lua:286-288`），全部黏成一行，下次只讀得到第一筆（`:304-305`）、其餘丟失；主選單沒有 MOD 設定時按套用不先讀檔（`MainOptions.lua:409-411`、`:3766`），整個 `ModOptions.ini` 清空。包裝存讀：讀取時把黏行拆回一筆一行並重新套上，存檔時每行補換行，還沒讀過就存時先保住檔案裡沒註冊的行 |
 | `MDFX_StaleRoomGuard` | client | **已退場**（42.21 官方在移除自建建築時一併重設它覆蓋的格子；補丁只在找到失效格子時動作，保留為 regression 保險）。42.20.4：拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單 |
 | `MDFX_Guard`（骨架，非修復） | shared | server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
 | `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |

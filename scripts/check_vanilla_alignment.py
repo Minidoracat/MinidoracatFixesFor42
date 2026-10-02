@@ -482,6 +482,65 @@ FIXES = [
         ],
     },
     {
+        "name": "MDFX_ModOptionsPersist（存讀）",
+        "file": "media/lua/client/PZAPI/ModOptions.lua",
+        "crash": [
+            # :286-288 OtherOptions 寫回不加換行 → 黏成一行
+            r"for i, line in ipairs\(PZAPI\.ModOptions\.OtherOptions\) do\s*fileOutput:write\(line\)\s*end",
+            # :304-305 黏行只看第一筆的 modid／optid；:330 對不上的行原樣收進 OtherOptions
+            r'local t = luautils\.split\(line, "\|"\)\s*'
+            r"if PZAPI\.ModOptions\.Dict\[t\[2\]\] ~= nil and PZAPI\.ModOptions\.Dict\[t\[2\]\]\.dict\[t\[3\]\] ~= nil then",
+            r"table\.insert\(PZAPI\.ModOptions\.OtherOptions, line\)",
+        ],
+        "depends": [
+            r"function PZAPI\.ModOptions:save\(\)",
+            r"function PZAPI\.ModOptions:load\(\)",
+            # load 第一行換新表＝本補丁判斷「還沒 load 過」的依據；檔名與開檔方式
+            r"function PZAPI\.ModOptions:load\(\)\s*local stringtoboolean = \{[^}]*\}\s*PZAPI\.ModOptions\.OtherOptions = \{\}",
+            r'getFileReader\("ModOptions\.ini", true\)',
+            r'getFileWriter\("ModOptions\.ini", true, false\)',
+            # :320 舊 combobox 行寫進同 id 選項的 .selected（MiniMap 遷移訊號，兩次 load 都要照舊）
+            r"PZAPI\.ModOptions\.Dict\[t\[2\]\]\.dict\[t\[3\]\]\.selected = tonumber\(t\[4\]\)",
+        ],
+        "formula": [
+            # 黏行切分用的七種型別與值的寫法（:264-281）；多了型別或改了格式，切分規則要跟著改
+            r'local data = option\.type \.\. "\|" \.\. options\.modOptionsID \.\. "\|" \.\. option\.id \.\. "\|"',
+            r'if option\.type == "textentry" or option\.type == "tickbox" or option\.type == "slider" then',
+            r'elseif option\.type == "multipletickbox" then\s*for _, v in ipairs\(option\.values\) do\s*'
+            r'data = data \.\. tostring\(v\.value\) \.\. " "',
+            r'elseif option\.type == "combobox" then',
+            r'elseif option\.type == "colorpicker" then\s*data = data \.\. tostring\(option\.color\.r\) \.\. " " \.\. '
+            r'tostring\(option\.color\.g\) \.\. " " \.\. tostring\(option\.color\.b\) \.\. " " \.\. tostring\(option\.color\.a\)',
+            r'elseif option\.type == "keybind" then',
+        ],
+        "exithint": [
+            # 官方若在寫回 OtherOptions 時補換行
+            r'fileOutput:write\(line \.\. "\\r\\n"\)',
+        ],
+    },
+    {
+        "name": "MDFX_ModOptionsPersist（主選單清空）",
+        "file": "media/lua/client/OptionScreens/MainOptions.lua",
+        "crash": [
+            # :409-411 沒有 MOD 選項就不 load；:3766 apply 無條件 save
+            r"if #PZAPI\.ModOptions\.Data ~= 0 then\s*self:addModOptionsPanel\(\)\s*end",
+            r"getCore\(\):saveOptions\(\)\s*PZAPI\.ModOptions:save\(\)",
+        ],
+        "depends": [
+            # load 只在 MOD 頁建立時呼叫（:2796）
+            r"function MainOptions:addModOptionsPanel\(\)\s*PZAPI\.ModOptions:load\(\)",
+        ],
+    },
+    {
+        "name": "MDFX_ModOptionsPersist（安裝時機：MainOptions 只在事件裡建立）",
+        "file": "media/lua/client/OptionScreens/MainScreen.lua",
+        "depends": [
+            r"self\.mainOptions:create\(\);",
+            r"Events\.OnMainMenuEnter\.Add\(LoadMainScreenPanel\);",
+            r"Events\.OnGameStart\.Add\(LoadMainScreenPanelIngame\);",
+        ],
+    },
+    {
         "name": "MDFX_StaleRoomGuard（爆點：ParameterFirearmRoomSize）",
         "class": "zombie.audio.parameters.ParameterFirearmRoomSize",
         "crash": [

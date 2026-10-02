@@ -1098,6 +1098,119 @@ marker），某一個形狀變了只影響它自己。
 
 ---
 
+## MDFX_ModOptionsPersist — 原版 MOD 設定存檔把別的 MOD 的設定黏成一行、或整檔清空
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_ModOptionsPersist.lua` |
+| 影響版本 | Build 42.21.0（原版 `PZAPI.ModOptions` 推出以來同一寫法） |
+| 端 | 純客戶端（選項檔在每位玩家自己的 `Zomboid/Lua/ModOptions.ini`；dedicated server 對 `client/` 只算 checksum） |
+| 狀態 | **現役** |
+
+### 症狀
+
+MOD 的設定（ESC → 選項 → MOD）重開遊戲就回到預設，而且只發生在某些 MOD 上；或整份 MOD 設定一次全部消失。
+`ModOptions.ini` 裡可以看到一行裡黏著幾十筆 `<型別>|<modid>|<optid>|<值>`（作者本機 2026-10-02 實例：一行 48 筆，
+AutoDrive 全部 19 個選項、CleanUI、Economy、NoticeBoard、MirageWardrobeZoom）。不會有任何錯誤訊息。
+
+觸發條件：主選單與存檔啟用的 MOD 不同（每個存檔各自選 MOD），在當下沒載入某些 MOD 的狀態下按了選項的套用／確定；
+或主選單根本沒有任何 MOD 建選項時按了套用。
+
+### 根因
+
+所有 MOD 的選項存在同一個檔，一筆一行（`client/PZAPI/ModOptions.lua`）：
+
+1. **load 收、save 不加換行**：load（`:292-333`）用 `readLine` 逐行讀，對不上已註冊選項的行原樣收進
+   `PZAPI.ModOptions.OtherOptions`（`:330`）。`readLine` 已經去掉行尾，save（`:259-290`）寫已註冊選項時有補
+   `"\r\n"`（`:282`），寫回 OtherOptions 卻是 `fileOutput:write(line)`（`:286-288`），全部黏成檔尾的一行。
+2. **黏行只看第一筆**：下次 load 用 `luautils.split(line, "|")` 只取 `t[2]`／`t[3]`（`:304-305`）。第一筆屬於已註冊
+   選項時整行走 if 分支、只套第一筆，其餘全部丟掉，而且這行不進 OtherOptions，下一次 save 就永久消失；第一筆不屬於
+   已註冊選項時整行進 OtherOptions，裡面每一筆的值都套不到，而且之後的 save 會把更多行接上去。
+3. **主選單沒有 MOD 選項時清空**：`MainOptions:create` 只在 `#PZAPI.ModOptions.Data ~= 0` 時建 MOD 頁並 load
+   （`client/OptionScreens/MainOptions.lua:409-411` → `addModOptionsPanel` 的 `:2796`）；`apply` 在 `:3766` 無條件 save，
+   寫出的只有空的 Data 與還是初始空表的 OtherOptions，`getFileWriter(…, true, false)`（`:260`）先截斷檔案。
+
+離線照載原版檔重現（`scripts/test_modoptions_persist.lua` 的對照組）：黏行第一筆屬已註冊選項時那幾個值留在預設、save
+後未載入 MOD 的那筆消失；第一筆屬未註冊選項時值套不到；主選單沒有 MOD 選項時 save 後檔案是空的。
+
+### 修法
+
+包裝 `PZAPI.ModOptions.load`／`save`，不取代原函式：
+
+1. **load**：先呼叫原 load——原版解析、舊 combobox 行把索引寫進同 id 新選項 `.selected`（`:320`，MiniMap 的
+   combobox→slider 遷移靠這個訊號）、其他 MOD 的包裝鏈都照舊。再直接讀檔找黏行：**不能只看 OtherOptions**，第一筆屬
+   已註冊選項的黏行根本不進 OtherOptions。有黏行就把檔案改寫成一筆一行，`getFileReader` 讀回逐行比對
+   （`getFileWriter` 寫失敗不報錯，家族 `pitfalls.md`），相同才再呼叫一次原 load 把值套上。原版 load 不寫檔，第一次
+   load 漏掉的值由第二次補回；讀回不符就把原內容逐行寫回（只差行尾）、不做第二次 load。
+2. **save**：把 OtherOptions 暫時換成「每行補上 `\r\n`」的複本、呼叫原 save、再換回原表（`pcall` 保護，原 save 拋錯
+   也先換回再原樣重拋）。不永久改 OtherOptions：EquipmentUI（3780682550）load 後會用 `string.find` 在裡面找自己的舊行移除。
+3. **save 先於 load**：OtherOptions 還是原版檔案建立時那張表（原版 load 第一行就換新表，`:294`）＝這個 Lua 環境還沒
+   load 過。這時先讀檔，把沒註冊的行（黏行先拆開）接在 OtherOptions 後面一起寫回：已註冊的跳過、完全相同的行去重。
+   **不動已註冊選項在記憶體裡的值**——有 MOD 會程式設值後直接 save（例：MiniMap 的一次性遷移），整個 load 會把它蓋回舊值。
+
+**黏行切分規則**：每筆以 save 會寫的七種型別（`:264-281`：`textentry`／`tickbox`／`multipletickbox`／`slider`／
+`combobox`／`colorpicker`／`keybind`）加 `|modid|optid|` 起頭，從左往右每次取最左邊的起頭——`multipletickbox` 的起頭
+比它裡面的 `tickbox` 早，所以不會被切開。一行切出兩筆以上時，每筆的值都要是原版 save 寫得出來的形狀，否則整檔不改
+（印一行 `glued line N has an unrecognised record`）：tickbox `true`／`false`、slider／combobox／keybind 是數字
+（含 Kahlua 的科學記號字串 `1.0E-4`）、multipletickbox 是一串「`true `／`false `」（結尾有空格）、colorpicker 四個數字
+以空格分隔、textentry 不限；任何型別都接受原版對 nil 寫出的 `nil`。行首不是起頭的行原樣保留。
+
+**零行為差異**：沒有黏行時 load 只多讀一次檔、不寫檔；OtherOptions 是空的時 save 與原版位元組相同；有未註冊行時只差每行
+補上 `\r\n`（這就是修正）。OtherOptions 裡的空字串不傳給原 save（原版寫空字串本來就沒有輸出）。
+
+**安裝時機**：本檔載入時就包好，早於第一次 load。原版 client 檔排在所有 MOD 之前執行（`LuaManager.java:1192-1193`），
+`PZAPI.ModOptions` 一定已經存在；`MainOptions:create` 只從 MainScreen 的 `OnMainMenuEnter`／`OnGameStart` 處理器呼叫
+（`MainScreen.lua:2178`、`:2180` → `instantiate` → `:694`），這些事件都在 `LuaManager.LoadDirBase` 之後才觸發
+（`Core.java:3949` → `:3962-3963`；回主選單 `IngameState.java:1070` → `:1077`；開機 `GameWindow.java:993` 之後才進
+`MainScreenState`，`:396` 觸發 `OnMainMenuEnter`）。每次 `LoadDirBase` 原版檔重建整張表，marker 隨之消失、本檔重新包裝；
+同一張表上重複執行由 marker 擋下。形狀不符（`PZAPI.ModOptions`、`load`／`save`、`OtherOptions`／`Dict`、
+`getFileReader`／`getFileWriter`）印一次 `NOT installed` 並放棄。不做 `OnGameBoot` 復查：會包裝 load／save 的已知 MOD
+（EquipmentUI、ContextMenuCleanup 3780688809）都先呼叫原函式，前後順序都串得起來；整支取代而不呼叫原函式的 MOD 會讓本修正失效，
+那種 MOD 本身就已經改掉原版存讀。
+
+診斷（一 session 一次，前綴 `[MinidoracatFixes] MDFX_ModOptionsPersist`）：`split N glued records into one per line`、
+`glued line N has an unrecognised record; file left unchanged`、`rewrite not verified; original lines written back`、
+`repair failed (…)`／`could not prepare other lines (…)`（自身出錯，退回原版行為）。
+
+### 已知限制
+
+- **已經遺失的設定救不回**：被原版清空的檔、或黏行第一筆屬已註冊選項而被原版丟掉後又存過一次的那些筆，檔案裡已經沒有了。
+- **主選單要啟用本 MOD** 才擋得住主選單的套用；多人遊戲進服後只載伺服器 `Mods=` 的 MOD，伺服器沒裝本 MOD 時遊戲內不生效。
+- textentry 的值若剛好含「型別`|x|y|`合法值」形狀的字串，會被當成黏行切開（實務上沒見過）。
+- save 期間內層包裝若改動 OtherOptions，改動會隨換回原表而丟失（已知 MOD 都沒有這樣做）。
+
+### 驗證
+
+`lua scripts/test_modoptions_persist.lua` — 52 項，全綠。照載本機原版 `client/PZAPI/ModOptions.lua` 與 `shared/luautils.lua`，
+記憶體檔案系統照 `LuaManager.java:5936-5964`、`:6727-6763`（副檔名白名單、`FileOutputStream` 一開就截斷、`BufferedReader.readLine`
+三種行尾）。涵蓋：黏行第一筆屬已註冊／未註冊兩種（含七種型別、科學記號、multipletickbox 結尾空格；值套上、檔案一筆一行、
+下次 save 一筆一行、換場次值仍在；各有原版對照組）、save 先於 load（沒有 MOD 選項時不清空且可重入；有選項時寫記憶體裡的值、
+檔案舊值不重複寫回、相同行去重）、無黏行（load 不寫檔；只有已註冊行時與原版位元組相同；有未註冊行時只差 `\r\n`）、EquipmentUI 的
+load 包裝照抄、在本補丁內層／外層 × 舊行獨立／黏住四種組合都找到並移除舊行、combobox→slider `.selected` 訊號（獨立行與黏行）、
+切不出合法筆數不改檔、寫入被靜默丟掉時寫回原內容且不做第二次 load、修補讀檔拋錯與準備 OtherOptions 拋錯都退回原版、原 save
+拋錯照樣外洩且 OtherOptions 換回、形狀不符 `NOT installed`、重複載入不疊包裝；另把原版 `:287` 改成補換行模擬官方先修一半，
+驗證未註冊行之後只多一個空行、連存三次不會越存越多。
+
+**mutation 驗證**（`lua scripts/test_modoptions_persist.lua --mutants`）：21 個突變全部被抓到——拿掉整支修正、修好檔案後不再
+load、load 修補不包 `pcall`、沒有黏行也改寫、起頭不取最左、多筆不驗值、寫完不讀回比對、讀回不符不寫回原內容、save 不補行尾、
+save 不換回原表、原 save 的錯誤不重拋、準備 OtherOptions 不包 `pcall`、load 過也補檔案裡的行、save 先於 load 不保留檔案內容、
+save 先於 load 不拆黏行、已註冊的行也寫回、不去重、空行也傳給 save、拆掉形狀檢查、拆掉冪等 marker、診斷不節流。
+
+實機 E2E（`fixes-e2e` 的 `modoptions-sp`，2026-10-02，42.21.0）：
+
+| 場次 | 結果 |
+|------|------|
+| `glued`（＋AutoDrive，兩次冷啟動） | 本輪 `ModOptions.ini` 換成三行 fixture：AutoDrive 三個非預設值一半藏在未載入 MOD 那筆後面、一半黏在它前面。主選單一開就印 `split 5 glued records into one per line`；進場 VoiceEnabled=false／VoiceLanguage=3／UTurnMode=2 都套上、檔案 6 行沒有黏行，save 後 106 行一筆一行、未載入 MOD 的兩筆各一行；結束到桌面再開，三個值與兩筆都還在、沒有再印 split。12＋12 個 CHECK，零例外 |
+| `noopts`（只有本 MOD） | 沒有任何 MOD 建選項（`Data` 為空、原版不 load，檔案仍有兩行黏行），呼叫套用時同一個 save：3 行變 6 行一筆一行、六筆各一行。9 個 CHECK，零例外 |
+
+### 可退場條件
+
+官方把 `ModOptions.lua:287` 改成寫入時補換行，**且**主選單沒有 MOD 選項時不再以空內容覆寫（先 load 或不 save）。只修前者
+擋不住清空；`check_vanilla_alignment.py` 對補換行的寫法有 exithint。官方補了換行而本補丁還沒退場時，未註冊行之後各多一個空行
+（本補丁補一次、原版再補一次），空行不再傳給 save，所以不會越存越多。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |
