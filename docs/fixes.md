@@ -1351,7 +1351,7 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 | 影響版本 | Build 42.21.0 實測；相關 Java 類別（`GlobalObjectSystem`、`CGlobalObjectSystem`、`CGlobalObjects`、`SGlobalObjectNetwork`、`ConnectionDetails`、`GlobalObjectsPacket`）與 42.20.4 反編譯快照逐位元組相同 |
 | 端 | client＋單人（dedicated server 不執行）；登入的時間差只在多人 |
 | 類型 | 原版**同步時序缺口**：連線清單與延後的新增封包重複；包裝 `CGlobalObjectSystem.newLuaObjectAt`，同座標已有物件就沿用 |
-| 狀態 | **現役**（未發布） |
+| 狀態 | **現役**（42.21.0-0.14.0 起） |
 
 ### 症狀（玩家 log＋正式服唯讀調查）
 
