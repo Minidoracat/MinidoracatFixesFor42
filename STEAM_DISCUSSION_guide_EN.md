@@ -107,6 +107,12 @@
 [b]Fix[/b]: your game remembers nearby hen houses and clears empty slot records once per frame; chickens, nest boxes, eggs and slots holding a dead chicken are left alone. With no hen house nearby it does nothing; otherwise one cheap check per hen house per frame. Side effect: the "hutch full" check and the animal-zone count no longer count empty slots (vanilla counted them). When it acts, console.txt shows [MinidoracatFixes] MDFX_HutchNullSlotGuard removed null slot(s).
 [b]Scope[/b]: each player's game in MP only; servers and SP aren't affected. Players get it when the server updates the mod. [b]Retired[/b]: once vanilla skips empty slots on unload, or its sync stops leaving them.
 
+[h3]16. Multiplayer: a burst of crop-related errors right after joining a server[/h3]
+[b]Symptom[/b]: right as you enter a server, an error window (e.g. Error Magnifier) pops up dozens of errors at once; play is normal afterwards and crops look fine. console.txt shows pairs of "already an object at" and "getModData of non-table" (CGlobalObject.lua, CPlantGlobalObject.lua) right after "Processing delayed packets".
+[b]Cause[/b]: the server syncs crops, campfires, rain barrels, traps and feeding troughs two ways: a full list when your login is accepted, then one notice per addition or removal. But the server starts sending notices a second or two before the list, during login verification, so anything added in that gap is in both. Your game stores the notices while loading and handles them on entering; vanilla doesn't check whether the square already has the object before adding, so the duplicate errors. In vanilla this only happens if someone plants or builds a campfire in that second; this mod's farming-save fix (item 10) re-registers dead and trampled crops in bulk when an area loads, so someone driving past such a field while you log in means dozens at once.
+[b]Fix[/b]: when your game gets an "add" for a square that already has that object, it keeps the existing one instead of erroring; the data the server sent is applied as in vanilla, so the result is identical to vanilla after its error, minus the error. When it acts, console.txt shows [MinidoracatFixes] MDFX_GosDuplicateNewGuard the server announced a new … object at … (once per session).
+[b]Scope[/b]: each player's game (also loaded in SP, same behavior). Players get it when the server updates the mod. [b]Retired[/b]: once vanilla stops erroring on an "add" for an existing object, or the server stops sending notices before the player has the list.
+
 [h2]⚠️ Known limitations[/h2]
 [list]
 [*] While moved out, dead/rotten crops pause their slow change to the trampled look until someone returns. Apart from the hen-house fix also correcting the "full" check, the only visible difference.
@@ -130,7 +136,7 @@
 [h2]❓ FAQ[/h2]
 [list]
 [*] [b]Items on corpses (e.g. a red digital watch) can't be picked up?[/b] Not covered or investigated yet; report on GitHub Issues with the item, a screenshot and log, noting if pure vanilla does it too.
-[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings and hen-house fixes log in the player's own console.txt); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
+[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings, hen-house and join-errors fixes log in the player's own console.txt); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
 [*] [b]Load order?[/b] Usually irrelevant: if a later mod replaces the same vanilla code, most fixes re-attach at startup and keep its changes; crop sync steps aside.
 [*] [b]CleanUI inventory fix?[/b] Retired: CleanUI v2.7.9 fixed it; the patch stays dormant.
 [*] [b]Trailer / multi-tile furniture debris fixes?[/b] Removed in 0.4.0, unmaintained.

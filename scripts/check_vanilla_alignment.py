@@ -693,6 +693,107 @@ FIXES = [
             r'table\.insert\(HutchDefinitions\.hutchs\["hutchhen"\]\.extraSprites,\s*\{[^}]*sprite\s*=',
         ],
     },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（爆點：CGlobalObjectSystem:newLuaObjectAt）",
+        "file": "media/lua/client/Map/CGlobalObjectSystem.lua",
+        "crash": [
+            # :69-72 不看同座標是否已有物件就 newObject（Java 拋 already an object at，Kahlua 回 nil 繼續跑）
+            r"function CGlobalObjectSystem:newLuaObjectAt\(x, y, z\)\s*local globalObject = self\.system:newObject\(x, y, z\)"
+            r"\s*return self:newLuaObject\(globalObject\)\s*end",
+        ],
+        "depends": [
+            r'CGlobalObjectSystem = ISBaseObject:derive\("CGlobalObjectSystem"\)',
+            # wrapper 以 self.system:getObjectAt 查既有物件、診斷帶 self.systemName（CGlobalObjectSystem:new 設定）
+            r"o\.system = system",
+            r"o\.systemName = name",
+        ],
+        "exithint": [
+            # 官方若讓 newLuaObjectAt 先查同座標，函式本體會出現 getObjectAt
+            r"function CGlobalObjectSystem:newLuaObjectAt\(x, y, z\)(?:(?!\nend)[\s\S])*?getObjectAt",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（第二條錯誤：CGlobalObject.new 對 nil 取 getModData）",
+        "file": "media/lua/client/Map/CGlobalObject.lua",
+        "crash": [
+            r"function CGlobalObject:new\(luaSystem, globalObject\)(?:(?!\nend)[\s\S])*?local o = globalObject:getModData\(\)",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（依賴：農作物系統走基底的 newLuaObjectAt）",
+        "file": "media/lua/client/Farming/CFarmingSystem.lua",
+        "depends": [
+            # 整檔沒有 newLuaObjectAt＝走 CGlobalObjectSystem 的版本，本修復包得到（正式服的重複新增都是農作物）
+            r"\A(?![\s\S]*newLuaObjectAt)",
+            r'CFarmingSystem = CGlobalObjectSystem:derive\("CFarmingSystem"\)',
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（Java：newObject 同座標已有物件就拋錯）",
+        "class": "zombie.globalObjects.GlobalObjectSystem",
+        "crash": [
+            # GlobalObjectSystem.java:36-45
+            r"public final zombie\.globalObjects\.GlobalObject newObject\(int, int, int\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method getObjectAt:\(III\)Lzombie/globalObjects/GlobalObject;\s+\d+: ifnull\s+\d+\s+"
+            r"\d+: new\s+#\d+\s+// class java/lang/IllegalStateException",
+        ],
+        "depends": [
+            r"public final zombie\.globalObjects\.GlobalObject getObjectAt\(int, int, int\);",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（Java：Lua 失敗後照樣把封包內容寫進既有物件＝零行為差異的前提）",
+        "class": "zombie.globalObjects.CGlobalObjectSystem",
+        "depends": [
+            # CGlobalObjectSystem.java:34-50：pcall newLuaObjectAt 的結果不看，接著 getObjectAt＋逐鍵 rawset
+            r"public void receiveNewLuaObjectAt\(int, int, int, se\.krka\.kahlua\.vm\.KahluaTable\);"
+            r"(?:(?!\n  \S)[\s\S])*?// String newLuaObjectAt(?:(?!\n  \S)[\s\S])*?LuaCaller\.pcall:[^\n]*\n\s+\d+: pop"
+            r"(?:(?!\n  \S)[\s\S])*?// Method getObjectAt:\(III\)Lzombie/globalObjects/GlobalObject;"
+            r"(?:(?!\n  \S)[\s\S])*?KahluaTable\.rawset:",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（Java：依賴 GlobalObject.getModData）",
+        "class": "zombie.globalObjects.GlobalObject",
+        "depends": [
+            r"public se\.krka\.kahlua\.vm\.KahluaTable getModData\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（成因：新增封包廣播給每條連線，不看連線狀態）",
+        "class": "zombie.globalObjects.SGlobalObjectNetwork",
+        "crash": [
+            # SGlobalObjectNetwork.java:39-61：取出連線後直接 startPacket，沒有任何狀態判斷
+            r"private static void sendPacket\(java\.nio\.ByteBuffer\);(?:(?!\n  \S)[\s\S])*?"
+            r"// class zombie/core/raknet/UdpConnection\s+\d+: astore_2\s+\d+: aload_2\s+"
+            r"\d+: invokevirtual #\d+\s+// Method zombie/core/raknet/UdpConnection\.startPacket:",
+        ],
+        "exithint": [
+            # 官方若只廣播給已拿到清單／已完整連線的連線，sendPacket 裡會出現 UdpConnection.is* 判斷
+            r"private static void sendPacket\(java\.nio\.ByteBuffer\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/core/raknet/UdpConnection\.is\w+",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（成因：連線一接上就加進廣播表）",
+        "class": "zombie.network.GameServer$DelayedConnection",
+        "crash": [
+            # GameServer.java:4427-4436（user log 的 Connection add），早於登入驗證與清單
+            r"public void connect\(\);(?:(?!\n  \S)[\s\S])*?// String Connection add(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/core/raknet/UdpEngine\.connections:Ljava/util/List;(?:(?!\n  \S)[\s\S])*?"
+            r"// InterfaceMethod java/util/List\.add:",
+        ],
+    },
+    {
+        "name": "MDFX_GosDuplicateNewGuard（成因：清單在登入被接受時才打包）",
+        "class": "zombie.network.ConnectionDetails",
+        "crash": [
+            # ConnectionDetails.java:38、:149-151
+            r"public static void write\((?:(?!\n  \S)[\s\S])*?// Method writeGlobalObjects:",
+            r"private static void writeGlobalObjects\(zombie\.core\.network\.ByteBufferWriter\)(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/globalObjects/SGlobalObjects\.saveInitialStateForClient:",
+        ],
+    },
 ]
 
 

@@ -635,6 +635,10 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
   事故時的 20,100 個物件裡，這類 destroyed 有 236 個。
 - **重建時的新增封包送給所有連線**，一個 cell 載入的封包數＝該 cell 被移出的作物數×連線數；
   移出每次最多 100 株，重建端沒有上限。
+- **重建的新增封包撞上還在登入的玩家**（2026-10-03 正式服，見 `MDFX_GosDuplicateNewGuard`）：伺服器把連線加進廣播表
+  （`GameServer.java:4427-4436`）比打包連線清單（`ConnectionDetails.java:38`）早一段登入驗證（Steam 實測 1.9 秒），
+  這段時間重建的作物同時出現在清單與延後的新增封包，原版客戶端進遊戲時每株跳兩條錯誤（資料沒壞）。原版種植、蓋營火也有
+  同一缺口，本修復讓它從零星變成整批；由客戶端的 `MDFX_GosDuplicateNewGuard` 承接。
 - **原版翻土格（`vegetation_farming_01_1`）也沒註冊 OnLoad**，失去 GOS 登記後同樣回不來；
   它不在移出範圍、也不是本節三支要修的，E2E 第二場次只記數量不判定。
 
@@ -1336,6 +1340,107 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 
 官方在 `IsoHutch.removeFromWorld` 略過 null（`check_vanilla_alignment.py` 有 exithint），或客戶端兩條同步路徑改成 remove 舊格、
 不再 put null。只修後者時，已載入的雞舍裡還有 null，要等玩家重新載入那一帶；兩者擇一修好即可移出。
+
+---
+
+## MDFX_GosDuplicateNewGuard — 登入那幾秒內伺服器新增的全域物件，進遊戲時每個各跳兩條錯誤
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_GosDuplicateNewGuard.lua` |
+| 影響版本 | Build 42.21.0 實測；相關 Java 類別（`GlobalObjectSystem`、`CGlobalObjectSystem`、`CGlobalObjects`、`SGlobalObjectNetwork`、`ConnectionDetails`、`GlobalObjectsPacket`）與 42.20.4 反編譯快照逐位元組相同 |
+| 端 | client＋單人（dedicated server 不執行）；登入的時間差只在多人 |
+| 類型 | 原版**同步時序缺口**：連線清單與延後的新增封包重複；包裝 `CGlobalObjectSystem.newLuaObjectAt`，同座標已有物件就沿用 |
+| 狀態 | **現役**（未發布） |
+
+### 症狀（玩家 log＋正式服唯讀調查）
+
+- 玩家在 Discord 問「你們這裡有一直彈 error 嗎？」，附 Error Magnifier 截圖（9 項，合併自 60 條）。`console.txt` 在
+  `Waiting for player-connect response from server` → `Processing delayed packets...` 之後連續 30 組，每組一個 Java 例外加一個 Lua 錯誤：
+
+  ```
+  ERROR: General ... Lua(Vanilla).newLuaObjectAt> Exception thrown
+    java.lang.IllegalStateException: already an object at <x>,<y>,0 at GlobalObjectSystem.newObject(GlobalObjectSystem.java:40).
+      ... CGlobalObjectSystem.receiveNewLuaObjectAt ← CGlobalObjectNetwork.receive ← GlobalObjectsPacket.parse ← GameClient.update ← IngameState.enter
+  attempted index: getModData of non-table: null
+    Lua(Vanilla).new(CGlobalObject.lua:16) ← Lua(Vanilla).new(CPlantGlobalObject.lua:6)
+  ```
+
+  30 個座標各一次，是相鄰 3 個 chunk 裡的一塊農田；之後整段遊玩沒有再出現。
+- 伺服器（唯讀）：這條連線的 `Connection add`（user log）到送出 `connection-details` 相隔 1.9 秒（Steam 登入驗證）。這段時間另一位
+  玩家開自動駕駛從那塊農田北邊約 75 格經過，伺服器載入那一帶；存檔裡這 30 株是 29 株 destroyed（踩爛 sprite）＋1 株 dead。原版不替
+  踩爛 sprite 註冊 OnLoad，區域載入時替它們重新登記並廣播新增的只有 `MDFX_FarmingGosPrune` 的重建。登入的玩家本人在約 4,000 格外進場。
+
+### 根因（行號為 42.21.0 原版 Lua 與反編譯快照）
+
+1. **兩條同步路徑沒對齊**：
+   - 整份清單在登入被接受時才打包進 ConnectionDetails（`GameServer.receiveClientConnect` → `RequestDataPacket.sendConnectingDetails`，
+     `GameServer.java:2718-2719`；`ConnectionDetails.java:38` → `SGlobalObjects.saveInitialStateForClient`，`SGlobalObjects.java:103-135`），
+     客戶端載入世界時照它建物件（`CGlobalObjects.registerSystem`，`CGlobalObjects.java:28-68`；`GameLoadingState.java:313-314`）。
+   - 新增／移除／更新封包由 `SGlobalObjectNetwork.sendPacket`（`SGlobalObjectNetwork.java:39-61`）廣播給 `udpEngine.connections` 的每一條，
+     不看連線狀態；連線在 RakNet 接上後就加進這張表（`GameServer$DelayedConnection.connect`，`GameServer.java:4427-4436`），比清單早一段登入驗證。
+2. **客戶端延後處理**：`GlobalObjectsPacket` 的 `handlingType = 3` 沒有載入中處理（`PacketTypes.java:809-811`），載入期間收到的全部放進
+   `LoadingMainLoopNetData`（`GameClient.java:370-378`），送出 player-connect 後才依序處理（`GameClient.java:380-385`，log 的
+   `Processing delayed packets...`）。這時清單裡的物件已經建好；「連線加進廣播表」到「打包清單」之間新增的物件，會先在清單裡、再收到一次新增。
+3. **原版不容許重複新增**：`CGlobalObjectSystem:newLuaObjectAt`（`CGlobalObjectSystem.lua:69-72`）直接 `newObject`；Java 對已有物件拋
+   `already an object at`（`GlobalObjectSystem.java:36-45`），Kahlua 的 `MethodCaller.call` 記下例外、不推回傳值（`MethodCaller.java:34-43`），
+   Lua 拿到 nil 繼續跑，`CGlobalObject.new` 對 nil 取 `getModData`（`CGlobalObject.lua:16`）再錯一次。
+4. **資料沒壞**：`CGlobalObjectSystem.receiveNewLuaObjectAt`（`CGlobalObjectSystem.java:34-50`）不看 Lua 的結果，照樣把封包內容逐鍵寫進
+   `getObjectAt` 拿到的既有物件。農作物系統沒有 sync key（`SFarmingSystem:initSystem` 不呼叫 `setObjectSyncKeys`），新增封包本來就不帶資料；
+   原版五個系統裡只有餵食槽有（`SFeedingTroughSystem.lua:22`）。
+5. **為什麼最近才成批**：原版的新增多半是玩家種植、蓋營火，登入那幾秒碰上的機會很小；`MDFX_FarmingGosPrune` 在區域載入時整批重建
+   被移出的作物，載入一塊廢棄農田就是幾十包新增。
+
+### 修法
+
+- 包裝 `CGlobalObjectSystem.newLuaObjectAt`：以 Java 的 `self.system:getObjectAt(x, y, z)` 查同座標，已有物件就回傳它的 modData、不再
+  `newObject`，否則照原函式。Java 接著把封包內容寫進這個物件，結果與原版拋錯之後相同。
+- 不用 Lua 的 `getLuaObjectAt` 查：它會先 `updateFromIsoObject` 從地圖物件抄 modData（`CGlobalObjectSystem.lua:84-92`），原版這條路徑沒有。
+- 包在基底類別：原版五個系統（農作物、營火、雨水桶、陷阱、餵食槽）都沒有自己覆寫 `newLuaObjectAt`，一起受益；覆寫了的 MOD 系統
+  （例如 PSR、ImmersiveSolarArrays 的電池組）照它自己的版本。
+- 檔案載入時就包（原版 client 檔先於所有 MOD 執行）；marker 存 wrapper 本身，`Core.ResetLua` 重建類別表後重新安裝。查詢自己出錯時印一次、
+  照原函式走；形狀不符印 `NOT installed`。
+- 診斷每次開機只印第一次（帶系統名與座標）；攔到的次數記在全域 `MDFX_GosDuplicateNewGuard.kept`。訊息不含原版的 `already an object at`，
+  數原版錯誤的監控不會算進去。
+
+### 與原版的差異
+
+只少了錯誤。物件本身、它的 Lua 類別與欄位接線、封包寫入的資料，都和原版拋錯之後逐一相同（離線測試以真原版 Lua 對照；實機兩組比對
+餵食槽的 sync key）。
+
+### 驗證
+
+`lua scripts/test_gos_duplicate_new_guard.lua` — 32 項，全綠。照載本機原版 `ISBaseObject.lua`、`CGlobalObjectSystem.lua`、`CGlobalObject.lua`、
+`CPlantGlobalObject.lua`、`CFarmingSystem.lua`；Java 端照形狀模擬（清單建物件、`newObject` 重複時記例外並回 nil、`receiveNewLuaObjectAt`
+先 pcall 再寫入既有物件、`rawget` 沿 metatable 找方法）。對照組（不載補丁）重現正式服的兩條錯誤；修正組零錯誤且鏡像與對照組逐一相同；
+新座標照原版建立；登入競態整段模擬（清單已含＋延後的重複新增、新增、更新、移除再新增）最終鏡像與原版相同；不從地圖物件抄 modData；
+回傳既有物件；只印一次、每次都計數；單人照樣生效；覆寫了 `newLuaObjectAt` 的 MOD 系統不受影響；查詢出錯照原函式走；形狀不符不安裝；
+重複載入不疊、ResetLua 後重新安裝。
+
+**mutation 驗證**（`--mutants`，11 個全部抓到）：整個不載入、不檢查既有物件、既有物件仍呼叫原函式、既有物件回傳 nil、查詢不包 pcall、
+改用 `getLuaObjectAt` 查、拆掉形狀檢查、拆掉 marker 檢查、不寫 marker、診斷不節流、不計數。
+
+`python scripts/check_vanilla_alignment.py` 登記 9 條：爆點（`newLuaObjectAt` 本體，有 exithint）、第二條錯誤（`CGlobalObject.new`）、
+農作物系統沒有自己的 `newLuaObjectAt`、Java `newObject` 重複就拋、`receiveNewLuaObjectAt` 在 pcall 之後寫入既有物件（零差異的前提）、
+`GlobalObject.getModData`、成因三條（`sendPacket` 不看連線狀態，有 exithint；`DelayedConnection.connect` 一接上就加進廣播表；
+`ConnectionDetails.write` 打包清單）。
+
+實機 E2E（`fixes-e2e` skill 的 `gos-dup-new`，MP，42.21.0）：伺服器開服當下在地圖範圍的左上角（沒有人去）用原版 `newLuaObjectAt`
+建 3 株踩爛作物＋1 個餵食槽（只有 GOS 登記），之後每 2 秒用原版 `newLuaObjectOnClient` 重送新增（伺服器重建、玩家種植時送的同一種封包），
+餵食槽每輪 `water` 加 1。客戶端連線時清單裡已有它們，載入期間的重送延後到進遊戲才處理＝正式服的同一條路徑；進遊戲後停止重送，
+再即時重送一次。
+
+| 場次 | 結果 |
+|------|------|
+| 對照組（修正檔從本輪拿掉） | 20 次重複新增各兩條錯誤（共 40 條）：12 次在 `Processing delayed packets...` 的延後批次、4 次在等待 player-connect 的迴圈、4 次是即時重送；第一個的堆疊 `GameClient.update(GameClient.java:385)` ← `IngameState.enter(IngameState.java:796)` 與玩家 log 相同。4 個物件仍在、類別與系統接線正確、餵食槽 `water` 與伺服器一致（Java 在 Lua 失敗後照寫） |
+| 修正組 | `Processing delayed packets...` 後緊接一行診斷，進遊戲時 `kept=12`（載入期間 3 輪 × 4 個物件全部接住）；停止後 4 個物件都在、接線正確、餵食槽 `water` 與伺服器一致；即時重送 `kept` 12 → 16。零 `already an object at` |
+
+兩組伺服器 `SERVER STARTED` 之後零例外；客戶端除開機固定的 `AdvancedAnimator` 雜訊外，只有對照組的那 40 條。
+
+### 可退場條件
+
+官方讓 `newLuaObjectAt` 遇到已存在的物件不再拋錯（`check_vanilla_alignment.py` 有 exithint），或伺服器不再對還沒拿到清單的連線廣播
+（`sendPacket` 的 exithint）。只修後者時，對既有物件重送新增的其他來源仍會讓原版報錯，確認沒有這類來源再移出。
 
 ---
 

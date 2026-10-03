@@ -40,7 +40,9 @@ MOFarming.lua:126-137 只替 sprite／unhealthy／dying／dead 四組與 01_13�
      以 -nosave 執行時（chunk 不寫檔，重新載入會讀到舊檔）整個不移出。
    伺服器只卸載沒有任何連線 isRelevantTo 的 cell（ServerMap.java:537-560、:589-615），
    被移出的格子沒有客戶端持有；客戶端連線時才拿整份清單（SGlobalObjects.java:103-135），
-   之後靠新增／移除封包，鏡像保持一致。
+   之後靠新增／移除封包，鏡像保持一致。例外：連線加進廣播表（GameServer.java:4427-4436）比打包
+   清單早一段登入驗證，這段時間重建的作物清單與延後的新增封包都有，原版客戶端每株跳兩條錯誤
+   （資料沒壞）；由 client/Fixes/MDFX_GosDuplicateNewGuard.lua 承接。
 
 【與原版的差異】
 - destroyed／harvested 在沒載入時原版什麼都不做（checkPlant2 :265 直接 return；plowFadeCheck 要有
@@ -50,7 +52,7 @@ MOFarming.lua:126-137 只替 sprite／unhealthy／dying／dead 四組與 01_13�
 - 移出之後，chunk 裡的地圖物件是唯一的來源：chunk 存檔失敗、或改過的客戶端在最後一次掃描到
   卸載之間改了那格的 modData（ObjectModDataPacket 不驗來源），重建出來的就是那份內容。
 - 會逐一走訪 SFarmingSystem 物件的其他 MOD，在沒載入的區域看到的物件變少。
-- 多了移出／重建時的新增、移除封包（每株各一包、送給所有連線）。
+- 多了移出／重建時的新增、移除封包（每株各一包、送給所有連線，包括還在登入的連線，見上）。
 - 原版失去 GOS 登記的踩爛／已收成作物，格子再載入時會重新登記；dead／rotten 的孤兒改由本補丁
   原樣重建（原版會走 stateFromIsoObject）。
 
