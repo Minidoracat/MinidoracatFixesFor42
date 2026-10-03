@@ -101,9 +101,15 @@
 [b]Fix[/b]: each setting is saved on its own line; glued lines are split, checked and applied on load (left untouched if they can't be split cleanly); saving before anything was read keeps the settings already in the file. No setting value is changed, and mods that read/write settings themselves keep working.
 [b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it. To protect the main menu, enable this mod in the main-menu mod list too; in MP it works in-game only if the server enables it. [b]Retired[/b]: once vanilla saves line breaks and stops overwriting from an empty main menu.
 
+[h3]15. Multiplayer: kicked back to the main menu when leaving a hen house[/h3]
+[b]Symptom[/b]: in MP, walking, driving or teleporting away from a hen house with chickens drops you to the main menu without a message; reconnecting works, but it can happen again when you leave a hen house (seconds after joining or hours into a session). console.txt shows an error about IsoHutch.removeFromWorld / removeFromUpdateLists.
+[b]Cause[/b]: since Build 42.21, when your game unloads a hen house it processes every slot's chicken without checking for empty slots, while vanilla's MP sync leaves empty slot records in your game whenever a chicken changes place (e.g. a hen going to a nest box to lay). Unloading hits an empty slot, errors, and vanilla disconnects.
+[b]Fix[/b]: your game remembers nearby hen houses and clears empty slot records once per frame; chickens, nest boxes, eggs and slots holding a dead chicken are left alone. With no hen house nearby it does nothing; otherwise one cheap check per hen house per frame. Side effect: the "hutch full" check and the animal-zone count no longer count empty slots (vanilla counted them). When it acts, console.txt shows [MinidoracatFixes] MDFX_HutchNullSlotGuard removed null slot(s).
+[b]Scope[/b]: each player's game in MP only; servers and SP aren't affected. Players get it when the server updates the mod. [b]Retired[/b]: once vanilla skips empty slots on unload, or its sync stops leaving them.
+
 [h2]⚠️ Known limitations[/h2]
 [list]
-[*] While moved out, dead/rotten crops pause their slow change to the trampled look until someone returns. The only visible difference.
+[*] While moved out, dead/rotten crops pause their slow change to the trampled look until someone returns. Apart from the hen-house fix also correcting the "full" check, the only visible difference.
 [*] Trimming covers only areas loaded and unloaded since this start; plots trampled before sowing never move out.
 [*] Crop sync steps aside if another mod rewrote it (one log line); traps and campfires aren't covered.
 [*] Milking and doors can error in SP too, but only MP cases are on record, so only MP is handled.
@@ -111,6 +117,7 @@
 [*] Broken corpses have other client-side error spots (e.g. trailer menu), not covered.
 [*] Watering and the other animal actions: the log line has no ID of the requested animal (lost when the server parses it). Loading an animal into a trailer from your hands while the server thinks you hold an animal errors when the action is created; not covered.
 [*] Mod settings already wiped or dropped by vanilla can't be recovered; set them again once.
+[*] Hen house disconnect: an empty slot created in the very frame its hen house unloads (rare) still disconnects; slots that also hold a dead chicken aren't cleared, so the corpse isn't removed with them.
 [/list]
 
 [h2]🧹 Before removing this mod[/h2]
@@ -123,7 +130,7 @@
 [h2]❓ FAQ[/h2]
 [list]
 [*] [b]Items on corpses (e.g. a red digital watch) can't be picked up?[/b] Not covered or investigated yet; report on GitHub Issues with the item, a screenshot and log, noting if pure vanilla does it too.
-[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings fix logs in the player's own console.txt); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
+[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings and hen-house fixes log in the player's own console.txt); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
 [*] [b]Load order?[/b] Usually irrelevant: if a later mod replaces the same vanilla code, most fixes re-attach at startup and keep its changes; crop sync steps aside.
 [*] [b]CleanUI inventory fix?[/b] Retired: CleanUI v2.7.9 fixed it; the patch stays dormant.
 [*] [b]Trailer / multi-tile furniture debris fixes?[/b] Removed in 0.4.0, unmaintained.

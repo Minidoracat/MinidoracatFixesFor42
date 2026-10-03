@@ -608,6 +608,91 @@ FIXES = [
             r"public zombie\.iso\.RoomDef getRoomAt\(int, int, int\);",
         ],
     },
+    {
+        "name": "MDFX_HutchNullSlotGuard（爆點：IsoHutch.removeFromWorld）",
+        "class": "zombie.iso.objects.IsoHutch",
+        "crash": [
+            # removeFromWorld（IsoHutch.java:983-990）：values() 的每個值 checkcast 後直接 removeFromUpdateLists，沒有 null 檢查
+            r"public void removeFromWorld\(\);(?:(?!\n  \S)[\s\S])*?// Method java/util/HashMap\.values:\(\)Ljava/util/Collection;"
+            r"(?:(?!\n  \S)[\s\S])*?// class zombie/characters/animals/IsoAnimal\s+\d+: astore_2\s+\d+: aload_2\s+"
+            r"\d+: invokevirtual #\d+\s+// Method zombie/characters/animals/IsoAnimal\.removeFromUpdateLists:\(\)V",
+        ],
+        "depends": [
+            # 清 null 的唯一路徑：removeAnimal 以動物的 hutchPosition（int）自動裝箱 remove（IsoHutch.java:538-544）
+            r"public void removeAnimal\(zombie\.characters\.animals\.IsoAnimal\);(?:(?!\n  \S)[\s\S])*?"
+            r"AnimalData\.getHutchPosition:\(\)I\s+\d+: invokestatic\s+#\d+\s+// Method java/lang/Integer\.valueOf:\(I\)Ljava/lang/Integer;\s+"
+            r"\d+: invokevirtual #\d+\s+// Method java/util/HashMap\.remove:",
+            # removeAnimal 尾端的 sendAnimalUpdate 只在伺服器送封包（:685-686），客戶端呼叫不會送出任何東西
+            r"private void sendAnimalUpdate\(zombie\.characters\.animals\.IsoAnimal\);\s+Code:\s+\d+: getstatic\s+#\d+\s+"
+            r"// Field zombie/network/GameServer\.server:Z\s+\d+: ifeq",
+            r"public java\.util\.HashMap<java\.lang\.Integer, zombie\.characters\.animals\.IsoAnimal> getAnimalInside\(\);",
+            r"public zombie\.characters\.animals\.IsoAnimal getAnimal\(java\.lang\.Integer\);",
+            r"public zombie\.iso\.objects\.IsoDeadBody getDeadBody\(java\.lang\.Integer\);",
+            r"public boolean isSlave\(\);",
+        ],
+        "exithint": [
+            # 官方若在呼叫前檢查 null，astore_2／aload_2 之後會多出 ifnull／ifnonnull
+            r"public void removeFromWorld\(\);(?:(?!\n  \S)[\s\S])*?// class zombie/characters/animals/IsoAnimal\s+"
+            r"\d+: astore_2\s+\d+: aload_2\s+\d+: (?:ifnull|ifnonnull)",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（成因：客戶端同步寫入 null）",
+        "class": "zombie.characters.NetworkPlayerAI",
+        "crash": [
+            # parse(AnimalPacket)（NetworkPlayerAI.java:370-372）：對動物目前的格 put(格, null)
+            r"public void parse\(zombie\.network\.packets\.character\.AnimalPacket\);(?:(?!\n  \S)[\s\S])*?"
+            r"aconst_null\s+\d+: invokevirtual #\d+\s+// Method java/util/HashMap\.put:",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（成因：requested 回應先放 null）",
+        "class": "zombie.network.packets.character.AnimalUpdatePacket",
+        "crash": [
+            # parse（AnimalUpdatePacket.java:192-195）：put(格, null) 後 addAnimalInside(animal, false) 的回傳被丟掉
+            r"public void parse\(zombie\.core\.network\.ByteBufferReader, zombie\.network\.IConnection\);(?:(?!\n  \S)[\s\S])*?"
+            r"aconst_null\s+\d+: invokevirtual #\d+\s+// Method java/util/HashMap\.put:[^\n]*\n\s+\d+: pop\s+"
+            r"\d+: aload\s+\d+\s+\d+: aload\s+\d+\s+\d+: iconst_0\s+\d+: invokevirtual #\d+\s+"
+            r"// Method zombie/iso/objects/IsoHutch\.addAnimalInside:\(Lzombie/characters/animals/IsoAnimal;Z\)Z\s+\d+: pop",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（依賴：雞舍登記）",
+        "class": "zombie.Lua.MapObjects",
+        "depends": [
+            # 依圖塊名分派的載入回呼（MapObjects.java:163-182）
+            r"public static void OnLoadWithSprite\(se\.krka\.kahlua\.vm\.KahluaTable, se\.krka\.kahlua\.vm\.LuaClosure, int\);",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（依賴：客戶端載入 chunk 時分派 MapObjects）",
+        "class": "zombie.iso.IsoChunk",
+        "depends": [
+            r"// Method zombie/Lua/MapObjects\.loadGridSquare:\(Lzombie/iso/IsoGridSquare;\)V",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（依賴：建造中新增的雞舍觸發 OnObjectAdded）",
+        "class": "zombie.network.packets.AddItemToMapPacket",
+        "depends": [
+            r"public void processClient\(zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?// String OnObjectAdded",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（依賴：封包解析到的雞舍＝格上第一個 IsoHutch）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            r"public zombie\.iso\.objects\.IsoHutch getHutch\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_HutchNullSlotGuard（依賴：雞舍圖塊定義）",
+        "file": "media/lua/shared/Definitions/animal/HutchDefinitions.lua",
+        "depends": [
+            r'HutchDefinitions\.hutchs\["hutchhen"\]\.baseSprite\s*=\s*"[^"]+"',
+            r'table\.insert\(HutchDefinitions\.hutchs\["hutchhen"\]\.extraSprites,\s*\{[^}]*sprite\s*=',
+        ],
+    },
 ]
 
 

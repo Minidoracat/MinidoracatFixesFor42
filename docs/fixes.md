@@ -1211,6 +1211,134 @@ save 先於 load 不拆黏行、已註冊的行也寫回、不去重、空行也
 
 ---
 
+## MDFX_HutchNullSlotGuard — 多人客戶端卸載雞舍時，格位裡的 null 讓遊戲崩潰斷線
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_HutchNullSlotGuard.lua` |
+| 影響版本 | Build 42.21.0（爆點的迴圈是 42.21 新增；寫入 null 的同步路徑 42.20.4 就有） |
+| 端 | client：只在 MP 客戶端（`isClient()` 為真才登記雞舍）。單人與專用伺服器不經過寫入 null 的兩條同步路徑 |
+| 類型 | 原版留下的**壞資料**（`animalInside` 的 null 值），在原版讀到之前清掉；不包裝任何原版函式 |
+| 狀態 | 現役 |
+
+### 症狀（玩家 log）
+
+- 玩家回報「一進某個鎮就彈飛」「報錯被踢回主選單」，重新連線可以進去。兩位玩家、兩天的 `console.txt` 是同一個堆疊，
+  只差捲動方向；一位進遊戲約 6 秒、往東移動時，另一位玩了約 55 分鐘、往北移動時。兩人都沒有裝任何 Java 修補。
+
+  ```
+  ERROR: General ... IngameState.updateInternal> Exception thrown
+    java.lang.NullPointerException: Cannot invoke "zombie.characters.animals.IsoAnimal.removeFromUpdateLists()"
+    because "animal" is null at IsoHutch.removeFromWorld(IsoHutch.java:1095).
+      ... IsoObject.removeFromWorldToMeta ← IsoChunk.removeFromWorld ← IsoChunkMap.Right（另一位是 Up）← ProcessChunkPos
+  LOG  : Lua ... removing all player data
+  LOG  : General ... STATE: exit zombie.gameStates.IngameState
+  ```
+
+### 根因（行號為 42.21.0 反編譯快照）
+
+1. **爆點**：`IsoHutch.removeFromWorld`（`:983-990`）在 `HutchManager.remove` 之後新增一個迴圈，對 `animalInside.values()`
+   的每個值呼叫 `IsoAnimal.removeFromUpdateLists()`，沒有 null 檢查。42.20.4 的 `removeFromWorld` 到 `HutchManager.remove`
+   就結束；`removeFromUpdateLists` 本身也是 42.21 新增的方法。
+2. **成因**：多人客戶端自己的動物同步把 null 寫進 `animalInside`，從不 remove 那個 key：
+   - `NetworkPlayerAI.parse(AnimalPacket)`（`:361-396`）：雞舍裡的動物，若客戶端記的 `hutchPosition` 不是 -1，先
+     `put(舊格, null)`，再依封包放進新格或巢箱。進巢箱（封包 `hutchPosition` -1）時舊格留著 null，而且這個分支不重設
+     `hutchPosition`；換格時舊格也留著 null。母雞進巢箱下蛋就會發生。
+   - `AnimalUpdatePacket.parse`（`:192-195`）：回應客戶端的動物請求時先 `put(封包的格, null)`，再呼叫
+     `addAnimalInside(animal, false)` 並丟掉回傳值；加入失敗或重骰到別格時同樣留下 null。
+   其他讀者都用 `get()`，null 等於空格，所以這些 null 在 42.20.4 沒有後果。
+3. **觸發**：`IsoChunkMap.Left`／`Right`／`Up`／`Down`（越過 chunk 邊界時移除最遠的一欄或一列）與 `Unload`（一次移動
+   `chunkGridWidth` 個 chunk 以上，例如傳送）都走 `IsoChunk.removeFromWorld` → 每個物件 `removeFromWorldToMeta`
+   （`IsoChunk.java:3248-3251`），全都在 `ProcessChunkPos` 裡、`IngameState.updateInternal` 的 catch 之內；原版在那裡存檔後
+   `doDisconnect("crash")`（`IngameState.java:1582-1620`）。
+4. **巢箱母雞會一再寫回 null**：`removeFromWorld` 只對 `animalInside` 的值 `removeFromUpdateLists`，巢箱裡的母雞留在客戶端的
+   `AnimalInstanceManager`，`hutchPosition` 也還是舊值；雞舍重新載入後，她的下一則更新又對舊格 put null（E2E 實測）。
+
+### 修法
+
+- **只登記雞舍，不掃格子**：`MapObjects.OnLoadWithSprite` 登記 `HutchDefinitions` 的全部圖塊（主格、附屬格、開門、蛋門），
+  Java 依圖塊名分派，只有雞舍圖塊會呼叫到 Lua（`MapObjects.java:184-218`，客戶端載入 chunk 也分派，`IsoChunk.java:3829`）；
+  建造中新增的雞舍走 `OnObjectAdded`（`AddItemToMapPacket.java:94`）。登記主雞舍，以及主雞舍格上第一個 IsoHutch——
+  封包用 `IsoHutch.getHutch(x, y, z)` 解析雞舍，取的是那一格的第一個（`IsoGridSquare.java:11235-11240`）。
+  `isClient()` 為假時不登記；第一座雞舍登記後才掛 `OnTick`。
+- **每幀每座雞舍一次 `containsValue(nil)`**；為真時才取 key 清單（`ArrayList:addAll(keySet())`），以 `getAnimal(k)` 找出 null 格。
+- **怎麼刪**：Integer key 經過 Lua 一律變成 double（`KahluaNumberConverter.java:103-116`），`HashMap.remove(Object)` 拿 double
+  對不到 Integer key；`values()`／`keySet()` 回傳的集合也沒有暴露給 Lua，呼叫不到 `remove`（E2E probe 實測）。所以把 key 寫進
+  一隻暫用母雞的 `hutchPosition`，呼叫原版 `IsoHutch.removeAnimal`（`:538-544`）——它以 int 自動裝箱 remove，尾端的
+  `sendAnimalUpdate` 只在伺服器送封包（`:685-696`），客戶端呼叫不送任何東西。暫用母雞在 (0,0,0) 建立、不進世界、整個 session 共用一隻，
+  呼叫後 `hutch`／`hutchPosition` 回到 nil／-1。
+- **不動的**：null 格裡有屍體時不清（`removeAnimal` 會一併拿掉屍體），印一行診斷；清不掉的 null（有屍體，或別的 MOD 以 Lua
+  數字 put 進來、不是 Integer 的 key）冷卻 `QUIET` 幀再看，不每幀重跑。移除數以 `size()` 前後差計。
+- **放掉**：每 `PRUNE_EVERY` 幀放掉 chunk 已卸載（格子的 chunk 是 null，`IsoChunk.java:3260`）或已移除的雞舍。
+- 自己出錯：`pcall` 包住，印一行 `disabled for this session` 後本次開機停用。
+
+### 與原版的差異
+
+拿掉 null 格後，`animalInside.size()` 只算真的動物。原版雞舍選單判斷「已滿」（`ISHutchMenu.lua:57`）與畜牧區介面的動物數
+（`ISDesignationAnimalZoneUI.lua:286`）都用 `size()`，原版會把 null 格算進去，本修復之後不會。這是本修復唯一看得到的差異。
+
+### 效能（實機量測）
+
+多人客戶端（42.21.0，E2E `hutch-null --define mode=bench`）：伺服器另外蓋 9 座雞舍，客戶端登記到 11 座後（情境的 10 座，另一座推定是起點附近原本就有的雞舍：進場時就登記到 2 座，主雞舍格上只有情境的那一座），
+在遊戲裡直接呼叫補丁的每幀函式，以 `getTimestampMs` 量 2 萬–10 萬次取平均、扣掉空迴圈。GameProfiler 在不帶 `-debug` 的 MP 客戶端不會啟用
+（`DebugFileWatcher` 的條件是 `Core.debug || !GameClient.client`），span 也只到 `Lua - OnTick` 這一層，分不出單一 callback 的次微秒成本，
+所以比照 `MDFX_StaleRoomGuard` 用放大量測。非獨佔（同一台機器有其他 PZ 程序），數字偏保守。
+
+| 項目 | 成本 |
+|------|------|
+| `containsValue(null)`（4 隻雞的雞舍） | 0.135／0.150 µs（兩輪） |
+| 每幀固定成本：11 座雞舍 | 2.46／3.20 µs（每座 0.22／0.29 µs） |
+| 附近沒有雞舍、單人、專用伺服器 | 0（不掛 `OnTick`） |
+
+60 FPS 一幀 16,700 µs：11 座雞舍約 0.02%。清除只在出現 null 時跑一次（取一次 key 清單、最多 20 次 `getAnimal`／`removeAnimal`），
+頻率是每隻母雞每次進巢箱或換格一次。
+
+### 已知限制
+
+- 每幀的順序是 `GameClient.update`（處理封包＝寫進 null）→ `IngameState.updateInternal`（`ProcessChunkPos`＝卸載）→ `OnTick`
+  （`GameWindow.java:284-363`）。同一幀內剛寫進 null、又剛好卸載那座雞舍時，仍走原版崩潰路徑。
+- null 格裡同時有屍體時不清（見上）。
+
+### 驗證
+
+`lua scripts/test_hutch_null_slot_guard.lua` — 50 項，全綠。假引擎照每一幀的順序（封包寫入 null → 卸載走過 `values()` → OnTick）跑，
+假 `HashMap` 照 Kahlua 規則對 Lua 傳入的 key 一律查不到、只有 `removeAnimal` 刪得掉：母雞進巢箱、換格、兩座雞舍三個 null 都在卸載前清掉
+且活雞、巢箱、屍體不動（同流程不載補丁的對照組崩潰）；有屍體與刪不掉的 null 只冷卻；10 座雞舍每幀恰 10 次 `containsValue`、沒有 null 時
+不取 key；單人不登記也不掛 OnTick；新蓋雞舍（`OnObjectAdded`）、蛋門圖塊、主雞舍格上第一個是附屬格；卸載後放掉且可被回收；
+自身錯誤只印一次並停用；形狀不符不安裝。
+
+**mutation 驗證**（`--mutants`，14 個全部抓到）：直接 `HashMap.remove`、不檢查屍體、拿掉 `containsValue` 快速路徑、沒有冷卻、
+不看 `size()` 差就當成移除、不登記 `OnObjectAdded`、只登記 baseSprite、不放掉卸載的雞舍、拿掉 pcall、單人也登記、
+不追主雞舍格上的第一個、附屬格也登記、暫用母雞每次重建、載入時就掛 OnTick。
+
+實機 E2E（`fixes-e2e` skill 的 `hutch-null`，MP）：伺服器在 Muldraugh 主街旁蓋一座雞舍、放 4 隻母雞，客戶端看到 4 隻後，
+伺服器讓 0 號格的母雞進巢箱（`null=nest`）或換到 10 號格（`null=move`），客戶端再往東離開（`path=scroll`：40／80／120 格三段傳送，
+chunk 地圖逐格捲動；`path=jump`：一次 400 格）。
+
+| 場次 | 結果 |
+|------|------|
+| 對照組 `nest`＋`scroll`（修正檔從本輪拿掉） | 進巢箱 205 ms 後客戶端出現 null（`size=4 live=3 nest=1`）；第二段傳送時 `IsoChunkMap.Right` → `IsoHutch.removeFromWorld` NPE → `removing all player data` → 回主選單，堆疊與玩家 log 相同；伺服器連線紀錄是客戶端送出的 `disconnection-notification` |
+| 對照組 `move`＋`jump` | 換格後客戶端 `size=5`（舊格 null）；傳送當下 `IsoChunkMap.Unload` → 同一個 NPE → 回主選單 |
+| probe（原版，情境自己清） | `keySet` 取到的 key 是 Lua number；`getAnimal(k)` 找得到 null 格；暫用母雞 `removeAnimal` 拿掉恰一個 key、活雞與巢箱不動、暫用母雞回到 -1；`values():remove(nil)` 丟 `attempted index: remove of non-table`。離開不崩潰；回來後新雞舍又有 null（巢箱母雞寫回） |
+| 修正組 `nest`＋`scroll` | 修正在 null 出現後約 100 ms 內清掉（`removed=1`），三段傳送不崩潰，回來 4 隻都在 |
+| 修正組 `move`＋`jump`（bench） | 同上；離開後放掉兩座雞舍（`tracked=0`），回來重新登記 |
+| 修正組 `nest`＋`scroll`（bench，最終版） | 同上；回來後巢箱母雞又寫回一個 null，修正再清一次（`removed=2`） |
+
+各輪 `SERVER STARTED` 之後除了開機固定雜訊（`AdvancedAnimator`）與 probe 刻意觸發的那一個 `pcall`，客戶端與伺服器都沒有例外。
+
+`python scripts/check_vanilla_alignment.py` 以 `javap` 比對：爆點（`removeFromWorld` 的 `checkcast IsoAnimal` → `removeFromUpdateLists` 中間沒有
+null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `aconst_null`→`HashMap.put`、`AnimalUpdatePacket.parse` 的 put null 後
+`addAnimalInside(..., false)` 的回傳被 pop）、依賴（`removeAnimal` 以 `Integer.valueOf(getHutchPosition())` remove、`sendAnimalUpdate`
+只在伺服器、`getAnimalInside`／`getAnimal(Integer)`／`getDeadBody(Integer)`／`isSlave`、`MapObjects.OnLoadWithSprite(KahluaTable, …)`、
+`IsoChunk` 分派 `MapObjects.loadGridSquare`、`AddItemToMapPacket` 觸發 `OnObjectAdded`、`IsoGridSquare.getHutch`）與 `HutchDefinitions.lua` 的圖塊欄位。
+
+### 可退場條件
+
+官方在 `IsoHutch.removeFromWorld` 略過 null（`check_vanilla_alignment.py` 有 exithint），或客戶端兩條同步路徑改成 remove 舊格、
+不再 put null。只修後者時，已載入的雞舍裡還有 null，要等玩家重新載入那一帶；兩者擇一修好即可移出。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

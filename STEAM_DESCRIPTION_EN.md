@@ -8,7 +8,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [h2]📦 Requirements[/h2]
 [list]
 [*] Supported version: Build 42.20.4+
-[*] Singleplayer and multiplayer; in MP the server enables it. The reload fix runs on the server and in each player's game, the mod-settings fix only in each player's game (enable it in the main-menu mod list too to protect the main menu's Apply); all others run server-side only
+[*] Singleplayer and multiplayer; in MP the server enables it. The reload fix runs on the server and in each player's game, the mod-settings fix only in each player's game (enable it in the main-menu mod list too to protect the main menu's Apply), the hen-house fix only in each player's game in multiplayer; all others run server-side only
 [*] Before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
 [/list]
 
@@ -26,6 +26,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Watering an animal the server no longer knows makes the server error nonstop and the action never ends
 [*] Leashing, tying to a tree, loading into a trailer or hand-feeding an animal the server no longer knows makes the server error
 [*] Mod settings reset to defaults after a restart, or all vanish at once
+[*] Multiplayer: kicked back to the main menu when walking, driving or teleporting away from a hen house
 [/list]
 📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3790443858/586187095760095607/]Fixes Guide: Fix List & Details[/url]
 
