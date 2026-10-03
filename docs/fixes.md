@@ -1105,7 +1105,7 @@ marker），某一個形狀變了只影響它自己。
 | 檔案 | `client/Fixes/MDFX_ModOptionsPersist.lua` |
 | 影響版本 | Build 42.21.0（原版 `PZAPI.ModOptions` 推出以來同一寫法） |
 | 端 | 純客戶端（選項檔在每位玩家自己的 `Zomboid/Lua/ModOptions.ini`；dedicated server 對 `client/` 只算 checksum） |
-| 狀態 | **現役** |
+| 狀態 | **現役**（42.21.0-0.12.0 起） |
 
 ### 症狀
 
