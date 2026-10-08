@@ -9,7 +9,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [list]
 [*] Supported version: Build 42.20.4+
 [*] Singleplayer and multiplayer; in MP the server enables it. The reload fix runs on the server and in each player's game, the mod-settings fix only in each player's game (enable it in the main-menu mod list too to protect the main menu's Apply), the hen-house fix only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
-[*] Before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
+[*] [b]Add/remove mid-save:[/b] safe to add; before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
 [/list]
 
 [h2]🐛 Currently included[/h2]
