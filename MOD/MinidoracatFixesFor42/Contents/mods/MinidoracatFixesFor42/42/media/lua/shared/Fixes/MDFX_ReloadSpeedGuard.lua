@@ -118,7 +118,7 @@ local function install()
                 warnedUnknown = true
                 print("[MinidoracatFixes] setReloadSpeed threw for an unrecognized reason; NOT masking it (re-throwing): "
                     .. tostring(err)
-                    .. " — see docs/fixes.md MDFX_ReloadSpeedGuard")
+                    .. " - see docs/fixes.md MDFX_ReloadSpeedGuard")
             end
             error(err)
         end
