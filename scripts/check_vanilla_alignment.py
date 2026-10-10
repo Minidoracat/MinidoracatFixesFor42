@@ -794,6 +794,77 @@ FIXES = [
             r"// Method zombie/globalObjects/SGlobalObjects\.saveInitialStateForClient:",
         ],
     },
+    # ── MDFX_ChargerIdleGuard：沒在充電的充電器每幀 updateGenerator ─────────────
+    {
+        "name": "MDFX_ChargerIdleGuard（成因：setActivated 不比對狀態）",
+        "class": "zombie.iso.objects.IsoCarBatteryCharger",
+        "crash": [
+            # setActivated（IsoCarBatteryCharger.java:433-436）：寫入後直接 updateGenerator，中間沒有任何分支。
+            # 這條轉紅＝官方改成比對狀態，本修復可以退場
+            r"public void setActivated\(boolean\);\s+Code:\s+\d+: aload_0\s+\d+: iload_1\s+\d+: putfield\s+#\d+\s+// Field activated:Z\s+"
+            r"\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field square:Lzombie/iso/IsoGridSquare;\s+"
+            r"\d+: invokestatic\s+#\d+\s+// Method zombie/iso/objects/IsoGenerator\.updateGenerator:\(Lzombie/iso/IsoGridSquare;\)V\s+\d+: return",
+            # update（:122-156）每次都可能呼叫 setActivated(false)（沒電池、沒電兩處）
+            r"public void update\(\);(?:(?!\n  \S)[\s\S])*?// Method setActivated:\(Z\)V(?:(?!\n  \S)[\s\S])*?// Method setActivated:\(Z\)V",
+        ],
+        "depends": [
+            # addToWorld（:111-114）登記進每幀更新清單：移出／放回的對象
+            r"public void addToWorld\(\);(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoCell\.addToProcessIsoObject:\(Lzombie/iso/IsoObject;\)V",
+            r"public boolean isActivated\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ChargerIdleGuard（成因：updateGenerator 標記重算）",
+        "class": "zombie.iso.objects.IsoGenerator",
+        "crash": [
+            # updateGenerator（IsoGenerator.java:693-705）把半徑內的發電機標成 updateSurrounding
+            r"public static void updateGenerator\(zombie\.iso\.IsoGridSquare\);(?:(?!\n  \S)[\s\S])*?// Field updateSurrounding:Z",
+        ],
+    },
+    {
+        "name": "MDFX_ChargerIdleGuard（依賴：每幀更新清單）",
+        "class": "zombie.iso.IsoCell",
+        "depends": [
+            r"public java\.util\.ArrayList<zombie\.iso\.IsoObject> getProcessIsoObjects\(\);",
+            # addToProcessIsoObject（IsoCell.java:2261-2268）只在尾端 add：只讀新增尾段的前提
+            r"public void addToProcessIsoObject\(zombie\.iso\.IsoObject\);(?:(?!\n  \S)[\s\S])*?// Method java/util/ArrayList\.add:\(Ljava/lang/Object;\)Z",
+            # 移除延到 ProcessIsoObject 開頭以 removeAll 處理（:2194-2199），其餘元素相對順序不變
+            r"public void addToProcessIsoObjectRemove\(zombie\.iso\.IsoObject\);",
+            r"private void ProcessIsoObject\(\);(?:(?!\n  \S)[\s\S])*?// Method java/util/ArrayList\.removeAll:",
+        ],
+    },
+    {
+        "name": "MDFX_ChargerIdleGuard（依賴：LoadChunk 在物件 addToWorld 之後）",
+        "class": "zombie.iso.IsoChunk",
+        "depends": [
+            # doLoadGridsquare（IsoChunk.java:3807、:3969）
+            r"public void doLoadGridsquare\(\);(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoObject\.addToWorld:\(\)V"
+            r"(?:(?!\n  \S)[\s\S])*?// String LoadChunk",
+        ],
+    },
+    {
+        "name": "MDFX_ChargerIdleGuard（依賴：客戶端收到新物件觸發 OnObjectAdded）",
+        "class": "zombie.network.packets.AddItemToMapPacket",
+        "depends": [
+            r"public void processClient\(zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?// String OnObjectAdded",
+        ],
+    },
+    {
+        "name": "MDFX_ChargerIdleGuard（包裝：啟動動作）",
+        "file": "media/lua/shared/TimedActions/ISActivateCarBatteryChargerAction.lua",
+        "depends": [
+            r"function\s+ISActivateCarBatteryChargerAction:complete\s*\(\)",
+            r"self\.charger:setActivated\(self\.activate\)",
+        ],
+    },
+    {
+        "name": "MDFX_ChargerIdleGuard（包裝：放置動作）",
+        "file": "media/lua/shared/TimedActions/ISPlaceCarBatteryChargerAction.lua",
+        "depends": [
+            r"function\s+ISPlaceCarBatteryChargerAction:complete\s*\(\)",
+            r"square:AddSpecialObject\(charger\)",
+        ],
+    },
 ]
 
 

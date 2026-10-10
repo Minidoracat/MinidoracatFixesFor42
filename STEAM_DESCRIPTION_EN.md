@@ -8,7 +8,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [h2]📦 Requirements[/h2]
 [list]
 [*] Supported version: Build 42.20.4+
-[*] Singleplayer and multiplayer; in MP the server enables it. The reload fix runs on the server and in each player's game, the mod-settings fix only in each player's game (enable it in the main-menu mod list too to protect the main menu's Apply), the hen-house fix only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
+[*] Singleplayer and multiplayer; in MP the server enables it. The reload and battery-charger fixes run on the server and in each player's game, the mod-settings fix only in each player's game (enable it in the main-menu mod list too to protect the main menu's Apply), the hen-house fix only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
 [*] [b]Add/remove mid-save:[/b] safe to add; before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
 [/list]
 
@@ -28,6 +28,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Mod settings reset to defaults after a restart, or all vanish at once
 [*] Multiplayer: kicked back to the main menu when walking, driving or teleporting away from a hen house
 [*] Multiplayer: a burst of crop-related errors right after joining a server
+[*] Idle car battery chargers near a generator make the server and players recompute power use every frame, slowing things down
 [/list]
 📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3790443858/586187095760095607/]Fixes Guide: Fix List & Details[/url]
 

@@ -1444,6 +1444,113 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 
 ---
 
+## MDFX_ChargerIdleGuard — 沒在充電的汽車電池充電器讓附近發電機每幀重算用電清單
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `shared/Fixes/MDFX_ChargerIdleGuard.lua` |
+| 影響版本 | Build 42.21.0 實測（反編譯快照 `42.21.0-20260928`；`projectzomboid.jar` sha256 `e1a69eb7…`） |
+| 端 | 三端：dedicated server、MP 客戶端、單人（`IsoCell.ProcessIsoObject` 沒有 server 守衛，兩邊都每幀跑） |
+| 類型 | 原版**每幀多餘重算**（效能，不拋錯）：沒啟動的充電器移出引擎每幀更新清單，一啟動就放回 |
+| 狀態 | **現役**（未發布） |
+
+### 症狀（正式服唯讀量測）
+
+某基地（10 台充電器，約 8 台沒放電池、1 台電池沒電；10 台發電機，含 PSR 電池組）附近的玩家客戶端，JFR method-trace 60 秒內
+`IsoGenerator.updateGenerator` 30,015 次、`setSurroundingElectricity` 23,345 次（3.39 秒 CPU），約佔客戶端記憶體配置的 73%（約 60 MB/s）。
+沒有錯誤訊息，只有那一帶的卡頓與伺服器負載。
+
+### 根因（行號為 42.21.0 反編譯快照與原版 Lua）
+
+1. `IsoCarBatteryCharger.addToWorld`（`IsoCarBatteryCharger.java:111-114`）把每台充電器登記進 `IsoCell` 的每幀更新清單；
+   `IsoCell.ProcessIsoObject`（`IsoCell.java:2194-2213`）每幀逐一 `update()`，伺服器與客戶端都跑。
+2. `update()`（`IsoCarBatteryCharger.java:122-156`）在沒電池（`:131`）或有電池但格子沒電（`:136`）時每次都 `setActivated(false)`；
+   `setActivated`（`:433-436`）不比對狀態就 `IsoGenerator.updateGenerator(square)`（javap：`putfield activated` 後直接 `invokestatic`）。
+   同類的 `ClothingWasherLogic.setActivated`（`ClothingWasherLogic.java:287-291`）有 `activated != this.activated` 守衛。
+3. `updateGenerator`（`IsoGenerator.java:693-705`）把半徑內每台發電機標成 `updateSurrounding`；下一幀伺服器的發電機 `update`（`:264-267`）、
+   客戶端 `LightingJNI.checkLights` → `updateSurroundingNow`（`LightingJNI.java:253`、`IsoGenerator.java:683-691`）整份重跑
+   `setSurroundingElectricity`（`:274-331`：每件用電物件 `Translator.getText`、現場編譯 `replaceAll("[\\D]","")`、`DecimalFormat`）。
+4. 沒啟動時 `update()` 其餘的事只有 `lastUpdate = -1` 與 `stopChargingSound()`（`:129-141`），第一次之後就是定值。
+
+### 修法
+
+- **移出／放回**：連續 `IDLE_CHECKS`（2）次檢查（間隔 `CHECK_EVERY`＝10 tick）都看到 `isActivated()` 為 false，才
+  `getCell():addToProcessIsoObjectRemove(obj)`（`IsoCell.java:2270-2276`，下一次 `ProcessIsoObject` 開頭才拿掉）。已移出的每 tick 查一次，
+  `isActivated()` 就 `addToProcessIsoObject(obj)`（`:2261-2268`）放回；另包 `ISActivateCarBatteryChargerAction.complete`
+  （`ISActivateCarBatteryChargerAction.lua:35-41`），原版跑完立即放回，伺服器／單人零延遲。不在世界上（square 為 nil、
+  `square:getChunk()` 為 nil——chunk 卸載時物件仍留在 square 上，`IsoChunk.java:3248-3260`——或 `getObjectIndex()` 為 -1）就丟掉、不放回。
+- **哪些轉換有事件、哪些只能檢查**：
+
+  | 轉換 | 怎麼知道 | 為什麼 |
+  |------|----------|--------|
+  | 地圖載入帶進來的充電器 | `Events.LoadChunk`（`IsoChunk.java:3969`，同一個 `doLoadGridsquare` 先 `addToWorld`，`:3807`）→ 讀清單尾段 | 事件在物件進清單之後 |
+  | 伺服器／單人放置 | 包 `ISPlaceCarBatteryChargerAction.complete`（`:41-49`，`AddSpecialObject` → `addToWorld`）→ 讀清單尾段 | 原版放置只有這條 |
+  | 客戶端收到別人放的 | `Events.OnObjectAdded`（`AddItemToMapPacket.java:66`、`:94`）→ 直接看那個物件 | 事件帶物件 |
+  | 玩家用動作打開 | 包 `ISActivateCarBatteryChargerAction.complete` → 立即放回 | 原版開關只有這條 |
+  | MP 客戶端看到別人打開 | 已移出的每 tick 查 `isActivated()` | 只經 `syncIsoObjectReceive` 改欄位（`IsoCarBatteryCharger.java:380-393`），沒有 Lua 事件 |
+  | 停電、拿掉電池時引擎自己關掉 | 清單上的每 `CHECK_EVERY` tick 查 | 在 `update()` 裡直接寫欄位，沒有事件；晚幾 tick 移出不影響行為 |
+  | 拿走、chunk 卸載 | 每次檢查順便看在不在世界上 | `removeFromWorld` 沒有 Lua 事件 |
+
+- **只讀清單新增的尾段**：`processIsoObject` 是 ArrayList，`addToProcessIsoObject` 只在尾端 `add`（Set 去重），`ProcessIsoObject` 開頭的
+  `removeAll` 保持其餘元素相對順序。記住上次讀到的最後一個元素（錨點），從尾端往前讀到錨點為止；錨點已被移除就等於整份讀一次。第一個
+  OnTick 讀一次（開局整份）。錨點離開世界時（週期檢查）先讀尾段再換錨點；要移出的充電器正好是錨點時先讀尾段、它仍是最後一個就改用前一個。
+  讀漏的最壞後果是那台照原版跑；移出前一律重查 `isActivated()`，不會誤移出啟動中的充電器。
+- 形狀不符（類別、動作的 `complete`、事件、`IsoCell` 三個方法、充電器方法不存在）印 `NOT installed` 不裝；自己的程式 `pcall`，出錯就停用並把
+  移出的全部放回；同一個 Lua 環境重複載入不疊（檔頭全域判斷）。診斷一 session 一次：第一次移出時印
+  `[MinidoracatFixes] MDFX_ChargerIdleGuard took an idle car battery charger at x,y,z off the per-frame update list …`，伺服器與客戶端各自印。
+
+### 與原版的差異與已知限制
+
+- 發電機用電清單不再被沒開的充電器每幀刷新，改在 `updateGenerator` 的其他呼叫點（燈、爐子、洗衣機、烘衣機、收音機開關，
+  物件增減封包，chunk 載入）刷新，與附近沒有充電器的原版基地相同（待使用者確認，見知識庫 `open-issues.md`）。
+- MP 客戶端上別人打開的充電器，在收到同步之後的那一個 OnTick 放回，下一幀才開始本機 update（原版同一幀）；伺服器端零延遲。
+  客戶端本機的電量原版本來就不會漲（每幀增量被 `setCurrentUses` 的 int 截掉，`IsoCarBatteryCharger.java:150`），看到的是伺服器同步的值。
+- 不經事件放進世界的充電器（其他 MOD 用 Lua 直接 `AddSpecialObject`）讀不到，照原版跑，直到它的 chunk 重新載入。
+- `Core.ResetLua` 會丟掉追蹤；已移出的充電器要等 chunk 重新載入才回到清單。遊戲中不會 ResetLua。
+
+### 效能（伺服器端 Lua 成本）
+
+E2E `ciBench`（非獨佔）：伺服器每 tick 3.1 µs（追蹤 6 台、5 台移出；伺服器 10 tick/s，約 31 µs/s），沒有新物件時讀尾段 0.9 µs，
+整份讀 0.22 µs／物件（90 個 20 µs；清單上萬個物件的伺服器約 2 ms，只在錨點遺失時發生）；客戶端每 tick 3.3 µs。整輪（含傳送 828 格再回來）
+整份讀伺服器 7 次、客戶端 6 次，讀過的元素總數伺服器 554、客戶端 374。
+
+### 驗證
+
+`lua scripts/test_charger_idle_guard.lua` — 43 項，全綠。照載本機原版 `ISActivateCarBatteryChargerAction.lua`、`ISPlaceCarBatteryChargerAction.lua`；
+Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除；充電器 `update` 與不比對狀態的 `setActivated`；chunk 卸載留物件在 square 上；
+`LoadChunk` 在 `addToWorld` 之後）。對照組每幀 3 次 `updateGenerator`；修正組第一次檢查後還在、第二次才移出，之後零呼叫、充電中的照常充電；
+`complete` 當下放回、同步改欄位下一 tick 放回、被引擎關掉後再移出；啟動過就重算檢查次數；拿走與 chunk 卸載都丟掉、不放回；LoadChunk 只讀新增的
+6 個（數 `get` 次數）、沒有新增只讀 2 次；錨點被移除時整份讀、錨點離開世界時換掉；漏抓照原版跑；OnObjectAdded 不讀清單；放置動作後立即追蹤；
+自己出錯不外拋且全部放回；原版 `complete` 的錯照樣外洩；重複載入不疊；三種形狀不符都印 `NOT installed`、不動清單。
+
+**mutation 驗證**（`--mutants`，28 個全部抓到）：不載入、一次檢查就移出、移出前不查 `isActivated`、已移出的不查 `isActivated`、已移出／清單上的
+不查在不在世界、在世界不看 chunk、不看 objectIndex、`complete` 後不放回、`complete` 後不重算檢查次數、包裝不呼叫後段、包裝吞掉原版的錯、
+讀清單不在錨點停、不更新錨點、開局不讀、錨點離開世界不換、移出錨點時不換錨點、不掛 LoadChunk、不掛 OnObjectAdded、不包放置動作、
+拆掉重複載入判斷、拆掉載入時／`IsoCell`／充電器形狀檢查、已知的不去重、停用時不放回、自己的程式不包 pcall、診斷不節流。
+
+`python scripts/check_vanilla_alignment.py` 登記 7 條：成因（`setActivated` 寫入後直接 `updateGenerator`、`update` 兩處呼叫 `setActivated`、
+`updateGenerator` 標記 `updateSurrounding`）、依賴（`addToWorld` 登記清單、`isActivated`、`IsoCell` 清單三個方法＋尾端 add＋`removeAll`、
+`doLoadGridsquare` 先 `addToWorld` 再觸發 `LoadChunk`、客戶端 `OnObjectAdded`、兩個動作的 `complete`）。
+
+實機 E2E（`fixes-e2e` skill 的 `charger-idle`，MP，42.21.0）：發電機加油啟動，玩家用原版動作放 7 台充電器、把 10% 的電池接到第 7 台
+（6 台空的＋1 台有電池沒開）。停 45 秒時對伺服器與客戶端 JVM 各錄 30 秒 JFR method-trace（`updateGenerator`、`setSurroundingElectricity`）。
+
+| 30 秒 | 伺服器 `updateGenerator` | 伺服器 `setSurroundingElectricity` | 客戶端 `updateGenerator` | 客戶端 `setSurroundingElectricity` |
+|------|------|------|------|------|
+| 對照組（修正檔從本輪拿掉，`fixes-charger-control-1011a`） | 1,806（全來自 `IsoCarBatteryCharger.setActivated`） | 301（`IsoGenerator.update`） | 43,782（全來自 `setActivated`） | 7,297（`updateSurroundingNow`） |
+| 修正組（`fixes-charger-fix-1011d`） | 0 | 0 | 0 | 0 |
+
+兩組充電相同：打開後 41 秒伺服器電量 0.101 → 0.145，關掉時客戶端同步到 0.148；拿走一台空的不報錯；再打開、傳送 828 格外等兩邊卸載、回來後
+伺服器 30 秒 +0.033（對照）／+0.034（修正）。修正組另驗：兩端 7 台都移出、打開當下兩端放回、關掉後兩端再移出、拿走與卸載後兩端都不再追蹤、
+回來後空的 5 台重新找到並移出、打開的那台留在清單上。兩組伺服器 `SERVER STARTED` 之後零例外，客戶端只有開機的 `AdvancedAnimator`。
+
+### 可退場條件
+
+官方讓 `IsoCarBatteryCharger.setActivated` 比對狀態（或 `update` 不再對沒啟動的充電器呼叫 `setActivated`）：`check_vanilla_alignment.py`
+的「成因：setActivated 不比對狀態」轉 CHANGED 就移出本檔。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

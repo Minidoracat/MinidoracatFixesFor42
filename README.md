@@ -6,7 +6,7 @@ Project Zomboid Build 42 的常設修復合輯（client + server）。
 
 只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
 不加物品、不加介面、不加設定選項；正常遊玩的行為不變，只在原本會炸掉的
-地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空，或讓存檔不會撐破引擎上限
+地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器），或讓存檔不會撐破引擎上限
 （唯一看得到的差異：沒人的區域裡，枯死／腐爛作物慢慢變成踩爛外觀的轉換會暫停，見
 `MDFX_FarmingGosPrune`）。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件；遊戲更新後跑
@@ -39,6 +39,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_ModOptionsPersist` | client | 原版 `PZAPI.ModOptions` 存檔把當下沒載入的 MOD 的設定寫回時不加換行（`ModOptions.lua:286-288`），全部黏成一行，下次只讀得到第一筆（`:304-305`）、其餘丟失；主選單沒有 MOD 設定時按套用不先讀檔（`MainOptions.lua:409-411`、`:3766`），整個 `ModOptions.ini` 清空。包裝存讀：讀取時把黏行拆回一筆一行並重新套上，存檔時每行補換行，還沒讀過就存時先保住檔案裡沒註冊的行 |
 | `MDFX_HutchNullSlotGuard` | client | 42.21 的 `IsoHutch.removeFromWorld` 對雞舍每一格的值呼叫 `removeFromUpdateLists()`、沒有 null 檢查，而多人客戶端自己的動物同步會在格位留下 null（母雞進巢箱下蛋、換格；`NetworkPlayerAI.parse`、`AnimalUpdatePacket.parse`）。走路、開車離開或傳送讓雞舍所在的 chunk 卸載時 NPE，玩家被踢回主選單。每幀把已登記雞舍的 null 格移除；只在多人客戶端執行，附近沒有雞舍時不做事 |
 | `MDFX_GosDuplicateNewGuard` | client | 伺服器把連線加進廣播表，比打包連線清單（全域物件的整份清單）早了一段登入驗證（Steam 實測約 2 秒）；這段時間新增的作物、營火等全域物件同時出現在清單與延後的新增封包，原版 `CGlobalObjectSystem:newLuaObjectAt`（`CGlobalObjectSystem.lua:69-72`）不容許同座標已有物件，玩家進遊戲那一刻每個各跳兩條錯誤（`already an object at`＋`getModData of non-table`；資料沒壞，Java 照樣寫入）。`MDFX_FarmingGosPrune` 在區域載入時整批重建作物，讓它從零星變成一次數十條。同座標已有物件就沿用，伺服器送來的資料照原版寫入 |
+| `MDFX_ChargerIdleGuard` | shared | 原版 `IsoCarBatteryCharger.update` 對沒放電池或沒電的充電器每幀 `setActivated(false)`，而 `setActivated` 不比對狀態就 `IsoGenerator.updateGenerator`，附近發電機下一幀整份重跑 `setSurroundingElectricity`（逐件翻譯、現場編譯 regex）；伺服器與每個附近的客戶端都每幀做。沒啟動的充電器暫時移出每幀更新清單，一啟動就放回（自己開的當下、別人開的下一 tick）；充電行為與原版相同 |
 | `MDFX_StaleRoomGuard` | client | **已退場**（42.21 官方在移除自建建築時一併重設它覆蓋的格子；補丁只在找到失效格子時動作，保留為 regression 保險）。42.20.4：拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單 |
 | `MDFX_Guard`（骨架，非修復） | shared | server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
 | `MDFX_CleanUIConfigLoad` | client | **已退場**（CleanUI v2.7.9 官方修復；補丁自動不介入，保留為 regression 保險）。CleanUI v2.7.8 缺 `CleanUIConfig.loadConfig` 讓背包與戰利品視窗完全不建立 |

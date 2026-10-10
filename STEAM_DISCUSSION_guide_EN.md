@@ -7,7 +7,7 @@
 [h2]🚀 Quick start[/h2]
 [list]
 [*] Build 42.20.4+. Subscribe and enable; no settings, sandbox options or keys. In MP the server enables it.
-[*] Vanilla bugs only; no balance changes, items or UI. Fixes act only where vanilla would error (plus two farming fixes against duplicate traffic and save overflow, and one that stops vanilla from losing mod settings), are rechecked after game updates and removed once officially fixed.
+[*] Vanilla bugs only; no balance changes, items or UI. Fixes act only where vanilla would error (plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, and one that skips vanilla's needless per-frame recalculation for battery chargers), are rechecked after game updates and removed once officially fixed.
 [/list]
 
 [h2]🐛 Fix details[/h2]
@@ -22,7 +22,7 @@
 [b]Symptom[/b]: holding e.g. a flashlight with an ammo strap (or fast-reload gear) worn, loading a magazine does nothing.
 [b]Cause[/b]: vanilla's reload-speed math treats the held item as a gun and errors asking a non-firearm for its magazine type.
 [b]Fix[/b]: only when vanilla errors and the item isn't a firearm, speed uses vanilla's no-strap formula (the strap bonus is for firearms). Other errors still surface; firearm reloads are unchanged.
-[b]Scope[/b]: server, client and SP; the only fix needed on both sides. [b]Retired[/b]: once vanilla checks for a firearm.
+[b]Scope[/b]: server, client and SP. [b]Retired[/b]: once vanilla checks for a firearm.
 
 [h3]3. Server error when a petted animal just died or despawned[/h3]
 [b]Symptom[/b]: in MP, if the animal dies, despawns or leaves sync range during the ~3 s of petting, the server logs an error.
@@ -113,6 +113,12 @@
 [b]Fix[/b]: when your game gets an "add" for a square that already has that object, it keeps the existing one instead of erroring; the data the server sent is applied as in vanilla, so the result is identical to vanilla after its error, minus the error. When it acts, console.txt shows [MinidoracatFixes] MDFX_GosDuplicateNewGuard the server announced a new … object at … (once per session).
 [b]Scope[/b]: each player's game (also loaded in SP, same behavior). Players get it when the server updates the mod. [b]Retired[/b]: once vanilla stops erroring on an "add" for an existing object, or the server stops sending notices before the player has the list.
 
+[h3]17. Idle car battery chargers near a generator slow down the server and players[/h3]
+[b]Symptom[/b]: when a car battery charger near a generator has no battery, or has one but is switched off, the server and every nearby player's game recompute that generator's power list every frame; the more chargers, generators and appliances, the worse. No error, just stutter around that base and higher server load. On a live server, a base with 10 chargers and 10 generators made up about 70% of a player's game memory allocation.
+[b]Cause[/b]: vanilla switches an idle charger "off" again every frame (no battery, or no power), and every switch-off tells nearby generators to recompute, without checking that it was already off. Washers and dryers do check.
+[b]Fix[/b]: switched-off chargers sit out the per-frame update (for them it does nothing but notify generators) and go back the moment they're switched on: right away when you switch one on, on the next frame after your game hears someone else did; taken or unloaded chargers are forgotten. Charging, its sound and the battery level behave exactly as in vanilla. When it acts, the log shows [MinidoracatFixes] MDFX_ChargerIdleGuard took an idle car battery charger … (once per session).
+[b]Scope[/b]: server, each player's game and SP. Players get it when the server updates the mod. [b]Retired[/b]: once vanilla checks the charger's state before notifying generators.
+
 [h2]⚠️ Known limitations[/h2]
 [list]
 [*] While moved out, dead/rotten crops pause their slow change to the trampled look until someone returns. Apart from the hen-house fix also correcting the "full" check, the only visible difference.
@@ -124,6 +130,7 @@
 [*] Watering and the other animal actions: the log line has no ID of the requested animal (lost when the server parses it). Loading an animal into a trailer from your hands while the server thinks you hold an animal errors when the action is created; not covered.
 [*] Mod settings already wiped or dropped by vanilla can't be recovered; set them again once.
 [*] Hen house disconnect: an empty slot created in the very frame its hen house unloads (rare) still disconnects; slots that also hold a dead chicken aren't cleared, so the corpse isn't removed with them.
+[*] Battery chargers: idle chargers no longer refresh nearby generators' power lists every frame; appliance switches, added/removed objects and area loads still do, same as a vanilla base without chargers.
 [/list]
 
 [h2]🧹 Before removing this mod[/h2]
@@ -136,7 +143,7 @@
 [h2]❓ FAQ[/h2]
 [list]
 [*] [b]Items on corpses (e.g. a red digital watch) can't be picked up?[/b] Not covered or investigated yet; report on GitHub Issues with the item, a screenshot and log, noting if pure vanilla does it too.
-[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings, hen-house and join-errors fixes log in the player's own console.txt); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
+[*] [b]Is a fix working?[/b] The log (server-console.txt on servers, console.txt in SP) shows [MinidoracatFixes] lines: one per fix per start when a problem is caught (the watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the battery-charger fix in both the server's and the player's); "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error. Report the last two.
 [*] [b]Load order?[/b] Usually irrelevant: if a later mod replaces the same vanilla code, most fixes re-attach at startup and keep its changes; crop sync steps aside.
 [*] [b]CleanUI inventory fix?[/b] Retired: CleanUI v2.7.9 fixed it; the patch stays dormant.
 [*] [b]Trailer / multi-tile furniture debris fixes?[/b] Removed in 0.4.0, unmaintained.
