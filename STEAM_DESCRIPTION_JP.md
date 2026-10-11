@@ -30,7 +30,7 @@ Build 42 のバニラ不具合の修正パックです。バニラの不具合�
 [*] マルチでサーバーに参加した直後、作物関連のエラーが大量に表示される
 [*] 発電機の近くに充電していないカーバッテリー充電器があると、サーバーと各プレイヤーのゲームが毎フレーム電力を計算し直して重くなる
 [/list]
-📖 [b]各修正の原因・対処・適用範囲・外す前の注意：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3790443858/586187095760095607/]Fixes Guide: Fix List & Details[/url]（英語）
+📖 [b]各修正の原因・対処・適用範囲・外す前の注意：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840467]Fixes Mod Guide: Fix List & Details[/url]（英語）
 
 [h2]🔗 Minidoracat の MOD 一覧[/h2]
 すべての MOD を[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全シリーズ コレクション[/url]にまとめています。必要なものを選んでサブスクライブしてください。
