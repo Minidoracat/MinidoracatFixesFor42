@@ -1452,7 +1452,7 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 | 影響版本 | Build 42.21.0 實測（反編譯快照 `42.21.0-20260928`；`projectzomboid.jar` sha256 `e1a69eb7…`） |
 | 端 | 三端：dedicated server、MP 客戶端、單人（`IsoCell.ProcessIsoObject` 沒有 server 守衛，兩邊都每幀跑） |
 | 類型 | 原版**每幀多餘重算**（效能，不拋錯）：沒啟動的充電器移出引擎每幀更新清單，一啟動就放回 |
-| 狀態 | **現役**（未發布） |
+| 狀態 | **現役**（42.21.0-0.15.0 起） |
 
 ### 症狀（正式服唯讀量測）
 
