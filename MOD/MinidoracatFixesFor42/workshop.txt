@@ -1,6 +1,6 @@
 version=1
 id=3790443858
-title=[B42] Minidoracat Fixes
+title=[B42] Fixes by Minidoracat
 description=[h1]🔧 Minidoracat Fixes[/h1]
 description=[h3]By Minidoracat[/h3]
 description=
