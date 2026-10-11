@@ -1,4 +1,4 @@
-# Minidoracat Fixes for B42
+# Minidoracat Fixes
 
 **By Minidoracat**
 

@@ -13,6 +13,11 @@
   > 充電器的原版基地相同。生效時伺服器與玩家的 console.txt 各印一行
   > `[MinidoracatFixes] MDFX_ChargerIdleGuard took an idle car battery charger …`（每次開機只印一次）。
 
+### 變更
+
+- 遊戲內 MOD 清單的名稱改為「Minidoracat Fixes」（拿掉 for B42）。MOD ID 不變，已啟用的存檔與伺服器
+  不需要重新啟用。
+
 ## [42.21.0-0.14.0] - 2026-10-04
 
 ### 修正

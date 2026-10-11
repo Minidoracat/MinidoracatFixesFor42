@@ -1,4 +1,4 @@
-[h1]🔧 Minidoracat Fixes for B42[/h1]
+[h1]🔧 Minidoracat Fixes[/h1]
 [h3]By Minidoracat[/h3]
 
 [hr][/hr]
