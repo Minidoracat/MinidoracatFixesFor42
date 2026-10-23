@@ -1232,7 +1232,7 @@ save 不補行尾、save 不換回原表、原 save 的錯誤不重拋、準備 
 
 | 場次 | 結果 |
 |------|------|
-| `glued`（＋AutoDrive，兩次冷啟動） | 本輪 `ModOptions.ini` 換成三行 fixture：AutoDrive 三個非預設值一半藏在未載入 MOD 那筆後面、一半黏在它前面。主選單一開就印 `split 5 glued records into one per line`；進場 VoiceEnabled=false／VoiceLanguage=3／UTurnMode=2 都套上、檔案 6 行沒有黏行，save 後 106 行一筆一行、未載入 MOD 的兩筆各一行；結束到桌面再開，三個值與兩筆都還在、沒有再印 split。12＋12 個 CHECK，零例外 |
+| `glued`（＋AutoDrive，兩次冷啟動） | 本輪 `ModOptions.ini` 換成三行 fixture：AutoDrive 三個非預設值一半藏在未載入 MOD 那筆後面、一半黏在它前面。主選單一開就印 `split 5 glued records into one per line`；進場 VoiceEnabled=false／VoiceLanguage=3／UTurnMode=2 都套上、檔案 6 行沒有黏行，save 後 106 行一筆一行、未載入 MOD 的兩筆各一行；結束到桌面再開，三個值與兩筆都還在、沒有再印 split。12＋12 個 CHECK，零例外。2026-10-23 加備份後重跑：同樣通過，兩次 save 後檔案與備份都是 132 行（選項比 10-02 多），18＋18 個 CHECK，零例外 |
 | `noopts`（只有本 MOD） | 沒有任何 MOD 建選項（`Data` 為空、原版不 load，檔案仍有兩行黏行），呼叫套用時同一個 save：3 行變 6 行一筆一行、六筆各一行。9 個 CHECK，零例外。2026-10-23 加備份後重跑：同樣 6 行，且沒有寫出備份（還沒 load 過），10 個 CHECK |
 | `noopts-control`（2026-10-23，本 MOD 從本輪刪掉） | 原版對照：同一個 fixture、同一個 save，`ModOptions.ini` 從 3 行變成 0 行——玩家在主選單按套用的清空，實機重現。3 個 CHECK |
 | `wiped-control`（2026-10-23，＋MiniMap，本 MOD 從本輪刪掉） | `ModOptions.ini` 截成 0 byte、備份放 MiniMap 殭屍／動物／載具開著的 6 筆＋未載入 MOD 2 筆：原版不讀備份，三個圖層都是預設的關、檔案仍 0 行；設定視窗截圖三個開關都是關。10 個 CHECK |
