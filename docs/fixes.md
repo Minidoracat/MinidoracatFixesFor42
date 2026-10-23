@@ -1237,6 +1237,7 @@ save 不補行尾、save 不換回原表、原 save 的錯誤不重拋、準備 
 | `noopts-control`（2026-10-23，本 MOD 從本輪刪掉） | 原版對照：同一個 fixture、同一個 save，`ModOptions.ini` 從 3 行變成 0 行——玩家在主選單按套用的清空，實機重現。3 個 CHECK |
 | `wiped-control`（2026-10-23，＋MiniMap，本 MOD 從本輪刪掉） | `ModOptions.ini` 截成 0 byte、備份放 MiniMap 殭屍／動物／載具開著的 6 筆＋未載入 MOD 2 筆：原版不讀備份，三個圖層都是預設的關、檔案仍 0 行；設定視窗截圖三個開關都是關。10 個 CHECK |
 | `wiped`（2026-10-23，＋MiniMap） | 同一個 fixture：主選單（`f:0`）印 `restored 8 records of 2 mod(s) missing from ModOptions.ini`，進場三個圖層都是開、檔案 8 行一筆一行、備份 8 行；設定視窗截圖三個開關都是開。20 個 CHECK，零例外 |
+| `wiped`（2026-10-23，多人，＋MiniMap） | 同一個 fixture。客戶端主選單只啟用測試探針——本 MOD 與 MiniMap 都要連上伺服器才載入，和玩家主選單沒啟用 MOD 的情況相同。連線後載入本 MOD、印 `restored 8 records of 2 mod(s) missing from ModOptions.ini`，進場三個圖層都是開、檔案與備份各 8 行；設定視窗截圖三個開關都是開。20 個 CHECK；客戶端例外只有測試探針缺 `AnimSets`／`actiongroups` 目錄的 `AdvancedAnimator` 17 個（每輪多人 E2E 都有） |
 
 ### 可退場條件
 
