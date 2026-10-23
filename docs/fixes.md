@@ -1199,11 +1199,12 @@ load，那時本 MOD 已裝好。
 - **只補整個不見的 MOD**：清空後先進了沒有本 MOD、但有那個 MOD 的存檔或伺服器，又在那裡存過設定，那個 MOD 就以那次存的值為準
   （通常是預設值），備份補不回。被截斷在某個 MOD 中間的檔案，那個 MOD 缺的行也不補。
 - **主選單沒有啟用本 MOD 時，主選單的套用照樣清空檔案**，由下次有本 MOD 的 load 補回；多人遊戲進服後只載伺服器 `Mods=` 的 MOD，
-  伺服器沒裝本 MOD 時遊戲內不生效、也不補回。
+  伺服器沒裝本 MOD 時遊戲內不生效、也不補回。家族 MOD 接上 UI 框架 rev 23 的 `UI.ModOptionsBackup` 後，各自從
+  `Zomboid/Lua/MinidoracatUI/` 的備份補回自己的設定，不靠本 MOD；兩邊都只補檔案裡缺的行，同時在也不會寫出重複的行。
 - **刪檔重設要連備份一起刪**：只刪 `ModOptions.ini`，下次 load 會把每個 MOD 從備份補回。
 - **比本 MOD 先載入、在檔案載入時就 load 並把值記進變數的 MOD**：補回的那一場仍照預設，下次進遊戲才跟上（選項值本身已補回）。
-  家族的 VehicleManager（`showButton`）、PackThrow（`showDock`）是這種寫法；正式服它們排在本 MOD 之後、不受影響，MOD 清單把它們
-  排在本 MOD 前面時才會遇到。
+  家族的 VehicleManager（`showButton`）、PackThrow（`showDock`）是這種寫法；正式服它們排在本 MOD 之後、不受影響。這兩個 MOD 的下一版
+  在自己的 load 前用 UI 框架 rev 23 補回，之後排在本 MOD 前面也照常。
 - textentry 的值若剛好含「型別`|x|y|`合法值」形狀的字串，會被當成黏行切開（實務上沒見過）。
 - save 期間內層包裝若改動 OtherOptions，改動會隨換回原表而丟失（已知 MOD 都沒有這樣做）。
 
