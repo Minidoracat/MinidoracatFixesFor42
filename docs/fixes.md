@@ -1179,10 +1179,12 @@ OtherOptions 是空的時 save 與原版位元組相同；有未註冊行時只�
 `MainScreenState`，`:396` 觸發 `OnMainMenuEnter`）。每次 `LoadDirBase` 原版檔重建整張表，marker 隨之消失、本檔重新包裝；
 同一張表上重複執行由 marker 擋下。形狀不符（`PZAPI.ModOptions`、`load`／`save`、`OtherOptions`／`Dict`、
 `getFileReader`／`getFileWriter`）印一次 `NOT installed` 並放棄。不做 `OnGameBoot` 復查：會包裝 load／save 的已知 MOD
-（EquipmentUI、ContextMenuCleanup 3780688809）都先呼叫原函式，前後順序都串得起來；整支取代而不呼叫原函式的 MOD 會讓本修正失效，
-那種 MOD 本身就已經改掉原版存讀。MOD 依 `Mods=` 順序載入（`LuaManager.java:1151-1193`），正式服本 MOD 排在尾端：比本 MOD 先
-載入、在檔案載入時就自己 load 的 MOD（VehicleManager、PackThrow）那一次是原版 load，讀到的是還沒補回的檔案；補回發生在之後
-第一次經過本補丁的 load（`MainOptions:create`），選項值由那次 load 補上。
+（EquipmentUI、ContextMenuCleanup 3780688809、AreaTasks 3793163745）都先呼叫原函式，前後順序都串得起來；整支取代而不呼叫原函式的 MOD 會讓本修正失效，
+那種 MOD 本身就已經改掉原版存讀。MOD 依 `Mods=` 順序載入（`LuaManager.java:1151-1193`）：比本 MOD 先載入、在檔案載入時就
+自己 load 的 MOD，那一次是原版 load、讀到還沒補回的檔案，補回發生在之後第一次經過本補丁的 load。正式服 2026-10-20 的
+`Mods=` 裡本 MOD 排第 79／142 項：在檔案載入時就 load 的 VehicleManager（136）、PackThrow（140）排在後面，補回就發生在
+它們那一次 load；排在前面又自己 load 的 CleanUI、Neat_Crafting、Neat_Building、CleanHotBar（5–9）都在 `OnGameBoot` 才註冊與
+load，那時本 MOD 已裝好。
 
 診斷（一 session 一次，前綴 `[MinidoracatFixes] MDFX_ModOptionsPersist`）：`split N glued records into one per line`、
 `restored N records of M mod(s) missing from ModOptions.ini (backup ModOptions_MDFX_backup.ini)`、
@@ -1199,8 +1201,9 @@ OtherOptions 是空的時 save 與原版位元組相同；有未註冊行時只�
 - **主選單沒有啟用本 MOD 時，主選單的套用照樣清空檔案**，由下次有本 MOD 的 load 補回；多人遊戲進服後只載伺服器 `Mods=` 的 MOD，
   伺服器沒裝本 MOD 時遊戲內不生效、也不補回。
 - **刪檔重設要連備份一起刪**：只刪 `ModOptions.ini`，下次 load 會把每個 MOD 從備份補回。
-- **先載入、在檔案載入時就記下開關的 MOD**：VehicleManager 的 `showButton`、PackThrow 的 `showDock` 在補回的那一場仍是預設值
-  （它們只在 `options:apply()` 重讀），下次進遊戲才跟上；選項值本身已補回。
+- **比本 MOD 先載入、在檔案載入時就 load 並把值記進變數的 MOD**：補回的那一場仍照預設，下次進遊戲才跟上（選項值本身已補回）。
+  家族的 VehicleManager（`showButton`）、PackThrow（`showDock`）是這種寫法；正式服它們排在本 MOD 之後、不受影響，MOD 清單把它們
+  排在本 MOD 前面時才會遇到。
 - textentry 的值若剛好含「型別`|x|y|`合法值」形狀的字串，會被當成黏行切開（實務上沒見過）。
 - save 期間內層包裝若改動 OtherOptions，改動會隨換回原表而丟失（已知 MOD 都沒有這樣做）。
 
