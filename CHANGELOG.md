@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### 修正
+
+- **在主選單按了選項的套用之後，進遊戲所有 MOD 的設定都回到預設**。主選單沒有啟用任何有設定的 MOD 時
+  （多人玩家常見：伺服器的 MOD 進服後才載入），在主選單的選項按「同意」或「套用」，原版會把所有 MOD 共用的
+  設定檔整個清空，下次進遊戲每個 MOD 的設定都回到預設。之前要在主選單也啟用本 MOD 才擋得住；現在本 MOD
+  另外把設定檔抄一份備份，下次進到有本 MOD 的遊戲（單人，或有啟用本 MOD 的伺服器）時，把整個不見的 MOD
+  設定從備份補回。更新後要先進過一次遊戲，備份才會建立。設定照舊是所有存檔與伺服器共用同一份。
+
+  > 技術要點：備份檔是 `Zomboid/Lua/ModOptions_MDFX_backup.ini`，每次讀完設定、之後每次存檔都跟著更新
+  > （內容相同就不寫）。只補在 `ModOptions.ini` 裡一筆都沒有的 MOD；還有任何一筆就以 `ModOptions.ini` 為準，
+  > MOD 自己移除或改了型別的舊設定不會復活。想把所有 MOD 設定重設，要連備份檔一起刪。補回時 console.txt
+  > 印一行 `[MinidoracatFixes] MDFX_ModOptionsPersist restored N records of M mod(s) missing from ModOptions.ini`。
+
 ## [42.21.0-0.15.0] - 2026-10-11
 
 ### 效能

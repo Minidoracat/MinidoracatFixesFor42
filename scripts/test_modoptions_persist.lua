@@ -13,6 +13,8 @@
 --   * 切不出合法筆數不改檔；寫入讀回不符時寫回原內容、不再 load
 --   * 任何一步出錯退回原版；原 save 拋錯照樣外洩且 OtherOptions 還原；形狀不符印 NOT installed；重複載入不疊
 --   * 官方先補上 :287 換行（模擬）時，未註冊行之後只多一個空行、不會越存越多
+--   * 備份：第一次 load 就建立；原版清空後下次 load 補回整個不見的 MOD（檔案裡還有的 MOD 以檔案為準、改了型別的
+--     舊行不復活）；load 過的 save 讓備份跟上；load 前的 save、讀不到檔案、讀檔拋錯都不洗掉備份；寫入被丟就寫回上一份
 -- --mutants：逐一抽掉每道防線，確認至少一項檢查轉紅。
 
 local PZ_HOME = os.getenv("PZ_HOME") or "D:/SteamLibrary/steamapps/common/ProjectZomboid"
@@ -38,12 +40,14 @@ assert(nFixed == 1, "vanilla :287 write(line) not found exactly once")
 -- ── 假環境 ────────────────────────────────────────────────────────
 local disk, io_stats, prints
 local dropNextWrite = false
+local dropWrite = {} -- 檔名 → 下一次寫入這個檔時靜默丟掉
 local ALLOWED = { ini = true, cfg = true, txt = true, log = true, json = true }
 
 local function resetEnv()
     disk, prints = {}, {}
-    io_stats = { reads = 0, writes = 0 }
+    io_stats = { reads = 0, writes = 0, byName = {} }
     dropNextWrite = false
+    dropWrite = {}
     getText = function(s) return s end
     print = function(...)
         local parts = {}
@@ -53,8 +57,10 @@ local function resetEnv()
     getFileWriter = function(name, create, append)
         if not ALLOWED[name:match("%.(%w+)$") or ""] then return nil end
         io_stats.writes = io_stats.writes + 1
-        local drop = dropNextWrite
+        io_stats.byName[name] = (io_stats.byName[name] or 0) + 1
+        local drop = dropNextWrite or dropWrite[name] == true
         dropNextWrite = false
+        dropWrite[name] = nil
         local buf = append and (disk[name] or "") or ""
         disk[name] = buf -- FileOutputStream(append=false) 一開就截斷
         return {
@@ -350,7 +356,7 @@ local function runSuite(srcs, quiet)
     disk["ModOptions.ini"] = CLEAN
     session(true); regAD()
     PZAPI.ModOptions:load()
-    check("4 load 不寫檔、只多讀一次", io_stats.writes == 0 and io_stats.reads == 2, io_stats.writes .. "/" .. io_stats.reads)
+    check("4 load 不改寫 ModOptions.ini", (io_stats.byName["ModOptions.ini"] or 0) == 0, tostring(io_stats.byName["ModOptions.ini"]))
     PZAPI.ModOptions:save()
     check("4 只有已註冊行：load＋save 與原版位元組相同", disk["ModOptions.ini"] == vanillaOut)
     check("4 沒有診斷", #prints == 0, prints[1])
@@ -363,7 +369,8 @@ local function runSuite(srcs, quiet)
     resetEnv()
     disk["ModOptions.ini"] = MIXED
     session(true); regAD(); PZAPI.ModOptions:load()
-    check("4 單筆行（含結尾沒換行）不算黏行，load 不寫檔", io_stats.writes == 0 and disk["ModOptions.ini"] == MIXED)
+    check("4 單筆行（含結尾沒換行）不算黏行，load 不改寫 ModOptions.ini",
+        (io_stats.byName["ModOptions.ini"] or 0) == 0 and disk["ModOptions.ini"] == MIXED)
     PZAPI.ModOptions:save()
     check("4 有未註冊行：只差每行補上 \\r\\n", vanillaMixed == CLEAN .. "tickbox|GoneMod|g|truetickbox|Gone2|h|false"
         and disk["ModOptions.ini"] == CLEAN .. "tickbox|GoneMod|g|true\r\ntickbox|Gone2|h|false\r\n", disk["ModOptions.ini"])
@@ -488,7 +495,7 @@ local function runSuite(srcs, quiet)
     loadFix()
     regAD()
     PZAPI.ModOptions:load()
-    check("10 重複載入不疊包裝", PZAPI.ModOptions.load == wrapped and io_stats.reads == 2, io_stats.reads)
+    check("10 重複載入不疊包裝", PZAPI.ModOptions.load == wrapped)
 
     -- 11 官方先補上換行
     section("[11] 官方先補上 :287 的換行、本補丁還沒退場")
@@ -503,6 +510,85 @@ local function runSuite(srcs, quiet)
     check("11 未註冊行之後只多一個空行", snapshots[1] == CLEAN .. "tickbox|GoneMod|g|true\r\n\r\n", snapshots[1])
     check("11 再存兩次不會越存越多", snapshots[3] == snapshots[1], snapshots[3])
 
+    -- 12 備份
+    local BK = "ModOptions_MDFX_backup.ini"
+    local FULL = table.concat(AD_LINES, "\r\n") .. "\r\ntickbox|GoneMod|g|true\r\ntickbox|Gone2|h|false\r\n"
+    section("[12] 備份：原版清空後，下次 load 補回")
+    resetEnv()
+    disk["ModOptions.ini"] = FULL
+    session(true); local ad12 = regAD(); PZAPI.ModOptions:load()
+    check("12 第一次 load 就建立備份，內容與檔案相同、不改寫檔案",
+        disk[BK] == FULL and (io_stats.byName["ModOptions.ini"] or 0) == 0, disk[BK])
+    ad12:getOption("VoiceVolume"):setValue(40)
+    PZAPI.ModOptions:save()
+    check("12 load 過的 save 讓備份跟上", disk[BK] == disk["ModOptions.ini"]
+        and hasLine(disk[BK], "slider|MinidoracatAutoDrive|VoiceVolume|40"), disk[BK])
+    session(false) -- 主選單：沒有本補丁、沒有 MOD 選項，原版不 load
+    PZAPI.ModOptions:save() -- 選項畫面按套用（MainOptions.lua:3766）
+    local saved12 = disk[BK]
+    check("12 對照組：原版把 ModOptions.ini 清空、備份還在",
+        disk["ModOptions.ini"] == "" and hasLine(saved12, "slider|MinidoracatAutoDrive|VoiceVolume|40"))
+    session(true); local ad12b = regAD(); PZAPI.ModOptions:load()
+    local e12, l12, v12 = adValues(ad12b)
+    check("12 下次 load：AutoDrive 三個值補回", e12 == false and l12 == 3 and v12 == 40,
+        tostring(e12) .. "/" .. tostring(l12) .. "/" .. tostring(v12))
+    check("12 檔案補回每一筆（含沒載入的 MOD）", disk["ModOptions.ini"] == saved12, disk["ModOptions.ini"])
+    check("12 印一行補回診斷", printCount("restored 5 records of 3 mod(s) missing from ModOptions.ini") == 1, prints[1])
+
+    section("[12] 備份：只補整個不見的 MOD")
+    resetEnv()
+    disk["ModOptions.ini"] = "tickbox|MinidoracatAutoDrive|VoiceEnabled|true\r\n"
+    disk[BK] = FULL
+    session(true); local ad12c = regAD(); PZAPI.ModOptions:load()
+    local e12c, l12c, v12c = adValues(ad12c)
+    check("12 檔案裡還有 AutoDrive：以檔案為準，備份裡它的其他筆不補", e12c == true and l12c == 1 and v12c == 70,
+        tostring(e12c) .. "/" .. tostring(l12c) .. "/" .. tostring(v12c))
+    check("12 整個不見的兩個 MOD 接在檔尾", disk["ModOptions.ini"] == "tickbox|MinidoracatAutoDrive|VoiceEnabled|true\r\n"
+        .. "tickbox|GoneMod|g|true\r\ntickbox|Gone2|h|false\r\n", disk["ModOptions.ini"])
+    check("12 補回後備份與檔案相同", disk[BK] == disk["ModOptions.ini"], disk[BK])
+    resetEnv()
+    disk["ModOptions.ini"] = "slider|MinidoracatMiniMap|ZombieDotSize|5\r\n"
+    disk[BK] = "combobox|MinidoracatMiniMap|ZombieDotSize|2\r\n"
+    session(true); local mm12 = regMiniMap(); PZAPI.ModOptions:load()
+    check("12 改了型別的舊行不復活（沒有 .selected 遷移訊號）",
+        mm12:getOption("ZombieDotSize").selected == nil and mm12:getOption("ZombieDotSize").value == 5)
+
+    section("[12] 備份：不被洗掉")
+    resetEnv()
+    disk["ModOptions.ini"] = ""
+    disk[BK] = FULL
+    session(true); regAD() -- 還沒 load 就 save（例：MOD 在 OnGameBoot 程式設值後直接存）
+    PZAPI.ModOptions:save()
+    check("12 load 前的 save 不更新備份", disk[BK] == FULL, disk[BK])
+    resetEnv()
+    disk["ModOptions.ini"] = FULL
+    session(true); local ad12f = regAD(); PZAPI.ModOptions:load()
+    local realReader12 = getFileReader
+    getFileReader = function(name, create)
+        if name == "ModOptions.ini" and not create then return nil end
+        return realReader12(name, create)
+    end
+    ad12f:getOption("VoiceVolume"):setValue(10)
+    local ok12f = pcall(PZAPI.ModOptions.save, PZAPI.ModOptions)
+    check("12 存檔後讀不到檔案：備份不被洗掉", ok12f and disk[BK] == FULL, disk[BK])
+    getFileReader = function(name, create)
+        if name == "ModOptions.ini" and not create then error("disk gone") end
+        return realReader12(name, create)
+    end
+    local ok12g = pcall(PZAPI.ModOptions.save, PZAPI.ModOptions)
+    getFileReader = realReader12
+    check("12 存檔後讀檔拋錯：save 不外洩、備份不動、印診斷",
+        ok12g and disk[BK] == FULL and printCount("backup not updated") == 1, prints[#prints])
+    resetEnv()
+    disk["ModOptions.ini"] = FULL
+    disk[BK] = FULL
+    session(true); local ad12h = regAD(); PZAPI.ModOptions:load()
+    ad12h:getOption("VoiceVolume"):setValue(20)
+    dropWrite[BK] = true
+    PZAPI.ModOptions:save()
+    check("12 備份寫入被丟：寫回上一份、印診斷", disk[BK] == FULL
+        and printCount("backup rewrite not verified; previous backup written back") == 1, disk[BK])
+
     return checks, failures
 end
 
@@ -511,11 +597,12 @@ local MUTANTS = {
     { name = "不載入修正", whole = "fix" },
     { name = "修好檔案後不再 load", from = "    elseif repaired then\n        originalLoad(self, ...)\n", to = "" },
     { name = "load 修補不包 pcall", from = "local ok, repaired = pcall(repairFile)", to = "local ok, repaired = true, repairFile()" },
-    { name = "沒有黏行也改寫", from = "    if glued == 0 then return false end\n", to = "" },
+    { name = "沒有黏行、沒有要補的 MOD 也改寫", from = "    if glued == 0 and restored == 0 then\n", to = "    if false then\n" },
     { name = "起頭不取最左（照型別順序先找到先贏）", from = "if s and (bs == nil or s < bs) then", to = "if s and bs == nil then" },
     { name = "多筆不驗值", from = "if not VALID[records[i].kind](records[i].value) then return false end", to = "" },
-    { name = "寫完不讀回比對", from = "    local back = readLines(false)\n", to = "    do return true end\n    local back = readLines(false)\n" },
-    { name = "讀回不符不寫回原內容", from = "    writeVerified(lines)\n", to = "" },
+    { name = "寫完不讀回比對", from = "    local back = readLines(name, false)\n",
+        to = "    do return true end\n    local back = readLines(name, false)\n" },
+    { name = "讀回不符不寫回原內容", from = "    writeVerified(FILE, lines)\n", to = "" },
     { name = "save 不補行尾", from = "            line = line .. \"\\r\\n\"\n", to = "" },
     { name = "save 不換回原表", from = "    target.OtherOptions = other\n", to = "" },
     { name = "原 save 的錯誤不重拋", from = "    if not saved then error(err) end\n", to = "" },
@@ -530,6 +617,21 @@ local MUTANTS = {
     { name = "拆掉形狀檢查", from = "type(api.save) ~= \"function\"", to = "false" },
     { name = "拆掉冪等 marker", from = "if api[MARKER] then", to = "if false then" },
     { name = "診斷不節流", from = "    if warned[key] then return end\n", to = "" },
+    { name = "不從備份補回", from = "        if mod and not present[mod] then\n", to = "        if false then\n" },
+    { name = "MOD 還在檔案裡也從備份補", from = "        if mod and not present[mod] then\n", to = "        if mod then\n" },
+    { name = "補回不印診斷", from = "        if restored > 0 then\n", to = "        if false then\n" },
+    { name = "沒有變化時不建立備份", from = "        refreshBackup(out)\n        backupReady = true\n        return false\n",
+        to = "        backupReady = true\n        return false\n" },
+    { name = "沒有變化的 load 之後 save 不更新備份", from = "        backupReady = true\n        return false\n",
+        to = "        return false\n" },
+    { name = "補回後不更新備份", from = "        refreshBackup(out)\n        backupReady = true\n        return true\n",
+        to = "        backupReady = true\n        return true\n" },
+    { name = "load 前的 save 也更新備份", from = "    if backupReady then\n", to = "    if true then\n" },
+    { name = "檔案是空的也抄成備份", from = "    if #keep == 0 or (backupLines and sameLines(keep, backupLines)) then return end\n",
+        to = "    if backupLines and sameLines(keep, backupLines) then return end\n" },
+    { name = "備份讀回不符不寫回上一份", from = "    if backupLines then writeVerified(BACKUP, backupLines) end\n", to = "" },
+    { name = "存檔後更新備份不包 pcall", from = "pcall(function() refreshBackup(readLines(FILE, false) or {}) end)",
+        to = "true, refreshBackup(readLines(FILE, false) or {})" },
 }
 
 local function replaceOnce(src, from, to)

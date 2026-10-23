@@ -154,8 +154,8 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Symptom[/b]: some mods' settings (ESC → Options → Mods) are back to defaults after a restart, or every mod's settings vanish at once. No error is shown.
 [*] [b]Cause[/b]: all mod settings share one file, one per line. When saving, vanilla writes back the settings of mods that aren't loaded right now without line breaks, gluing them into one line; the next read only sees the first entry, and the next save drops the rest for good.
 [*] [b]When it happens[/b]: the main menu and a save enable different mods and you press Apply/Accept in the main menu. If no mod has settings in the main menu, Apply saves without reading the file first and empties it.
-[*] [b]Fix[/b]: each setting is saved on its own line; glued lines are split, checked and applied on load (left untouched if they can't be split cleanly); saving before anything was read keeps the settings already in the file. No setting value is changed, and mods that read/write settings themselves keep working.
-[*] [b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it. To protect the main menu, enable this mod in the main-menu mod list too; in MP it works in-game only if the server enables it.
+[*] [b]Fix[/b]: each setting is saved on its own line; glued lines are split, checked and applied on load (left untouched if they can't be split cleanly); saving before anything was read keeps the settings already in the file. A copy of the file is also kept (Zomboid/Lua/ModOptions_MDFX_backup.ini): if a mod has no settings left in the file on load but the copy has them, they're put back. No setting value is changed, and mods that read/write settings themselves keep working.
+[*] [b]Scope[/b]: runs in each player's game (and SP); the dedicated server doesn't run it. Without this mod in the main menu, Apply there still empties the file, and the settings come back from the copy the next time you load into a game with this mod; in MP the server must enable it. Settings are still one set shared by every save and server.
 [*] [b]Retired[/b]: once vanilla saves line breaks and stops overwriting from an empty main menu.
 [/list]
 [h3]Idle car battery chargers near a generator slow down the server and players[/h3]
@@ -177,7 +177,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Broken corpses[/b]: have other client-side error spots (e.g. trailer menu), not covered.
 [*] [b]Watering and the other animal actions[/b]: the log line has no ID of the requested animal (lost when the server parses it).
 [*] [b]Loading an animal into a trailer from your hands[/b]: while the server thinks you hold an animal, it errors when the action is created; not covered.
-[*] [b]Mod settings[/b]: settings already wiped or dropped by vanilla can't be recovered; set them again once.
+[*] [b]Mod settings[/b]: the copy is made the first time you load in after updating this mod; settings wiped before that can't be recovered. Only mods with no settings left in the file are put back; if a mod still has any line there, the file wins. To reset every mod's settings, delete ModOptions.ini together with ModOptions_MDFX_backup.ini, or they come back.
 [*] [b]Hen house disconnect[/b]: an empty slot created in the very frame its hen house unloads (rare) still disconnects; slots that also hold a dead chicken aren't cleared, so the corpse isn't removed with them.
 [*] [b]Battery chargers[/b]: idle chargers no longer refresh nearby generators' power lists every frame; appliance switches, added/removed objects and area loads still do, same as a vanilla base without chargers.
 [/list]

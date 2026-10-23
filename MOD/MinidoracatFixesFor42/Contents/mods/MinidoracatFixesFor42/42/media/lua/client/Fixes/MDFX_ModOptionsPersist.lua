@@ -32,6 +32,13 @@ MOD 的設定就黏成一行；下次進遊戲那些 MOD 的設定回到預設�
 3. 本 session 還沒有 load 過就 save（OtherOptions 還是原版檔案建立時那張表）：先把檔案
    裡沒註冊的行（黏行先拆開）接在 OtherOptions 後面一起寫回，已註冊的跳過、完全相同的
    行去重。已註冊選項在記憶體裡的值不動——有 MOD 會程式設定值後直接 save。
+4. 備份：同一個資料夾的 ModOptions_MDFX_backup.ini 跟著 ModOptions.ini 走——每次 load 對完
+   檔案、每次 load 過之後的 save，內容不同就照抄一份（同樣寫入讀回比對，不符就寫回上一份）。
+   load 時某個 MOD 在 ModOptions.ini 裡一筆都沒有、備份裡有，就把備份裡它的每一筆接到檔尾，
+   改寫成功再 load 一次。只補整個不見的 MOD：檔案裡還有它任何一筆就以檔案為準，MOD 自己移除
+   的舊行、改了型別的舊行（MiniMap 的 combobox→slider）不會復活。這個 Lua 環境還沒 load 過
+   的 save 不更新備份（已註冊選項可能還是預設值），讀不到或空的檔案也不抄。玩家的主選單常常
+   沒有啟用本 MOD，原版在那裡照樣清空（觸發 3），由下次有本補丁的 load 補回。
 
 【安裝時機】本檔在載入時就包好。原版 client 檔排在所有 MOD 之前執行
 （LuaManager.java:1192-1193），所以 PZAPI.ModOptions 一定已經存在；
@@ -41,10 +48,12 @@ MainOptions:create 只從 MainScreen 的 OnMainMenuEnter／OnGameStart 處理器
 
 【臨時性】官方在 :287 補上換行、主選單沒有 MOD 選項時也先 load（或不 save）之後就可退場
 （check_vanilla_alignment.py 有 exithint）。沒退場前官方先補換行，未註冊行之後各多一個空行，
-空行不再傳給 save，所以不會越存越多。沒有黏行、OtherOptions 是空的時，檔案位元組與原版相同。
+空行不再傳給 save，所以不會越存越多。沒有黏行、沒有要補的 MOD、OtherOptions 是空的時，
+ModOptions.ini 的位元組與原版相同；備份檔是另一個檔案，退場後留在原地、不再更新。
 ]]
 
 local FILE = "ModOptions.ini"
+local BACKUP = "ModOptions_MDFX_backup.ini"
 local MARKER = "MDFX_ModOptionsPersist"
 
 local warned = {}
@@ -118,8 +127,8 @@ local function splitRecords(line)
     return records
 end
 
-local function readLines(create)
-    local reader = getFileReader(FILE, create)
+local function readLines(name, create)
+    local reader = getFileReader(name, create)
     if not reader then return nil end
     local lines = {}
     while true do
@@ -131,14 +140,14 @@ local function readLines(create)
     return lines
 end
 
-local function writeVerified(lines)
-    local writer = getFileWriter(FILE, true, false)
+local function writeVerified(name, lines)
+    local writer = getFileWriter(name, true, false)
     if not writer then return false end
     for i = 1, #lines do
         writer:write(lines[i] .. "\r\n")
     end
     writer:close()
-    local back = readLines(false)
+    local back = readLines(name, false)
     if not back or #back ~= #lines then return false end
     for i = 1, #lines do
         if back[i] ~= lines[i] then return false end
@@ -146,11 +155,46 @@ local function writeVerified(lines)
     return true
 end
 
--- 有黏行且全部切得開 → 改寫成一筆一行並驗證，成功回 true
+-- 備份的狀態（每個 Lua 環境各一份）：backupLines＝讀到或寫過的備份內容（false＝沒有備份檔，nil＝還沒讀）；
+-- backupReady＝這個環境的 load 已經對過備份，之後的 save 才抄（之前的 save 寫的可能是還沒 load 的預設值）
+local backupLines
+local backupReady = false
+
+local function sameLines(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do
+        if a[i] ~= b[i] then return false end
+    end
+    return true
+end
+
+-- 備份照抄檔案（空行不抄）；沒有內容就不寫——讀不到檔案時不能把備份洗掉。讀回不符就寫回上一份
+local function refreshBackup(lines)
+    local keep = {}
+    for i = 1, #lines do
+        if lines[i] ~= "" then keep[#keep + 1] = lines[i] end
+    end
+    if #keep == 0 or (backupLines and sameLines(keep, backupLines)) then return end
+    if writeVerified(BACKUP, keep) then
+        backupLines = keep
+        return
+    end
+    if backupLines then writeVerified(BACKUP, backupLines) end
+    warnOnce("backupVerify", "backup rewrite not verified; previous backup written back")
+end
+
+-- 一行開頭那筆的 modid；不是記錄行回 nil
+local function lineMod(line)
+    local s, _, _, mod = findHeader(line, 1)
+    if s == 1 then return mod end
+end
+
+-- 黏行拆成一筆一行；整個 MOD 從檔案不見、備份裡有的，把備份裡它的每一筆接到檔尾。
+-- 有改寫且驗證成功回 true（呼叫端再 load 一次）
 local function repairFile()
-    local lines = readLines(true)
+    local lines = readLines(FILE, true)
     if not lines then return false end
-    local out, glued = {}, 0
+    local out, glued, present = {}, 0, {}
     for i = 1, #lines do
         local records = splitRecords(lines[i])
         if records == false then
@@ -163,14 +207,40 @@ local function repairFile()
         else
             out[#out + 1] = lines[i]
         end
+        if records then
+            for j = 1, #records do present[records[j].mod] = true end
+        end
     end
-    if glued == 0 then return false end
-    if writeVerified(out) then
-        warnOnce("repaired", "split " .. glued .. " glued records into one per line")
+    if backupLines == nil then backupLines = readLines(BACKUP, false) or false end
+    local backup, restored, mods, counted = backupLines or {}, 0, 0, {}
+    for i = 1, #backup do
+        local mod = lineMod(backup[i])
+        if mod and not present[mod] then
+            out[#out + 1] = backup[i]
+            restored = restored + 1
+            if not counted[mod] then
+                counted[mod] = true
+                mods = mods + 1
+            end
+        end
+    end
+    if glued == 0 and restored == 0 then
+        refreshBackup(out)
+        backupReady = true
+        return false
+    end
+    if writeVerified(FILE, out) then
+        if glued > 0 then warnOnce("repaired", "split " .. glued .. " glued records into one per line") end
+        if restored > 0 then
+            warnOnce("restored", "restored " .. restored .. " records of " .. mods .. " mod(s) missing from "
+                .. FILE .. " (backup " .. BACKUP .. ")")
+        end
+        refreshBackup(out)
+        backupReady = true
         return true
     end
     -- 讀回不符：盡量把原內容寫回（逐行相同，只差行尾），交還原版行為
-    writeVerified(lines)
+    writeVerified(FILE, lines)
     warnOnce("verify", "rewrite not verified; original lines written back")
     return false
 end
@@ -189,7 +259,7 @@ local function linesToWrite(other, pristine)
         end
     end
     if other ~= pristine then return out end
-    local lines = readLines(false)
+    local lines = readLines(FILE, false)
     if not lines then return out end
     local dict = PZAPI.ModOptions.Dict
     for i = 1, #lines do
@@ -234,6 +304,10 @@ api.save = function(self, ...)
     local saved, err = pcall(originalSave, self, ...)
     target.OtherOptions = other
     if not saved then error(err) end
+    if backupReady then
+        local okBackup, backupErr = pcall(function() refreshBackup(readLines(FILE, false) or {}) end)
+        if not okBackup then warnOnce("backupError", "backup not updated (" .. tostring(backupErr) .. ")") end
+    end
 end
 
 api[MARKER] = api.load

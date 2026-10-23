@@ -8,7 +8,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [h2]📦 Requirements[/h2]
 [list]
 [*] Supported version: Build 42.20.4+
-[*] Singleplayer and multiplayer; in MP the server enables it. The reload and battery-charger fixes run on the server and in each player's game, the mod-settings fix only in each player's game (enable it in the main-menu mod list too to protect the main menu's Apply), the hen-house fix only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
+[*] Singleplayer and multiplayer; in MP the server enables it. The reload and battery-charger fixes run on the server and in each player's game, the mod-settings fix only in each player's game (settings wiped by Apply in a main menu without this mod come back from a backup the next time you load in), the hen-house fix only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
 [*] [b]Add/remove mid-save:[/b] safe to add; before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
 [/list]
 

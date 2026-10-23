@@ -1109,7 +1109,7 @@ marker），某一個形狀變了只影響它自己。
 | 檔案 | `client/Fixes/MDFX_ModOptionsPersist.lua` |
 | 影響版本 | Build 42.21.0（原版 `PZAPI.ModOptions` 推出以來同一寫法） |
 | 端 | 純客戶端（選項檔在每位玩家自己的 `Zomboid/Lua/ModOptions.ini`；dedicated server 對 `client/` 只算 checksum） |
-| 狀態 | **現役**（42.21.0-0.12.0 起） |
+| 狀態 | **現役**（42.21.0-0.12.0 起；備份補回整個不見的 MOD 尚未發布） |
 
 ### 症狀
 
@@ -1118,7 +1118,8 @@ MOD 的設定（ESC → 選項 → MOD）重開遊戲就回到預設，而且只
 AutoDrive 全部 19 個選項、CleanUI、Economy、NoticeBoard、MirageWardrobeZoom）。不會有任何錯誤訊息。
 
 觸發條件：主選單與存檔啟用的 MOD 不同（每個存檔各自選 MOD），在當下沒載入某些 MOD 的狀態下按了選項的套用／確定；
-或主選單根本沒有任何 MOD 建選項時按了套用。
+或主選單根本沒有任何 MOD 建選項時按了套用。多人玩家最常見後者：伺服器的 MOD 進服後才載入，主選單常常一個 MOD 都沒啟用。
+2026-10-23 正式服玩家（Discord）回報「小地圖所有設定莫名變成預設、不是每次重登都會」，截圖的設定視窗八個分類開關全是預設值。
 
 ### 根因
 
@@ -1151,6 +1152,13 @@ AutoDrive 全部 19 個選項、CleanUI、Economy、NoticeBoard、MirageWardrobe
 3. **save 先於 load**：OtherOptions 還是原版檔案建立時那張表（原版 load 第一行就換新表，`:294`）＝這個 Lua 環境還沒
    load 過。這時先讀檔，把沒註冊的行（黏行先拆開）接在 OtherOptions 後面一起寫回：已註冊的跳過、完全相同的行去重。
    **不動已註冊選項在記憶體裡的值**——有 MOD 會程式設值後直接 save（例：MiniMap 的一次性遷移），整個 load 會把它蓋回舊值。
+4. **備份補回**：同一個資料夾的 `ModOptions_MDFX_backup.ini` 跟著 `ModOptions.ini` 走——每次 load 對完檔案、每次 load
+   過之後的 save，內容不同就照抄一份（空行不抄；同樣寫入讀回比對，不符就寫回上一份）。load 時某個 MOD 在 `ModOptions.ini`
+   裡一筆都沒有、備份裡有，就把備份裡它的每一筆接到檔尾（同上的寫入讀回比對），成功再 load 一次。**只補整個不見的 MOD**：
+   檔案裡還有它任何一筆就以檔案為準，MOD 自己從 OtherOptions 移除的舊行（EquipmentUI）、改了型別的舊行（MiniMap 的
+   combobox→slider，`.selected` 遷移訊號）不會復活。**這個 Lua 環境還沒 load 過的 save 不更新備份**（已註冊選項在記憶體裡
+   可能還是預設值）；save 之後讀不到檔案、讀到空的也不更新。主選單沒有啟用本 MOD 時觸發 3 照樣發生，由下次有本 MOD 的 load
+   補回——之前只能要求玩家在主選單也啟用本 MOD。
 
 **黏行切分規則**：每筆以 save 會寫的七種型別（`:264-281`：`textentry`／`tickbox`／`multipletickbox`／`slider`／
 `combobox`／`colorpicker`／`keybind`）加 `|modid|optid|` 起頭，從左往右每次取最左邊的起頭——`multipletickbox` 的起頭
@@ -1159,8 +1167,10 @@ AutoDrive 全部 19 個選項、CleanUI、Economy、NoticeBoard、MirageWardrobe
 （含 Kahlua 的科學記號字串 `1.0E-4`）、multipletickbox 是一串「`true `／`false `」（結尾有空格）、colorpicker 四個數字
 以空格分隔、textentry 不限；任何型別都接受原版對 nil 寫出的 `nil`。行首不是起頭的行原樣保留。
 
-**零行為差異**：沒有黏行時 load 只多讀一次檔、不寫檔；OtherOptions 是空的時 save 與原版位元組相同；有未註冊行時只差每行
-補上 `\r\n`（這就是修正）。OtherOptions 裡的空字串不傳給原 save（原版寫空字串本來就沒有輸出）。
+**零行為差異**：沒有黏行、沒有要補的 MOD 時 load 不改寫 `ModOptions.ini`（多讀一次檔案與備份，備份內容不同才寫備份）；
+OtherOptions 是空的時 save 與原版位元組相同；有未註冊行時只差每行補上 `\r\n`（這就是修正）。OtherOptions 裡的空字串不傳給
+原 save（原版寫空字串本來就沒有輸出）。唯一看得到的差異是補回：玩家手動刪掉 `ModOptions.ini` 想重設時，設定會從備份回來
+（使用者 2026-10-23 同意，見知識庫 `client.md`）。
 
 **安裝時機**：本檔載入時就包好，早於第一次 load。原版 client 檔排在所有 MOD 之前執行（`LuaManager.java:1192-1193`），
 `PZAPI.ModOptions` 一定已經存在；`MainOptions:create` 只從 MainScreen 的 `OnMainMenuEnter`／`OnGameStart` 處理器呼叫
@@ -1170,48 +1180,67 @@ AutoDrive 全部 19 個選項、CleanUI、Economy、NoticeBoard、MirageWardrobe
 同一張表上重複執行由 marker 擋下。形狀不符（`PZAPI.ModOptions`、`load`／`save`、`OtherOptions`／`Dict`、
 `getFileReader`／`getFileWriter`）印一次 `NOT installed` 並放棄。不做 `OnGameBoot` 復查：會包裝 load／save 的已知 MOD
 （EquipmentUI、ContextMenuCleanup 3780688809）都先呼叫原函式，前後順序都串得起來；整支取代而不呼叫原函式的 MOD 會讓本修正失效，
-那種 MOD 本身就已經改掉原版存讀。
+那種 MOD 本身就已經改掉原版存讀。MOD 依 `Mods=` 順序載入（`LuaManager.java:1151-1193`），正式服本 MOD 排在尾端：比本 MOD 先
+載入、在檔案載入時就自己 load 的 MOD（VehicleManager、PackThrow）那一次是原版 load，讀到的是還沒補回的檔案；補回發生在之後
+第一次經過本補丁的 load（`MainOptions:create`），選項值由那次 load 補上。
 
 診斷（一 session 一次，前綴 `[MinidoracatFixes] MDFX_ModOptionsPersist`）：`split N glued records into one per line`、
+`restored N records of M mod(s) missing from ModOptions.ini (backup ModOptions_MDFX_backup.ini)`、
 `glued line N has an unrecognised record; file left unchanged`、`rewrite not verified; original lines written back`、
-`repair failed (…)`／`could not prepare other lines (…)`（自身出錯，退回原版行為）。
+`backup rewrite not verified; previous backup written back`、`repair failed (…)`／`could not prepare other lines (…)`／
+`backup not updated (…)`（自身出錯，退回原版行為；備份不動）。
 
 ### 已知限制
 
-- **已經遺失的設定救不回**：被原版清空的檔、或黏行第一筆屬已註冊選項而被原版丟掉後又存過一次的那些筆，檔案裡已經沒有了。
-- **主選單要啟用本 MOD** 才擋得住主選單的套用；多人遊戲進服後只載伺服器 `Mods=` 的 MOD，伺服器沒裝本 MOD 時遊戲內不生效。
+- **沒有備份時救不回**：備份在更新到有備份的版本後，第一次經過本補丁的 load 才建立；在那之前被原版清空、或黏行第一筆屬已註冊
+  選項而被原版丟掉後又存過一次的那些筆，檔案與備份裡都沒有了。
+- **只補整個不見的 MOD**：清空後先進了沒有本 MOD、但有那個 MOD 的存檔或伺服器，又在那裡存過設定，那個 MOD 就以那次存的值為準
+  （通常是預設值），備份補不回。被截斷在某個 MOD 中間的檔案，那個 MOD 缺的行也不補。
+- **主選單沒有啟用本 MOD 時，主選單的套用照樣清空檔案**，由下次有本 MOD 的 load 補回；多人遊戲進服後只載伺服器 `Mods=` 的 MOD，
+  伺服器沒裝本 MOD 時遊戲內不生效、也不補回。
+- **刪檔重設要連備份一起刪**：只刪 `ModOptions.ini`，下次 load 會把每個 MOD 從備份補回。
+- **先載入、在檔案載入時就記下開關的 MOD**：VehicleManager 的 `showButton`、PackThrow 的 `showDock` 在補回的那一場仍是預設值
+  （它們只在 `options:apply()` 重讀），下次進遊戲才跟上；選項值本身已補回。
 - textentry 的值若剛好含「型別`|x|y|`合法值」形狀的字串，會被當成黏行切開（實務上沒見過）。
 - save 期間內層包裝若改動 OtherOptions，改動會隨換回原表而丟失（已知 MOD 都沒有這樣做）。
 
 ### 驗證
 
-`lua scripts/test_modoptions_persist.lua` — 52 項，全綠。照載本機原版 `client/PZAPI/ModOptions.lua` 與 `shared/luautils.lua`，
+`lua scripts/test_modoptions_persist.lua` — 66 項，全綠。照載本機原版 `client/PZAPI/ModOptions.lua` 與 `shared/luautils.lua`，
 記憶體檔案系統照 `LuaManager.java:5936-5964`、`:6727-6763`（副檔名白名單、`FileOutputStream` 一開就截斷、`BufferedReader.readLine`
 三種行尾）。涵蓋：黏行第一筆屬已註冊／未註冊兩種（含七種型別、科學記號、multipletickbox 結尾空格；值套上、檔案一筆一行、
 下次 save 一筆一行、換場次值仍在；各有原版對照組）、save 先於 load（沒有 MOD 選項時不清空且可重入；有選項時寫記憶體裡的值、
-檔案舊值不重複寫回、相同行去重）、無黏行（load 不寫檔；只有已註冊行時與原版位元組相同；有未註冊行時只差 `\r\n`）、EquipmentUI 的
+檔案舊值不重複寫回、相同行去重）、無黏行（load 不改寫檔案；只有已註冊行時與原版位元組相同；有未註冊行時只差 `\r\n`）、EquipmentUI 的
 load 包裝照抄、在本補丁內層／外層 × 舊行獨立／黏住四種組合都找到並移除舊行、combobox→slider `.selected` 訊號（獨立行與黏行）、
 切不出合法筆數不改檔、寫入被靜默丟掉時寫回原內容且不做第二次 load、修補讀檔拋錯與準備 OtherOptions 拋錯都退回原版、原 save
 拋錯照樣外洩且 OtherOptions 換回、形狀不符 `NOT installed`、重複載入不疊包裝；另把原版 `:287` 改成補換行模擬官方先修一半，
-驗證未註冊行之後只多一個空行、連存三次不會越存越多。
+驗證未註冊行之後只多一個空行、連存三次不會越存越多。備份：第一次 load 就建立且不改寫檔案、load 過的 save 讓備份跟上、原版
+清空（對照組）後下次 load 補回三個值與每一筆並印一行診斷、檔案裡還有 AutoDrive 時只補整個不見的兩個 MOD 且備份跟上、改了型別的
+舊行不復活、load 前的 save 不更新備份、save 後讀不到檔案或讀檔拋錯都不洗掉備份（後者 save 不外洩）、備份寫入被丟時寫回上一份。
 
-**mutation 驗證**（`lua scripts/test_modoptions_persist.lua --mutants`）：21 個突變全部被抓到——拿掉整支修正、修好檔案後不再
-load、load 修補不包 `pcall`、沒有黏行也改寫、起頭不取最左、多筆不驗值、寫完不讀回比對、讀回不符不寫回原內容、save 不補行尾、
-save 不換回原表、原 save 的錯誤不重拋、準備 OtherOptions 不包 `pcall`、load 過也補檔案裡的行、save 先於 load 不保留檔案內容、
-save 先於 load 不拆黏行、已註冊的行也寫回、不去重、空行也傳給 save、拆掉形狀檢查、拆掉冪等 marker、診斷不節流。
+**mutation 驗證**（`lua scripts/test_modoptions_persist.lua --mutants`）：31 個突變全部被抓到——拿掉整支修正、修好檔案後不再
+load、load 修補不包 `pcall`、沒有黏行也沒有要補的 MOD 也改寫、起頭不取最左、多筆不驗值、寫完不讀回比對、讀回不符不寫回原內容、
+save 不補行尾、save 不換回原表、原 save 的錯誤不重拋、準備 OtherOptions 不包 `pcall`、load 過也補檔案裡的行、save 先於 load
+不保留檔案內容、save 先於 load 不拆黏行、已註冊的行也寫回、不去重、空行也傳給 save、拆掉形狀檢查、拆掉冪等 marker、診斷不節流、
+不從備份補回、MOD 還在檔案裡也從備份補、補回不印診斷、沒有變化時不建立備份、沒有變化的 load 之後 save 不更新備份、補回後不更新
+備份、load 前的 save 也更新備份、檔案是空的也抄成備份、備份讀回不符不寫回上一份、存檔後更新備份不包 `pcall`。
 
 實機 E2E（`fixes-e2e` 的 `modoptions-sp`，2026-10-02，42.21.0）：
 
 | 場次 | 結果 |
 |------|------|
 | `glued`（＋AutoDrive，兩次冷啟動） | 本輪 `ModOptions.ini` 換成三行 fixture：AutoDrive 三個非預設值一半藏在未載入 MOD 那筆後面、一半黏在它前面。主選單一開就印 `split 5 glued records into one per line`；進場 VoiceEnabled=false／VoiceLanguage=3／UTurnMode=2 都套上、檔案 6 行沒有黏行，save 後 106 行一筆一行、未載入 MOD 的兩筆各一行；結束到桌面再開，三個值與兩筆都還在、沒有再印 split。12＋12 個 CHECK，零例外 |
-| `noopts`（只有本 MOD） | 沒有任何 MOD 建選項（`Data` 為空、原版不 load，檔案仍有兩行黏行），呼叫套用時同一個 save：3 行變 6 行一筆一行、六筆各一行。9 個 CHECK，零例外 |
+| `noopts`（只有本 MOD） | 沒有任何 MOD 建選項（`Data` 為空、原版不 load，檔案仍有兩行黏行），呼叫套用時同一個 save：3 行變 6 行一筆一行、六筆各一行。9 個 CHECK，零例外。2026-10-23 加備份後重跑：同樣 6 行，且沒有寫出備份（還沒 load 過），10 個 CHECK |
+| `noopts-control`（2026-10-23，本 MOD 從本輪刪掉） | 原版對照：同一個 fixture、同一個 save，`ModOptions.ini` 從 3 行變成 0 行——玩家在主選單按套用的清空，實機重現。3 個 CHECK |
+| `wiped-control`（2026-10-23，＋MiniMap，本 MOD 從本輪刪掉） | `ModOptions.ini` 截成 0 byte、備份放 MiniMap 殭屍／動物／載具開著的 6 筆＋未載入 MOD 2 筆：原版不讀備份，三個圖層都是預設的關、檔案仍 0 行；設定視窗截圖三個開關都是關。10 個 CHECK |
+| `wiped`（2026-10-23，＋MiniMap） | 同一個 fixture：主選單（`f:0`）印 `restored 8 records of 2 mod(s) missing from ModOptions.ini`，進場三個圖層都是開、檔案 8 行一筆一行、備份 8 行；設定視窗截圖三個開關都是開。20 個 CHECK，零例外 |
 
 ### 可退場條件
 
 官方把 `ModOptions.lua:287` 改成寫入時補換行，**且**主選單沒有 MOD 選項時不再以空內容覆寫（先 load 或不 save）。只修前者
 擋不住清空；`check_vanilla_alignment.py` 對補換行的寫法有 exithint。官方補了換行而本補丁還沒退場時，未註冊行之後各多一個空行
-（本補丁補一次、原版再補一次），空行不再傳給 save，所以不會越存越多。
+（本補丁補一次、原版再補一次），空行不再傳給 save，所以不會越存越多。退場後 `ModOptions_MDFX_backup.ini` 留在玩家資料夾、
+不再更新，原版不讀它。
 
 ---
 
