@@ -11,7 +11,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Requires[/b]: Build 42.20.4+.
 [*] [b]Install[/b]: subscribe and enable; no settings, sandbox options or keys. In MP the server enables it.
 [*] [b]Vanilla bugs only[/b]: no balance changes, items or UI.
-[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, and one that skips vanilla's needless per-frame recalculation for battery chargers.
+[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, and one that has the server handle multiplayer deaths it missed.
 [*] [b]Rechecked after game updates[/b]: fixes are removed once officially fixed.
 [/list]
 === 🧰 Animals: butchering, petting, milking, watering, leashing
@@ -167,9 +167,20 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Scope[/b]: server, each player's game and SP. Players get it when the server updates the mod.
 [*] [b]Retired[/b]: once vanilla checks the charger's state before notifying generators.
 [/list]
+=== 🧰 Multiplayer deaths: black screen, no body
+[h3]Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone[/h3]
+[list]
+[*] [b]Symptom[/b]: after dying in MP (most often when dragged down by several zombies in a horde), the screen goes black with only the chat box and other UI left, and pressing Respawn just keeps it black. After reconnecting, sometimes the old character is still alive, sometimes you have to make a new one, and there is no body at the death spot, so all gear is lost.
+[*] [b]Cause[/b]: in vanilla MP, a drag-down death is decided by your own game; the server only follows when it also receives that zombie's bite and works out the drag-down itself, which occasionally doesn't happen (e.g. when many players fight the same group of zombies). The server thinks the character is still alive and refuses the respawn, hence the black screen.
+[*] [b]Fix[/b]: your game tells the server when it decides you died; if the character is still alive on the server, it's handled like a normal death: the death is recorded, the body stays at the death spot with your gear, and respawning works. Deaths the server already handled are untouched; it can only affect the player's own character. Characters younger than 30 seconds are skipped, so a late message from before a respawn can't hit the new character.
+[*] [b]Difference from vanilla[/b]: vanilla sometimes brings the old character back after reconnecting; now it always counts as a death, matching what you saw on screen.
+[*] [b]Log[/b]: each death it handles adds one line to the server's server-console.txt: [MinidoracatFixes] MDFX_DeathSync processed a death the server missed: player="<name>" …; each late message it skips adds … ignored a death report … (up to 20 each per start).
+[*] [b]Scope[/b]: MP only; the server and every player's game need it (same file). Players get it when the server updates the mod. Does nothing in SP.
+[*] [b]Retired[/b]: once the vanilla server handles these deaths itself.
+[/list]
 === ⚠️ Known limitations
 [list]
-[*] [b]Moved-out crops[/b]: while moved out, dead/rotten crops pause their slow change to the trampled look until someone returns. Apart from the hen-house fix also correcting the "full" check, the only visible difference.
+[*] [b]Moved-out crops[/b]: while moved out, dead/rotten crops pause their slow change to the trampled look until someone returns.
 [*] [b]Trimming scope[/b]: covers only areas loaded and unloaded since this start; plots trampled before sowing never move out.
 [*] [b]Crop sync[/b]: steps aside if another mod rewrote it (one log line); traps and campfires aren't covered.
 [*] [b]Milking and doors[/b]: can error in SP too, but only MP cases are on record, so only MP is handled.
@@ -180,6 +191,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Mod settings[/b]: the copy is made the first time you load in after updating this mod; settings wiped before that can't be recovered. Only mods with no settings left in the file are put back; if a mod still has any line there, the file wins. To reset every mod's settings, delete ModOptions.ini together with ModOptions_MDFX_backup.ini, or they come back.
 [*] [b]Hen house disconnect[/b]: an empty slot created in the very frame its hen house unloads (rare) still disconnects; slots that also hold a dead chicken aren't cleared, so the corpse isn't removed with them.
 [*] [b]Battery chargers[/b]: idle chargers no longer refresh nearby generators' power lists every frame; appliance switches, added/removed objects and area loads still do, same as a vanilla base without chargers.
+[*] [b]Multiplayer deaths[/b]: the message has to reach the server before you finish the new character and press Play; if the connection is slower than that, the first respawn may still be refused (black screen). Reconnect and make a new character; the body stays where you died. A character that dies this way within 30 seconds of spawning isn't handled and gets the vanilla black screen.
 [/list]
 === ⚠️ Before removing this mod
 [list]
@@ -196,7 +208,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [h3]Is a fix working?[/h3]
 [list]
 [*] [b]Check the log[/b]: server-console.txt on servers, console.txt in SP shows [MinidoracatFixes] lines.
-[*] [b]When a problem is caught[/b]: one line per fix per start. The watering and animal-action fixes log one per action, up to 20 each, to help trace the cause; the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the battery-charger fix in both the server's and the player's.
+[*] [b]When a problem is caught[/b]: one line per fix per start. The watering and animal-action fixes log one per action and the death-sync fix one per death it handles or late message it skips (in the server's server-console.txt), up to 20 each; the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the battery-charger fix in both the server's and the player's.
 [*] [b]Report these two[/b]: "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error.
 [/list]
 [h3]Does load order matter?[/h3]

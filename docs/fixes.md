@@ -622,7 +622,7 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 ### 與原版的差異與殘留風險
 
 - **移出期間，dead／rotten 每 10 遊戲分鐘 1/5000 變成 destroyed 的外觀轉換暫停**，格子再載入後照常。
-  這也讓它們較晚進入 `plowFadeCheck` 的清除範圍。這是本 MOD 唯一看得到的行為差異，使用者已同意。
+  這也讓它們較晚進入 `plowFadeCheck` 的清除範圍。這是本修復唯一看得到的行為差異，使用者已同意。
 - **移出之後 chunk 是唯一的來源**：chunk 存檔失敗（`ServerChunkLoader.java:449-463` 只記 log；
   `IsoChunk.java:4280-4282` 先記 checksum 再寫檔，之後同內容的存檔會被跳過），或改過的客戶端在最後一次
   掃描到卸載之間改了那格的 modData（`ObjectModDataPacket.java:21-27,46-58` 不驗來源），重建出來的就是
@@ -1582,6 +1582,126 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 
 官方讓 `IsoCarBatteryCharger.setActivated` 比對狀態（或 `update` 不再對沒啟動的充電器呼叫 `setActivated`）：`check_vanilla_alignment.py`
 的「成因：setActivated 不比對狀態」轉 CHANGED 就移出本檔。
+
+---
+
+## MDFX_DeathSync — 多人遊戲只有客戶端判定死亡、伺服器沒處理：沒有屍體，按重生後畫面全黑
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `shared/Fixes/MDFX_DeathSync.lua` |
+| 影響版本 | Build 42.21.0 實測（反編譯快照 `42.21.0-20260928`；`projectzomboid.jar` sha256 `e1a69eb7…`） |
+| 端 | 多人：客戶端送指令、dedicated server 處理（兩半在同一檔，執行期以 `isClient()`／`isServer()` 分流）；單人不作用 |
+| 類型 | 原版**多人死亡同步缺口**：伺服器沒處理到的死亡，由死者自己的客戶端通知後，照原版伺服器路徑補上 |
+| 狀態 | **現役**（未發布） |
+
+### 症狀（正式服唯讀調查）
+
+- 2026-10-28／29 屍潮夜，兩位玩家回報「死掉後畫面全黑、只剩介面、按不了重生」。一位重新連線後角色還活著；另一位重連要建新角色，回到死亡地點找不到屍體。
+- 伺服器 log：PerkLog 有該玩家的 `[Died]`（客戶端在 `OnPlayerDeath` 送的），`*_user.txt` 卻沒有 `user <名> died`（伺服器 `DoDeath` 寫的）；
+  按重生那一刻 `server-console.txt` 有 `CreatePlayerPacket … position:`，後面沒有 `coop player=1/4 … replacing dead player`。
+- 10-14～10-29 全服 188 次死亡有 10 次只有 PerkLog，其中 4 次在屍潮中、多人圍著同一群殭屍打的時候。
+
+### 根因（行號為 42.21.0 反編譯快照與原版 Lua）
+
+1. **拖倒致死由受害者的客戶端判定**：同時被 3 隻以上殭屍攻擊時（沙盒 `ZombiesDragDown`），`PlayerHitReactionState` 在 `Death` 動畫事件 `Kill`，
+   條件是 `!GameServer.server`（`PlayerHitReactionState.java:83`）；`IsoPlayer.updateDeathDragDown` 找不到殭屍時也只在客戶端 `Kill`
+   （`IsoPlayer.java:3436-3439`）。別的玩家擁有的殭屍也算進拖倒門檻（`IsoGameCharacter.java:13562-13576`）。
+2. **伺服器要自己算出拖倒才跟著處理**：命中封包沒有拖倒旗標（`Bite.java:18-28`），伺服器收到命中後在 `AddRandomDamageFromZombie` 用自己看到的
+   攻擊殭屍數重算拖倒（`BodyDamage.java:1269-1296`），算出拖倒才 `Kill(wielder)`（`Bite.java:89-94`）。命中只由「攻擊的殭屍與受害者都在本機」的
+   客戶端送（`GameClient.java:1191-1194`），殭屍擁有權換手要間隔 2 秒（`NetworkZombieManager.java:61,91-97`）。命中整段沒送到、或伺服器算出的
+   攻擊殭屍數不到門檻時，伺服器上的角色一直活著。正式服 log 分不出是哪一種（推測與多人圍同一群殭屍時的擁有權有關）；本修復不依賴它。
+3. **客戶端單方面的死亡不通知伺服器**：`IsoPlayer.OnDeath` 在客戶端只觸發 Lua 的 `OnPlayerDeath`（只對本地玩家，`IsoPlayer.java:6568-6570`）；
+   客戶端的 `die()` 只處理伺服器送來的死亡封包（`IsoGameCharacter.java:14630-14631`、`NetworkCharacterAI.java:196-209`）。
+4. **按重生時，伺服器看到舊角色還活著就拒絕**：`ConnectCoopPacket`（`:69-70`）在 `getPlayerAt(index)` 不是 null 且沒死時回
+   `Coop player 1/4 already exists`，客戶端的 `players[0]` 停在 null，世界不畫、只剩介面。重生鈕在死亡 3 秒後出現（`ISPostDeathUI.lua:73-84`）。
+5. 重新連線時，伺服器那份還活著就回到原角色；那份之後被別的路徑變成死亡卻沒走 `die()` 時，重連要建新角色，而且沒有屍體、裝備全沒。
+
+### 修法
+
+- **客戶端**：`Events.OnPlayerDeath`（只對本地玩家）在 `isClient()` 時 `sendClientCommand(player, "MinidoracatFixes", "clientDied", {})`。
+  伺服器已處理的死亡也照送（客戶端分不出來），由伺服器判斷。
+- **伺服器**：`Events.OnClientCommand` 只接自己的 module／command，而且只在 `isServer()`。`player` 是寄件者連線上的角色（`GameServer.java:2280`，
+  客戶端只能指到自己）。它還活著、沒開無敵（`isGodMod`）、出生滿 `MIN_SECONDS`（30）秒（見下）時：
+  1. `player:Kill(nil)`：`onKilled` → `DoDeath`，寫 `user <名> died at (…) (non pvp)`、觸發 `OnCharacterDeath`（`IsoPlayer.java:8349-8370`、
+     `IsoGameCharacter.java:2024-2036`）。攻擊者給 nil：`DoDeath` 依 `getAttackedBy()` 決定要不要記成 PvP 擊殺（`IsoGameCharacter.java:2026-2027`），
+     不把這次死亡記到上一個攻擊者頭上。
+  2. `player:die()`：伺服器丟下手上的物品、建屍體（其餘物品進屍體）、把 `PlayerDeath` 送給附近的客戶端（`IsoGameCharacter.java:14623-14646`、
+     `IsoPlayer.java:8372-8381`），客戶端收到後 `dieNetwork` 建自己的屍體（`DeadCharacterPacket.java:174-180`）。伺服器自己的 `hitConsequences`
+     也是直接 `die()`（`IsoGameCharacter.java:6222-6223`）。**只 `Kill` 不 `die`**：伺服器角色變成死亡、重生不再被拒，但沒有屍體，裝備全沒。
+- 伺服器自己處理過的死亡（正常路徑）到這裡時 `isDead()` 已經是真，不做任何事；重複送達也一樣。
+- **出生滿 30 秒才處理**：`ClientCommand` 與 `ConnectCoop` 都是 RELIABLE、不保證順序（`PacketTypes.java:510`、`ConnectCoopPacket.java:22-28`），
+  正常死亡（伺服器已處理）送出的指令可能在玩家重生之後才到，連線上那時已是剛建的新角色。新角色可以同名，也可能出生在死亡點附近，名字與位置都分不出
+  新舊。改看伺服器自己累加的存活時數：伺服器每幀替每位玩家加（`GameTime.java:539-545`）；新角色由伺服器建立、不帶時數，從 0 開始
+  （`CreatePlayerPacket.java:288-302`）；舊角色是讀檔的值加上這一輪。
+  30 秒依一遊戲天的實際分鐘數（`GameTime.getMinutesPerDay`，沙盒 `DayLength`，`SandboxOptions.java:410-419,452`）換成遊戲小時，不到就不處理、記一行。
+  指令不帶資料，伺服器不採信客戶端給的任何值。
+- 診斷：每次補處理一行 `[MinidoracatFixes] MDFX_DeathSync processed a death the server missed: player="<名>" x= y= z= n=`，擋下一行
+  `ignored a death report for a character alive <h> game hours (< <門檻>): player="<名>" x= y= z= n=`，兩種各自每 session 最多 `LOG_LIMIT`（20）行，
+  超過各印一次提示、照樣處理。不照「一 session 一次」：每一行都是一次原本會黑畫面的死亡（或一次被擋下的回報），分析 repo 用它數頻率。
+- 形狀不符（`Events.OnPlayerDeath`／`OnClientCommand`、`sendClientCommand`、`isClient`／`isServer`、`getGameTime` 不存在）印 `NOT installed`、
+  什麼都不登記。不包 pcall：這是前置判準型修復，`Kill`／`die` 的錯原樣交給事件分派印出。
+
+### 與原版的差異
+
+- 原版會黑畫面的那種死亡，結果改成和一般死亡相同：伺服器記錄死亡、留下屍體（裝備在屍體上）、重生正常。原版裡「重連後回到原角色」
+  （伺服器那份還活著）的情況也一併改成死亡，和玩家畫面上看到的一致。使用者 2026-10-29 同意。
+- 每次死亡多一個客戶端指令：伺服器 `*_cmd.txt` 多一行 `MinidoracatFixes.clientDied`。
+
+### 已知限制
+
+- 改過的客戶端可以用這個指令讓自己的角色死亡（只能是自己、而且要出生滿 30 秒），結果和被殭屍咬死相同。
+- 指令要在玩家建好新角色、送出重生之前送到（重生鈕在死亡 3 秒後出現，按下後還要走建角頁）；網路慢到比這還久時，第一次重生仍會被拒、
+  畫面全黑；重新連線後建新角色，屍體照樣在。
+- 指令送到時伺服器那份已經是死亡狀態（`isDead()` 為真）卻還沒走 `die()` 的話，本修復不介入，屍體有沒有照原版決定。
+- 角色出生不到 30 秒就這樣死亡時不補處理，照原版黑畫面，記一行 `ignored`。
+- 舊指令比重生晚 30 秒以上才送到時，仍會讓剛重生的新角色死亡。要同一條連線上的可靠封包晚到「重生耗時＋30 秒」以上：送不到時 RakNet 會一直重送，
+  整段不通約 8 秒就斷線（家族 E2E 實測），斷線後舊連線沒送完的封包不會帶到新連線（推論）。沒有用丟包實測過單一封包的延遲上限。
+- 管理員用除錯指令 `setTimeSpeed`（要 `ConnectWithDebug` 權限，`SetTimeSpeedCommand.java:27-38`）把時間倍率調成 N 時，存活時數照 N 倍累加，
+  30 秒的門檻跟著縮成 30/N 秒。其他活著的玩家全在睡、伺服器快轉時，新角色進場那一幀的快轉也算進存活時數：快轉倍率 40、10 FPS 時，
+  一天 240 分鐘以上（`DayLength` ≥ 7）的伺服器一幀就會超過門檻（正式服一天 60 分鐘，一幀約 0.053 遊戲小時，門檻 0.2）。
+- 坐在車上時被客戶端判定死亡的情況沒有實測：原版客戶端死亡時自己下車（`IsoPlayer.java:6572-6573`），伺服器的 `die()` 不處理下車。
+
+### 驗證
+
+`lua scripts/test_death_sync.lua` — 42 項，全綠。假 Java 端照快照形狀模擬 `Kill`（第一次才 `DoDeath`）、`die`（沒 `Kill` 過先 `Kill(getAttackedBy())`、
+屍體只建一次）、`isDead`、伺服器累加的存活時數、一遊戲天的實際分鐘數、`sendClientCommand` 只送本地玩家、伺服器把指令交給寄件者連線上的角色。
+涵蓋：多人客戶端死亡送一個指令、單人不送；往返後伺服器 `Kill` 恰一次而且不帶攻擊者、先 `Kill` 後 `die`、`DoDeath` 一次、一具屍體、一行帶玩家與
+座標的診斷；重複送達、伺服器已處理的死亡、開無敵、別的指令、寄件者 nil、不是伺服器都不做事；舊角色正常死亡、玩家重生後，新角色收到舊回報不死並記一行，
+差一點滿 30 秒擋下、剛好滿就處理，一天 15 分鐘與 24 小時的沙盒照樣以 30 秒為界；擋下與補處理各 25 次，各 20 行加一次上限提示、互不佔用；
+三種形狀不符印 `NOT installed`、不登記；重複載入不疊。
+
+**mutation 驗證**（`--mutants`，25 個全部抓到）：不載入、客戶端不看 `isClient`、客戶端不帶參數表、伺服器不看 `isServer`、不比對 module、
+不比對 command、不檢查寄件者 nil、已死亡也處理、無敵也處理、不檢查存活時數、存活時數邊界改成 `<=`、不依一天長度換算、換算方向寫反、
+形狀檢查不看 `getGameTime`、只 `die` 不先 `Kill(nil)`、`Kill` 帶上一個攻擊者、只 `Kill` 不 `die`、診斷不設上限、不印上限提示、
+補處理與擋下共用上限、補處理不計數、擋下不計數、擋下不記錄、拆掉形狀檢查、拆掉重複載入防護。
+
+`python scripts/check_vanilla_alignment.py` 登記 8 條：成因（`PlayerHitReactionState` 只在客戶端 `Kill`、`Bite` 只在伺服器自己算出拖倒時 `Kill`）、
+後果（`ConnectCoopPacket` 在舊角色還活著時拒絕）、依賴（`OnDeath` 只對本地玩家觸發 `OnPlayerDeath`、`onKilled` → `DoDeath`、
+`onDied` → `sendCharacterDeath`、`getHoursSurvived`、伺服器替每位玩家累加存活時數、`getMinutesPerDay`、伺服器建新角色時不設存活時數
+（`CreatePlayerPacket.processServer`）、`Kill`／`die`（伺服器端 `becomeCorpse`）／`isDead`／`isGodMod`、`receiveClientCommand` 以連線取 player）。
+
+實機 E2E（`fixes-e2e` skill 的 `death-sync`，MP，42.21.0，沙盒一天 60 分鐘）：A 在客戶端直接 `Kill` 自己（伺服器不知道的死亡）；B 衣物防禦歸 0、
+被伺服器生的 6 隻殭屍拖倒（伺服器自己處理的正常路徑）。死前由伺服器發一支拿在手上的球棒、一個背著的書包（內有鐵鎚），記下物品欄全部物品 ID；
+死後 3 秒、12 秒各問一次伺服器，比對死亡點 3 格內屍體與地上的物品 ID。之後按重生、走建角三頁；A 的新角色進場後再送一次 `clientDied`，模擬重生後才到的舊回報。
+
+| 輪次 | 伺服器 | 客戶端 |
+|------|------|------|
+| 對照組 A（修正檔從本輪拿掉，`ds-control-1029c`） | 12 秒時仍 `dead=false hp=1.00`，沒有 `user died`、屍體 0 | 按重生被拒（`Coop player 1/4 already exists`），`players[0]` 68 秒都是 nil，畫面全黑只剩聊天框 |
+| 修正組 A（`ds-fix-1029f`，最終程式碼與情境） | `processed a death the server missed: player="test" … n=1`、`user test died at (10722,9727,0) (non pvp)`，3 秒內 `dead=true`，屍體 1 具；死前 10 件物品（含手上的球棒、書包與鐵鎚）在屍體或地上各恰一份 | 看得到屍體；`coop player=1/4 … is replacing dead player`，新角色存活 |
+| 修正組 A 的舊回報（同一輪） | 換上新角色 0.30 秒後收到，`ignored a death report for a character alive 0.001 game hours (< 0.200)`；3 秒後新角色仍 `dead=false hp=1.00` | 新角色存活 |
+| 修正組 B（同一輪） | 伺服器自己寫 `user test2 died`，沒有補丁行，屍體 1 具；10 件物品各恰一份 | 看得到屍體；重生正常 |
+
+前提（NEED）都成立：伺服器與客戶端都拿著球棒、A 死前出生已 0.39 遊戲小時（門檻 0.200）。`SERVER STARTED` 之後只有 B 重生時、B 屍體被殭屍啃食的
+原版 `ReceiveEatBody: zombie … not found`（6 行；對照組沒有 B 就沒有），沒有其他例外。同一份程式碼先跑過 `ds-fix-1029d`（沒發球棒、書包）與
+`ds-fix-1029e`（arm 步驟還沒有 NEED），結果相同。死後 3 秒與 12 秒兩次查詢之間（伺服器時間相隔約 9.5 秒）存活時數增加 0.064 遊戲小時＝一遊戲小時
+約 149 秒，和沙盒換算相符。更早的 `ds-fix-1029a`～`c` 是舊版（沒有存活時數這道、或用死亡點距離），結果不再引用。
+
+### 可退場條件
+
+官方讓伺服器處理客戶端判定的死亡（例如拖倒致死改由伺服器判定，或客戶端死亡時送死亡封包），或 `ConnectCoopPacket` 遇到舊角色還活著時
+改成替它處理死亡。`check_vanilla_alignment.py` 的「成因」或「後果」轉 CHANGED 時，重跑 E2E `death-sync` 的對照組：客戶端單方面死亡後，
+伺服器自己就有 `user died` 與屍體、重生正常，就移出本檔。
 
 ---
 

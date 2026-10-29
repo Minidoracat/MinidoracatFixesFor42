@@ -865,6 +865,97 @@ FIXES = [
             r"square:AddSpecialObject\(charger\)",
         ],
     },
+    # ── MDFX_DeathSync：客戶端判定的死亡伺服器沒處理，按重生被拒 ─────────────
+    {
+        "name": "MDFX_DeathSync（成因：拖倒致死只在客戶端 Kill）",
+        "class": "zombie.ai.states.PlayerHitReactionState",
+        "crash": [
+            # animEvent 的 Death 事件（PlayerHitReactionState.java:83）：!GameServer.server 才 Kill
+            r"public void animEvent\([^)]*\);(?:(?!\n  \S)[\s\S])*?// String Death\s+\d+: invokevirtual #\d+\s+"
+            r"// Method java/lang/String\.equalsIgnoreCase:\(Ljava/lang/String;\)Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/network/GameServer\.server:Z\s+\d+: ifne\s+\d+\s+\d+: aload_1\s+\d+: aload_1\s+\d+: invokevirtual #\d+\s+"
+            r"// Method zombie/characters/IsoGameCharacter\.getAttackedBy:\(\)Lzombie/characters/IsoGameCharacter;\s+\d+: invokevirtual #\d+\s+"
+            r"// Method zombie/characters/IsoGameCharacter\.Kill:\(Lzombie/characters/IsoGameCharacter;\)V",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（成因：伺服器只在收到命中、自己算出拖倒時 Kill）",
+        "class": "zombie.network.fields.hit.Bite",
+        "crash": [
+            # process（Bite.java:89-94）：GameServer.server 時 isDeathDragDown 才 Kill(wielder)
+            r"public void process\(zombie\.characters\.IsoZombie, zombie\.characters\.IsoGameCharacter\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/network/GameServer\.server:Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/characters/IsoGameCharacter\.isDeathDragDown:\(\)Z\s+\d+: ifeq\s+\d+\s+\d+: aload_2\s+\d+: aload_1\s+"
+            r"\d+: invokevirtual #\d+\s+// Method zombie/characters/IsoGameCharacter\.Kill:\(Lzombie/characters/IsoGameCharacter;\)V",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（後果：舊角色還活著時拒絕重生）",
+        "class": "zombie.network.packets.connection.ConnectCoopPacket",
+        "crash": [
+            # ConnectCoopPacket.java:69-70：getPlayerAt(index) 還活著就 sendCoopAccessDenied
+            r"// InterfaceMethod zombie/network/IConnection\.getPlayerAt:\(I\)Lzombie/characters/IsoPlayer;\s+\d+: invokevirtual #\d+\s+"
+            r"// Method zombie/characters/IsoPlayer\.isDead:\(\)Z\s+\d+: ifne\s+\d+(?:(?!\n  \S)[\s\S])*?// Method sendCoopAccessDenied:",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（依賴：OnPlayerDeath 只對本地玩家觸發、伺服器的死亡路徑、存活時數）",
+        "class": "zombie.characters.IsoPlayer",
+        "depends": [
+            # OnDeath（IsoPlayer.java:6568-6570）
+            r"public void OnDeath\(\);(?:(?!\n  \S)[\s\S])*?// Method isLocalPlayer:\(\)Z\s+\d+: ifeq\s+\d+\s+\d+: ldc(?:_w)?\s+#\d+\s+// String OnPlayerDeath",
+            # Kill → onKilled → DoDeath（寫 user died、OnCharacterDeath，IsoPlayer.java:8349-8370）
+            r"public void onKilled\(zombie\.characters\.IsoGameCharacter, zombie\.inventory\.types\.HandWeapon, boolean\);(?:(?!\n  \S)[\s\S])*?// Method DoDeath:",
+            # 屍體建好後把 PlayerDeath 送給附近客戶端（IsoPlayer.java:8372-8381）
+            r"private void onDied\(zombie\.characters\.IsoGameCharacter, zombie\.iso\.objects\.IsoDeadBody\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/network/GameServer\.sendCharacterDeath:",
+            # 擋重生後才到的舊回報靠伺服器端存活時數
+            r"public double getHoursSurvived\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（依賴：伺服器替每位玩家累加存活時數；一遊戲天的實際分鐘數）",
+        "class": "zombie.GameTime",
+        "depends": [
+            # GameTime.java:539-545：GameServer.server 時對 GameServer.getPlayers() 每一位 setHoursSurvived(get + time)
+            r"// Method zombie/network/GameServer\.getPlayers:\(\)Ljava/util/ArrayList;(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/characters/IsoPlayer\.setHoursSurvived:\(D\)V",
+            # 把 MIN_SECONDS 換成遊戲小時（GameTime.java:946-948；值由沙盒 DayLength 設定，SandboxOptions.java:410-419、452）
+            r"public float getMinutesPerDay\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（依賴：伺服器建的新角色存活時數從 0 開始）",
+        "class": "zombie.network.packets.character.CreatePlayerPacket",
+        "depends": [
+            # processServer（CreatePlayerPacket.java:288-302）：new IsoPlayer（欄位預設 0，IsoPlayer.java:410）到存進 ServerPlayerDB
+            # 之間不設存活時數；之後 PlayerConnect 由 DB 讀回（GameServer.java:2812-2814 → IsoPlayer.load :1230）。
+            # 這條轉紅＝新角色可能帶著時數出生，重生後才到的舊回報會越過 MIN_SECONDS，要重新設計門檻
+            r"public void processServer\(zombie\.network\.PacketTypes\$PacketType, zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?"
+            r"\d+: new\s+#\d+\s+// class zombie/characters/IsoPlayer\n"
+            r"(?:(?!setHoursSurvived)(?!\n  \S)[\s\S])*?// Method zombie/savefile/ServerPlayerDB\.serverUpdateNetworkCharacter:",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（依賴：Kill／die／isDead／isGodMod）",
+        "class": "zombie.characters.IsoGameCharacter",
+        "depends": [
+            r"public final void Kill\(zombie\.characters\.IsoGameCharacter\);",
+            # die（IsoGameCharacter.java:14623-14646）：伺服器端 becomeCorpse
+            r"public final void die\(\);(?:(?!\n  \S)[\s\S])*?// Field zombie/network/GameServer\.server:Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method becomeCorpse:\(\)Lzombie/iso/objects/IsoDeadBody;",
+            r"public boolean isDead\(\);",
+            r"public boolean isGodMod\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_DeathSync（依賴：指令的 player 由寄件者連線解析）",
+        "class": "zombie.network.GameServer",
+        "depends": [
+            # receiveClientCommand（GameServer.java:2280-2313）
+            r"static void receiveClientCommand\([^)]*\);(?:(?!\n  \S)[\s\S])*?// Method getPlayerFromConnection:(?:(?!\n  \S)[\s\S])*?// String OnClientCommand",
+        ],
+    },
 ]
 
 
