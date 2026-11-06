@@ -1593,7 +1593,7 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 | 影響版本 | Build 42.21.0 實測（反編譯快照 `42.21.0-20260928`；`projectzomboid.jar` sha256 `e1a69eb7…`） |
 | 端 | 多人：客戶端送指令、dedicated server 處理（兩半在同一檔，執行期以 `isClient()`／`isServer()` 分流）；單人不作用 |
 | 類型 | 原版**多人死亡同步缺口**：伺服器沒處理到的死亡，由死者自己的客戶端通知後，照原版伺服器路徑補上 |
-| 狀態 | **現役**（未發布） |
+| 狀態 | **現役**（42.21.0-0.16.0 起） |
 
 ### 症狀（正式服唯讀調查）
 
@@ -1702,6 +1702,106 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 官方讓伺服器處理客戶端判定的死亡（例如拖倒致死改由伺服器判定，或客戶端死亡時送死亡封包），或 `ConnectCoopPacket` 遇到舊角色還活著時
 改成替它處理死亡。`check_vanilla_alignment.py` 的「成因」或「後果」轉 CHANGED 時，重跑 E2E `death-sync` 的對照組：客戶端單方面死亡後，
 伺服器自己就有 `user died` 與屍體、重生正常，就移出本檔。
+
+---
+
+## MDFX_HealthCheatPermission — 強化多人伺服器對健康作弊（管理員功能）的驗證
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `shared/Fixes/MDFX_HealthCheatPermission.lua` |
+| 影響版本 | Build 42.21.0 實測（原版 `media/lua/server/ClientCommands.lua` sha256 `c9de3d3024a46e2b…`；反編譯快照 `42.21.0-20260928`） |
+| 端 | 多人伺服器（dedicated server 與合作主機的伺服器程序；本檔放 `shared/` 只為了比原版 `server/` 先載入，客戶端與單人不作用） |
+| 類型 | 原版**伺服器指令的驗證缺口**：沒有 `UseHealthCheat` 的寄件者不能用健康作弊；參數不對不再讓原版丟錯 |
+| 狀態 | **現役**（未發布） |
+
+> 本條是安全修正：依家族保密規則（`pz-family-docs/conventions.md`「保密紅線」與內容歸宿表），原版缺口的細節、繞過方式與正式服紀錄只寫在本機知識庫，
+> 這裡只記修法、驗證與退場條件。
+
+### 症狀
+
+- 多人伺服器上有人像無敵一樣、被咬也不感染，或玩家無故受傷；伺服器記錄裡，沒有管理員權限的帳號送過健康作弊。
+- 參數不對的健康作弊請求讓伺服器丟 Lua 錯誤。
+
+### 根因（行號為 42.21.0 原版 Lua）
+
+- 原版處理健康作弊的伺服器指令（`ClientCommands.lua:474-627`）驗證不完整，參數也沒檢查。
+- 合法的寄件者有兩種：管理員對自己作弊時送 `onHealthCheatCurrentPlayer`；管理員對別人作弊時送 `onHealthCheat`，伺服器檢查管理員權限後把同一份參數轉給目標的客戶端
+  （`:477`），目標的客戶端再替自己送 `onHealthCheatCurrentPlayer`（`ISHealthPanel.lua:329-332` → `:1964-1969` → `:191-195`，`id` 是自己）。
+  第二種的寄件者是沒有權限的目標本人，所以不能只看寄件者有沒有權限：直接擋掉會讓管理員對別人的健康作弊失效。
+
+### 修法
+
+- **掛點**：原版的 `Commands` 是檔內 local，拿不到單一指令；改包整支分派器 `ClientCommands.OnClientCommand`（`:1296-1307`）。本檔放 `shared/`，
+  專用伺服器先載入全部 `shared/` 再載入 `server/`（`GameServer.java:1469-1471`），所以早於原版檔：載入時暫換 `Events.OnClientCommand.Add`
+  （`Events.X` 是一般 Lua 表，`Event.java:78-83`），以 `getFilenameOfClosure`（`LuaManager.java:7345-7347`）認出原版 `server/ClientCommands.lua`
+  傳進來的函式（路徑不含 `/mods/`；別的 MOD 蓋掉這個檔時不包），換成包裝再交給引擎；其他函式原樣轉交。`OnGameBoot` 換回 `Add`，原版檔恰好登記一支才啟用，
+  否則印 `NOT installed`、包裝照原版轉交。沿用 `MinidoracatServerPatchFor42` 的 `MSP_SemiTruckRestoreThrottle` 攔截註冊的做法。
+- **包裝只看 `player` 模組的兩個指令**，其餘（含別的模組的同名指令）原樣交給原版，參數表不換：
+  - `onHealthCheat`：原版會轉送時（`args.id` 是在線玩家、寄件者有 `UseHealthCheat`，與 `:476` 同一條件）先給目標記一張轉送票
+    （部位、action、時間），再照原版處理。
+  - `onHealthCheatCurrentPlayer`：寄件者有 `UseHealthCheat` 就照原版。沒有時只放行管理員轉給他的那一筆：`args.id` 是寄件者自己、部位與 action 和票上的相同、
+    轉送後 `TICKET_MS`（30 秒）內。票只用一次，寄件者有權限時也照樣用掉（之後被撤權也不能拿來重放）。其餘拒絕，不改任何人。
+  - 參數不合法一律拒絕、不丟錯，有權限也一樣：`args` 不是表、`args.id` 不是在線玩家的 onlineID（查到的玩家 `getOnlineID()` 要等於 `args.id`）、
+    `bodyPartIndex` 不是 0～部位數-1 的整數。
+- **自己的檢查包在 `pcall` 裡**：檢查本身出錯時，`onHealthCheatCurrentPlayer` 拒絕、`onHealthCheat` 照原版，各印一次。原版自己的錯原樣外洩（`onHealthCheat` 的壞參數照原版丟錯）。
+- **診斷**：每次拒絕一行
+  `[MinidoracatFixes] MDFX_HealthCheatPermission denied onHealthCheatCurrentPlayer (no UseHealthCheat): player="<名稱>" onlineID=<n> steamid~<數字> target=<args.id> action=<action> part=<部位>.`
+  （壞參數是 `bad … (<原因>)`），每個連線（Steam 伺服器是 SteamID 加 onlineID，否則是 onlineID 加名稱）每 session 最多 `LOG_LIMIT`（20）行，超過印一次提示、照樣拒絕。不照「一 session 一次」：每一行都是一次被擋下的請求，分析 repo 拿它抓外掛。
+  名稱由客戶端提供，不能當身分，認人看 `steamid~` 或 `_cmd.txt`；SteamID 是捨入值、相鄰的帳號會相同，onlineID 斷線後會給下一個人，所以額度兩個一起看。
+  名稱與參數輸出前去掉控制字元與引號、最多 32 字，不能偽造 log 行。
+  `steamid~` 是 `getSteamID()` 的 long 轉成 Lua double 後的值（`KahluaNumberConverter.java:106、113`），SteamID64 會被捨入到 16 的倍數；
+  精確值看同一秒 `Logs/*_cmd.txt` 那一行（開頭是連線的 SteamID，`GameServer.java:2290-2305`）。非 Steam 伺服器寫 `none`。
+- 形狀不符（`Events.OnClientCommand`／`OnGameBoot`、`getFilenameOfClosure`、`checkPermissions`、`getPlayerByOnlineID`、`getTimestampMs`、`Capability.UseHealthCheat` 不存在）
+  印 `NOT installed`、不換 `Add`。
+
+### 與原版的差異
+
+- 沒有 `UseHealthCheat` 的帳號不論客戶端設定，都不能再用健康作弊，改自己也一樣；管理員對自己、對別人（含轉送）照原版。
+  使用者 2026-11-06 同意（`MinidoracatServerAnalyze` 交接：沒有 `UseHealthCheat` 就拒絕、壞參數也拒絕）。
+- 參數不對的請求原本讓伺服器丟一次 Lua 錯誤，現在印一行 `bad …`。
+
+### 已知限制
+
+- 轉送路徑仍信任目標客戶端回送的那一筆：管理員轉送後 30 秒內，目標可以把這一筆換成同一部位、同一 action 的作弊（本來就是管理員要做的那一筆）。
+- 管理員對分割畫面的第 2～4 位玩家作弊時，原版客戶端用第 1 位玩家回送（`ISHealthPanel.lua:1967`，原版本來就套到錯的角色），本補丁拒絕並記成第 1 位玩家的 `denied`；
+  回送晚於 30 秒時也記成 `denied`。分析 `denied` 行時，之前不久有管理員送過健康作弊的（`_cmd.txt` 的 `player.onHealthCheat`；分割畫面約在同一秒、
+  逾時在 30 秒以上之前；`_cmd.txt` 不記參數，對象與部位對不出來），先當成這兩種。
+- log 額度實際按玩家槽（onlineID）算：分割畫面每位玩家各一份；同一帳號重連分到別的槽（Steam 伺服器）、或重生後換名（非 Steam 伺服器）可能換一份 `LOG_LIMIT`，
+  每次最多 20 行。拒絕不受影響。
+- 攔不到原版的登記時印 `NOT installed`、照原版：別的 MOD 整份蓋掉原版 `ClientCommands.lua`、別的 MOD 在本檔載入前就 `require` 原版檔、
+  晚於本檔的 `shared/` 檔換掉 `Events.OnClientCommand.Add` 又不轉交給換掉前的函式。伺服器中途重載 Lua 後沒有再觸發 `OnGameBoot` 時不啟用。
+- 只處理健康作弊；同檔其他伺服器指令不在本修復範圍。
+
+### 驗證
+
+`lua scripts/test_health_cheat_permission.lua` — 82 項，全綠。假 Java 端照快照形狀模擬 `Events.X.Add`、`getFilenameOfClosure`、`checkPermissions`、
+`getPlayerByOnlineID` 的數字轉換、`ArrayList.get` 的丟錯，與原版分派器（`onHealthCheat` 有權限才轉送）。
+涵蓋：只包原版檔那一支（同目錄的原版 `VehicleCommands`、別的 MOD 的登記、MOD 蓋掉的 `ClientCommands.lua` 都原樣轉交）、`OnGameBoot` 換回 `Add`；
+一般帳號改別人、改自己都拒絕並記一行；管理員對自己、對別人照原版；13 種壞參數拒絕、不丟錯、原版不被呼叫；
+轉送：目標回送的那一筆放行一次、重放拒絕，部位不同、action 不同、拿票改別人、別人拿這張票都拒絕而且不消耗票，兩次轉送兩筆都放行、第三筆拒絕，
+一般帳號送 `onHealthCheat` 不記票，剛好 30 秒放行、超過 1 ms 或時鐘倒退拒絕，有權限的目標回送也用掉票、撤權後重放拒絕；
+其他指令與別的模組的同名指令原樣交給原版（同一張參數表）、原版的錯原樣外洩；自己的檢查出錯時作弊指令拒絕、轉送照原版，各印一次；
+同一個連線 25 次拒絕印 20 行加一次上限提示、換名不換額度、捨入後 SteamID 相同的另一個連線與非 Steam 伺服器接手同一個 onlineID 的人照樣記，SteamID 以完整十進位輸出（不是科學記號），
+參數與名稱去掉換行與引號、截到 32 字（拒絕行與上限提示都是）；
+`OnGameBoot` 之前照原版；原版檔登記 0 支、2 支印 `NOT installed` 並照原版；客戶端／單人什麼都不動；缺 `getFilenameOfClosure` 印 `NOT installed`、不換 `Add`；重複載入不疊。
+
+**mutation 驗證**（`--mutants`，38 個全部抓到）：每道防線各一個（權限、票的 id／部位／action／期限／時鐘倒退／消耗／有權限也用掉、轉送記票要看權限、
+參數的表／數字／onlineID 複核／整數／上下限、計數、log 上限與額度的連線身分、參數與名稱的清理與截長、SteamID 文字化、`pcall` 與失敗時的放行方向、
+啟用時機、原版登記數、`/mods/` 與檔名比對、換回 `Add`、形狀檢查、重複載入防護）。
+
+`python scripts/check_vanilla_alignment.py` 登記 4 條：補丁前提（`onHealthCheatCurrentPlayer` 開頭的形狀）、依賴（`onHealthCheat` 的轉送條件、
+分派器的呼叫形狀、全檔恰好一次 `Events.OnClientCommand.Add(ClientCommands.OnClientCommand)`、`ISHealthPanel` 回送的參數形狀與收到轉送後的呼叫、
+`GameServer` 先載入 `shared/` 再載入 `server/`、`Event.register` 把 `Add` 放在一般表上），退場提示（`onHealthCheatCurrentPlayer` 裡出現權限檢查）。
+
+實機（`fixes-e2e` skill 的 `health-cheat`）：伺服器端安裝面 `fixes-hc-srv-1106g`（42.21.0 專用伺服器）印
+`MDFX_HealthCheatPermission installed (vanilla OnClientCommand dispatcher wrapped)`、沒有 `NOT installed`、`SERVER STARTED` 之後零例外。
+雙客戶端的對照組與修正組還沒跑成（2026-11-06 的機器記憶體不夠開兩個客戶端、遠端桌面中斷），判定標準寫在 skill。
+
+### 可退場條件
+
+官方讓 `onHealthCheatCurrentPlayer` 自己驗證權限與參數，而且管理員對別人作弊的轉送路徑仍可用。`check_vanilla_alignment.py` 的前提條目轉 CHANGED 或退場提示出現時，
+重跑 E2E `health-cheat` 拿掉修正檔的那一輪：一般帳號改不了別人、管理員三項照樣過、壞參數不丟錯，就移出本檔。
 
 ---
 

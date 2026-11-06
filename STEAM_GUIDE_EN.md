@@ -11,7 +11,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Requires[/b]: Build 42.20.4+.
 [*] [b]Install[/b]: subscribe and enable; no settings, sandbox options or keys. In MP the server enables it.
 [*] [b]Vanilla bugs only[/b]: no balance changes, items or UI.
-[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, and one that has the server handle multiplayer deaths it missed.
+[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, one that has the server handle multiplayer deaths it missed, and one that strengthens the server's validation of the health cheat.
 [*] [b]Rechecked after game updates[/b]: fixes are removed once officially fixed.
 [/list]
 === 🧰 Animals: butchering, petting, milking, watering, leashing
@@ -178,6 +178,15 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Scope[/b]: MP only; the server and every player's game need it (same file). Players get it when the server updates the mod. Does nothing in SP.
 [*] [b]Retired[/b]: once the vanilla server handles these deaths itself.
 [/list]
+=== 🧰 Multiplayer: only admins can use the health cheat
+[h3]Stronger server-side validation: only admins can use the health cheat (an admin feature)[/h3]
+[list]
+[*] [b]Fix[/b]: MP servers accept the health cheat only from admins (accounts with the health-cheat permission). When an admin uses the health panel on someone else, that player's game sends one command back on their behalf; that one still goes through. Everything else is refused and changes nobody; malformed requests are refused without a server error.
+[*] [b]Difference from vanilla[/b]: accounts without the permission can no longer use the health cheat, on themselves either, whatever their client settings; admins work as in vanilla, on themselves and on others.
+[*] [b]Log[/b]: each refusal adds one line to the server's server-console.txt: [MinidoracatFixes] MDFX_HealthCheatPermission denied …, with the name, SteamID, target and action, so admins can find cheaters (up to 20 per connection per start). The name comes from the client, so identify players by SteamID; the SteamID there is approximate (the server's Lua can't read the full number); the exact one is on the *_cmd.txt line in the server's Logs folder from the same second.
+[*] [b]Scope[/b]: MP servers only. Does nothing in SP.
+[*] [b]Retired[/b]: once vanilla fully validates the health cheat on the server and admins can still use it on others.
+[/list]
 === ⚠️ Known limitations
 [list]
 [*] [b]Moved-out crops[/b]: while moved out, dead/rotten crops pause their slow change to the trampled look until someone returns.
@@ -192,6 +201,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Hen house disconnect[/b]: an empty slot created in the very frame its hen house unloads (rare) still disconnects; slots that also hold a dead chicken aren't cleared, so the corpse isn't removed with them.
 [*] [b]Battery chargers[/b]: idle chargers no longer refresh nearby generators' power lists every frame; appliance switches, added/removed objects and area loads still do, same as a vanilla base without chargers.
 [*] [b]Multiplayer deaths[/b]: the message has to reach the server before you finish the new character and press Play; if the connection is slower than that, the first respawn may still be refused (black screen). Reconnect and make a new character; the body stays where you died. A character that dies this way within 30 seconds of spawning isn't handled and gets the vanilla black screen.
+[*] [b]Health cheat[/b]: for 30 seconds after an admin uses it on someone, the one command that player's game sends back (same body part, same action) still goes through. If an admin uses it on split-screen player 2-4, or the player's game sends it back after 30 seconds, it is logged as denied; if an admin used the health cheat shortly before a denied line (about the same second for split-screen, 30+ seconds before for a late reply; the server's Logs *_cmd.txt shows the admin's player.onHealthCheat), don't treat it as a cheater straight away. The log-line limit is per player, so each split-screen player has their own; reconnecting or respawning under a new name may restart it.
 [/list]
 === ⚠️ Before removing this mod
 [list]
@@ -208,7 +218,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [h3]Is a fix working?[/h3]
 [list]
 [*] [b]Check the log[/b]: server-console.txt on servers, console.txt in SP shows [MinidoracatFixes] lines.
-[*] [b]When a problem is caught[/b]: one line per fix per start. The watering and animal-action fixes log one per action and the death-sync fix one per death it handles or late message it skips (in the server's server-console.txt), up to 20 each; the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the battery-charger fix in both the server's and the player's.
+[*] [b]When a problem is caught[/b]: one line per fix per start. The watering and animal-action fixes log one per action and the death-sync fix one per death it handles or late message it skips, the health-cheat fix one per refusal (in the server's server-console.txt), up to 20 each (per connection for the health cheat); the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the battery-charger fix in both the server's and the player's.
 [*] [b]Report these two[/b]: "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error.
 [/list]
 [h3]Does load order matter?[/h3]

@@ -956,6 +956,68 @@ FIXES = [
             r"static void receiveClientCommand\([^)]*\);(?:(?!\n  \S)[\s\S])*?// Method getPlayerFromConnection:(?:(?!\n  \S)[\s\S])*?// String OnClientCommand",
         ],
     },
+    # ── MDFX_HealthCheatPermission：強化健康作弊的伺服器端驗證（細節見本機知識庫 server-commands.md）──
+    {
+        "name": "MDFX_HealthCheatPermission（原版指令與分派器）",
+        "file": "media/lua/server/ClientCommands.lua",
+        "crash": [
+            # :481-484：onHealthCheatCurrentPlayer 開頭的形狀（補丁的前提；轉 CHANGED 就照 docs/fixes.md 重新核對）
+            r"Commands\.player\.onHealthCheatCurrentPlayer\s*=\s*function\s*\(\s*player\s*,\s*args\s*\)\s*"
+            r"local\s+otherPlayer\s*=\s*getPlayerByOnlineID\(args\.id\)\s*local\s+action\s*=\s*args\.action\s*"
+            r"local\s+bodyPart\s*=\s*otherPlayer:getBodyDamage\(\):getBodyParts\(\):get\(args\.bodyPartIndex\)",
+        ],
+        "depends": [
+            # :474-479：轉送條件（補丁照同一條件記轉送票）
+            r"Commands\.player\.onHealthCheat\s*=\s*function\s*\(\s*player\s*,\s*args\s*\)\s*"
+            r"local\s+otherPlayer\s*=\s*getPlayerByOnlineID\(args\.id\)\s*"
+            r"if\s+otherPlayer\s+and\s+checkPermissions\(player,\s*Capability\.UseHealthCheat\)\s+then\s*"
+            r'sendServerCommand\(otherPlayer,\s*"ISHealthPanel",\s*"onHealthCheat",\s*args\)',
+            # :1296-1305：分派器依 module／command 呼叫，參數原樣傳下去
+            r"ClientCommands\.OnClientCommand\s*=\s*function\s*\(\s*module\s*,\s*command\s*,\s*player\s*,\s*args\s*\)"
+            r"(?:(?!\nend)[\s\S])*?Commands\[module\]\[command\]\(player,\s*args\)",
+            # :1307：全檔恰好一次 Events.OnClientCommand.Add，而且登記的是分派器（補丁要求恰好一支）
+            r"\A(?:(?!Events\.OnClientCommand\.Add)[\s\S])*Events\.OnClientCommand\.Add\(ClientCommands\.OnClientCommand\)"
+            r"(?:(?!Events\.OnClientCommand\.Add)[\s\S])*\Z",
+        ],
+        "exithint": [
+            # 退場提示（docs/fixes.md 的可退場條件）
+            r"Commands\.player\.onHealthCheatCurrentPlayer\s*=\s*function\s*\(\s*player\s*,\s*args\s*\)"
+            r"(?:(?!\nend)[\s\S])*?(?:checkPermissions|hasCapability)",
+        ],
+    },
+    {
+        "name": "MDFX_HealthCheatPermission（依賴：管理員對別人作弊時，目標客戶端回送的形狀）",
+        "file": "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua",
+        "depends": [
+            # :191-195：客戶端送的參數（轉送票比對 bodyPartIndex、action，id 是自己）
+            r"local\s+args\s*=\s*\{\s*bodyPartIndex\s*=\s*BodyPartType\.ToIndex\(bodyPart:getType\(\)\),\s*action\s*=\s*action,\s*"
+            r'id\s*=\s*player:getOnlineID\(\)\s*\}\s*sendClientCommand\(player,\s*"player",\s*"onHealthCheatCurrentPlayer",\s*args\)',
+            # :1964-1969：收到伺服器轉送後對自己的同一部位、同一 action 呼叫上面那支
+            r'module\s*==\s*"ISHealthPanel"\s+and\s+command\s*==\s*"onHealthCheat"\s+then\s*local\s+pl\s*=\s*getPlayer\(\)\s*'
+            r"ISHealthPanel\.onCheatCurrentPlayer\(pl:getBodyDamage\(\):getBodyParts\(\):get\(args\.bodyPartIndex\),\s*args\.action,\s*pl\)",
+        ],
+    },
+    {
+        "name": "MDFX_HealthCheatPermission（依賴：伺服器先載入 shared/ 再載入 server/）",
+        "class": "zombie.network.GameServer",
+        "depends": [
+            # GameServer.java:1469-1471：補丁放 shared/，載入時暫換 Add，一定早於原版 server/ClientCommands.lua
+            r"// String shared\s+\d+: invokestatic\s+#\d+\s+// Method zombie/Lua/LuaManager\.LoadDirBase:\(Ljava/lang/String;\)V\s+"
+            r"\d+: ldc(?:_w)?\s+#\d+\s+// String client\s+\d+: iconst_1\s+\d+: invokestatic\s+#\d+\s+"
+            r"// Method zombie/Lua/LuaManager\.LoadDirBase:\(Ljava/lang/String;Z\)V\s+"
+            r"\d+: ldc(?:_w)?\s+#\d+\s+// String server\s+\d+: invokestatic\s+#\d+\s+// Method zombie/Lua/LuaManager\.LoadDirBase:",
+        ],
+    },
+    {
+        "name": "MDFX_HealthCheatPermission（依賴：Events.X.Add 是一般表上的欄位，可以暫換）",
+        "class": "zombie.Lua.Event",
+        "depends": [
+            # Event.java:78-83
+            r"public void register\(se\.krka\.kahlua\.vm\.Platform, se\.krka\.kahlua\.vm\.KahluaTable\);(?:(?!\n  \S)[\s\S])*?"
+            r"// String Add\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field add:Lzombie/Lua/Event\$Add;\s+"
+            r"\d+: invokeinterface\s+#\d+,\s+3\s+// InterfaceMethod se/krka/kahlua/vm/KahluaTable\.rawset:",
+        ],
+    },
 ]
 
 

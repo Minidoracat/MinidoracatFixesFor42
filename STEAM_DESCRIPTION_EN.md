@@ -30,6 +30,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Multiplayer: a burst of crop-related errors right after joining a server
 [*] Idle car battery chargers near a generator make the server and players recompute power use every frame, slowing things down
 [*] Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone
+[*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 [/list]
 📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840467]Fixes Mod Guide: Fix List & Details[/url]
 
