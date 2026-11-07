@@ -1794,9 +1794,11 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 分派器的呼叫形狀、全檔恰好一次 `Events.OnClientCommand.Add(ClientCommands.OnClientCommand)`、`ISHealthPanel` 回送的參數形狀與收到轉送後的呼叫、
 `GameServer` 先載入 `shared/` 再載入 `server/`、`Event.register` 把 `Add` 放在一般表上），退場提示（`onHealthCheatCurrentPlayer` 裡出現權限檢查）。
 
-實機（`fixes-e2e` skill 的 `health-cheat`）：伺服器端安裝面 `fixes-hc-srv-1106g`（42.21.0 專用伺服器）印
+實機（`fixes-e2e` skill 的 `health-cheat`，42.21.0 專用伺服器）：伺服器端安裝面 `fixes-hc-srv-1106g` 印
 `MDFX_HealthCheatPermission installed (vanilla OnClientCommand dispatcher wrapped)`、沒有 `NOT installed`、`SERVER STARTED` 之後零例外。
-雙客戶端的對照組與修正組還沒跑成（2026-11-06 的機器記憶體不夠開兩個客戶端、遠端桌面中斷），判定標準寫在 skill。
+2026-11-07 多人雙客戶端（A 管理員、B 一般帳號）：修正組 `fixes-hc-fix-1107a` 兩個客戶端都 `RESULT PASS`（A 8 個 CHECK、B 7 個），
+伺服器的拒絕與壞參數 log 行數符合 skill 的判定，`SERVER STARTED` 之後零例外。對照組用加入本補丁前的版本（`--rev MinidoracatFixesFor42=dc709c1`，
+`fixes-hc-ctl-1107a`）：`RESULT FAIL class=check`，原版缺口重現，壞參數讓伺服器丟 Lua 錯誤。
 
 ### 可退場條件
 
