@@ -56,13 +56,13 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Retired[/b]: each one separately, once vanilla adds its check.
 [/list]
 === 🧰 Items & actions: reloading, tools, pouring, clothing, doors
-[h3]Reload does nothing with a non-firearm in hand and an ammo strap[/h3]
+[h3]Reload does nothing: non-firearm in hand with an ammo strap, or revolvers and shotguns with a shoulder holster or chest rig[/h3]
 [list]
-[*] [b]Symptom[/b]: holding e.g. a flashlight with an ammo strap (or fast-reload gear) worn, loading a magazine does nothing.
-[*] [b]Cause[/b]: vanilla's reload-speed math treats the held item as a gun and errors asking a non-firearm for its magazine type.
-[*] [b]Fix[/b]: only when vanilla errors and the item isn't a firearm, speed uses vanilla's no-strap formula (the strap bonus is for firearms). Other errors still surface; firearm reloads are unchanged.
+[*] [b]Symptom[/b]: holding e.g. a flashlight with an ammo strap (or fast-reload gear) worn, loading a magazine does nothing. Since Build 42.22, wearing a shoulder holster, chest rig or ALICE belt without an ammo strap, reloading a revolver, shotgun or other gun without a magazine errors at once and loads nothing.
+[*] [b]Cause[/b]: vanilla's reload-speed math treats the held item as a gun and errors asking a non-firearm for its magazine type. Since 42.22 it also checks worn fast-reload gear, then reads the ammo strap even when none is worn.
+[*] [b]Fix[/b]: only when vanilla errors in one of these two ways, speed uses vanilla's no-strap formula (vanilla gives no strap bonus in either case). Other errors still surface; other reloads are unchanged.
 [*] [b]Scope[/b]: server, client and SP.
-[*] [b]Retired[/b]: once vanilla checks for a firearm.
+[*] [b]Retired[/b]: once vanilla checks for a firearm and for a worn ammo strap; each case is removed on its own.
 [/list]
 [h3]Actions get stuck when a tool breaks on its last swing (fixed officially in Build 42.21, retired)[/h3]
 [list]

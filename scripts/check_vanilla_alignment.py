@@ -61,6 +61,11 @@ FIXES = [
         "crash": [
             # :95 對非 HandWeapon 手持物 call nil
             r"elseif\s+gun:getMagazineType\(\)\s+then",
+            # 42.22 :90 gate 看穿戴的 RELOAD_FAST_MAGAZINES（肩掛槍套、胸掛、ALICE 腰帶吊帶）：沒穿背帶也會進來
+            r"if\s+gun\s+and\s+\(reloadFast\s+or\s+character:hasWornTag\(ItemTag\.RELOAD_FAST_MAGAZINES\)\s+or\s+\(strap\s+and\s+strap:getClothingItem\(\)\)\)\s+then",
+            # :100／:102 前面的標籤都不符就對 strap 取值，strap 可能是 nil
+            r'or\s+strap:getClothingItemName\(\)\s*==\s*"AmmoStrap_Shells"\)\s+then',
+            r'or\s+strap:getClothingItemName\(\)\s*==\s*"AmmoStrap_Bullets"\)\s+then',
         ],
         "depends": [
             r"function\s+ISReloadWeaponAction\.setReloadSpeed\s*\(\s*character\s*,\s*rack\s*\)",
@@ -77,6 +82,8 @@ FIXES = [
         "exithint": [
             # 官方若加了「手持物是否槍械」的檢查
             r'instanceof\(gun,\s*"HandWeapon"\)',
+            # 官方若在 strap 取值前判 nil
+            r"strap\s+and\s+strap:getClothingItemName\(\)",
         ],
     },
     {
@@ -482,6 +489,26 @@ FIXES = [
         ],
     },
     {
+        "name": "農作物存檔三件（Java：GOS 存檔緩衝區只有 10 MiB）",
+        "class": "zombie.iso.SliceY",
+        "crash": [
+            # SliceY.java:10：所有 GOS 系統共用的存檔緩衝區固定 10,485,760 byte，農作物系統寫超過就丟 BufferOverflowException。
+            # 轉紅＝官方加大或改寫緩衝區，回頭評估 GosPrune／ClockBackup／StallHeal 退場
+            r"static \{\};\s+Code:\s+\d+: ldc\s+#\d+\s+// int 10485760\s+\d+: invokestatic\s+#\d+\s+"
+            r"// Method java/nio/ByteBuffer\.allocate:\(I\)Ljava/nio/ByteBuffer;\s+\d+: putstatic\s+#\d+\s+// Field SliceBuffer:Ljava/nio/ByteBuffer;",
+        ],
+    },
+    {
+        "name": "農作物存檔三件（Java：先截斷檔案才寫緩衝區）",
+        "class": "zombie.globalObjects.SGlobalObjectSystem",
+        "crash": [
+            # save()（42.22.2 SGlobalObjectSystem.java:273-298）：先 new FileOutputStream（gos_*.bin 截成 0 byte）才 save(ByteBuffer)，
+            # 溢出的例外被吞，檔案留在 0 byte。轉紅＝官方改成先寫暫存檔或先寫緩衝區，回頭評估退場
+            r"public void save\(\);(?:(?!\n  \S)[\s\S])*?// Method java/io/FileOutputStream\.\"<init>\":\(Ljava/io/File;\)V"
+            r"(?:(?!\n  \S)[\s\S])*?// Method save:\(Ljava/nio/ByteBuffer;\)V",
+        ],
+    },
+    {
         "name": "MDFX_ModOptionsPersist（存讀）",
         "file": "media/lua/client/PZAPI/ModOptions.lua",
         "crash": [
@@ -609,13 +636,13 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_HutchNullSlotGuard（爆點：IsoHutch.removeFromWorld）",
+        "name": "MDFX_HutchNullSlotGuard（爆點：IsoHutch.removeFromWorld；42.22 官方已判 null）",
         "class": "zombie.iso.objects.IsoHutch",
-        "crash": [
-            # removeFromWorld（IsoHutch.java:983-990）：values() 的每個值 checkcast 後直接 removeFromUpdateLists，沒有 null 檢查
-            r"public void removeFromWorld\(\);(?:(?!\n  \S)[\s\S])*?// Method java/util/HashMap\.values:\(\)Ljava/util/Collection;"
-            r"(?:(?!\n  \S)[\s\S])*?// class zombie/characters/animals/IsoAnimal\s+\d+: astore_2\s+\d+: aload_2\s+"
-            r"\d+: invokevirtual #\d+\s+// Method zombie/characters/animals/IsoAnimal\.removeFromUpdateLists:\(\)V",
+        "retired": [
+            # 42.22.2 removeFromWorld（IsoHutch.java:1016-1025）：values() 的每個值先判 null 才 removeFromUpdateLists。
+            # 42.21.0（:983-990）沒有這個判斷，客戶端卸載雞舍時 NPE 斷線。轉紅＝官方撤回，崩潰保護又要靠補丁
+            r"public void removeFromWorld\(\);(?:(?!\n  \S)[\s\S])*?// class zombie/characters/animals/IsoAnimal\s+"
+            r"\d+: astore_2\s+\d+: aload_2\s+\d+: (?:ifnull|ifnonnull)",
         ],
         "depends": [
             # 清 null 的唯一路徑：removeAnimal 以動物的 hutchPosition（int）自動裝箱 remove（IsoHutch.java:538-544）
@@ -629,11 +656,6 @@ FIXES = [
             r"public zombie\.characters\.animals\.IsoAnimal getAnimal\(java\.lang\.Integer\);",
             r"public zombie\.iso\.objects\.IsoDeadBody getDeadBody\(java\.lang\.Integer\);",
             r"public boolean isSlave\(\);",
-        ],
-        "exithint": [
-            # 官方若在呼叫前檢查 null，astore_2／aload_2 之後會多出 ifnull／ifnonnull
-            r"public void removeFromWorld\(\);(?:(?!\n  \S)[\s\S])*?// class zombie/characters/animals/IsoAnimal\s+"
-            r"\d+: astore_2\s+\d+: aload_2\s+\d+: (?:ifnull|ifnonnull)",
         ],
     },
     {
@@ -958,43 +980,24 @@ FIXES = [
     },
     # ── MDFX_HealthCheatPermission：強化健康作弊的伺服器端驗證（細節見本機知識庫 server-commands.md）──
     {
-        "name": "MDFX_HealthCheatPermission（原版指令與分派器）",
+        "name": "MDFX_HealthCheatPermission（原版指令與分派器；42.22 官方已補權限檢查）",
         "file": "media/lua/server/ClientCommands.lua",
-        "crash": [
-            # :481-484：onHealthCheatCurrentPlayer 開頭的形狀（補丁的前提；轉 CHANGED 就照 docs/fixes.md 重新核對）
+        "retired": [
+            # 42.22.2 :645-649：onHealthCheatCurrentPlayer 只改寄件者自己，而且要 UseHealthCheat（42.21.0 :481-627 兩樣都不查）
             r"Commands\.player\.onHealthCheatCurrentPlayer\s*=\s*function\s*\(\s*player\s*,\s*args\s*\)\s*"
-            r"local\s+otherPlayer\s*=\s*getPlayerByOnlineID\(args\.id\)\s*local\s+action\s*=\s*args\.action\s*"
-            r"local\s+bodyPart\s*=\s*otherPlayer:getBodyDamage\(\):getBodyParts\(\):get\(args\.bodyPartIndex\)",
-        ],
-        "depends": [
-            # :474-479：轉送條件（補丁照同一條件記轉送票）
+            r"if\s+getPlayerByOnlineID\(args\.id\)\s*==\s*player\s+and\s+checkPermissions\(player,\s*Capability\.UseHealthCheat\)\s+then",
+            # 42.22.2 :638-643：onHealthCheat 有權限就由伺服器直接套用，不再轉給目標的客戶端（補丁的轉送票在 42.22 用不到）
             r"Commands\.player\.onHealthCheat\s*=\s*function\s*\(\s*player\s*,\s*args\s*\)\s*"
             r"local\s+otherPlayer\s*=\s*getPlayerByOnlineID\(args\.id\)\s*"
-            r"if\s+otherPlayer\s+and\s+checkPermissions\(player,\s*Capability\.UseHealthCheat\)\s+then\s*"
-            r'sendServerCommand\(otherPlayer,\s*"ISHealthPanel",\s*"onHealthCheat",\s*args\)',
-            # :1296-1305：分派器依 module／command 呼叫，參數原樣傳下去
+            r"if\s+otherPlayer\s+and\s+checkPermissions\(player,\s*Capability\.UseHealthCheat\)\s+then\s*applyHealthCheat\(otherPlayer,\s*args\)",
+        ],
+        "depends": [
+            # 分派器依 module／command 呼叫，參數原樣傳下去（42.22.2 :1342-1352）
             r"ClientCommands\.OnClientCommand\s*=\s*function\s*\(\s*module\s*,\s*command\s*,\s*player\s*,\s*args\s*\)"
             r"(?:(?!\nend)[\s\S])*?Commands\[module\]\[command\]\(player,\s*args\)",
-            # :1307：全檔恰好一次 Events.OnClientCommand.Add，而且登記的是分派器（補丁要求恰好一支）
+            # 全檔恰好一次 Events.OnClientCommand.Add，而且登記的是分派器（補丁要求恰好一支）
             r"\A(?:(?!Events\.OnClientCommand\.Add)[\s\S])*Events\.OnClientCommand\.Add\(ClientCommands\.OnClientCommand\)"
             r"(?:(?!Events\.OnClientCommand\.Add)[\s\S])*\Z",
-        ],
-        "exithint": [
-            # 退場提示（docs/fixes.md 的可退場條件）
-            r"Commands\.player\.onHealthCheatCurrentPlayer\s*=\s*function\s*\(\s*player\s*,\s*args\s*\)"
-            r"(?:(?!\nend)[\s\S])*?(?:checkPermissions|hasCapability)",
-        ],
-    },
-    {
-        "name": "MDFX_HealthCheatPermission（依賴：管理員對別人作弊時，目標客戶端回送的形狀）",
-        "file": "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua",
-        "depends": [
-            # :191-195：客戶端送的參數（轉送票比對 bodyPartIndex、action，id 是自己）
-            r"local\s+args\s*=\s*\{\s*bodyPartIndex\s*=\s*BodyPartType\.ToIndex\(bodyPart:getType\(\)\),\s*action\s*=\s*action,\s*"
-            r'id\s*=\s*player:getOnlineID\(\)\s*\}\s*sendClientCommand\(player,\s*"player",\s*"onHealthCheatCurrentPlayer",\s*args\)',
-            # :1964-1969：收到伺服器轉送後對自己的同一部位、同一 action 呼叫上面那支
-            r'module\s*==\s*"ISHealthPanel"\s+and\s+command\s*==\s*"onHealthCheat"\s+then\s*local\s+pl\s*=\s*getPlayer\(\)\s*'
-            r"ISHealthPanel\.onCheatCurrentPlayer\(pl:getBodyDamage\(\):getBodyParts\(\):get\(args\.bodyPartIndex\),\s*args\.action,\s*pl\)",
         ],
     },
     {
@@ -1108,7 +1111,7 @@ def main():
         for pat in fix.get("retired", []):
             m = re.search(pat, content)
             if m:
-                print(f"  OK       官方修正仍在（:{line_of(content, m)}）— 補丁已退場、不必介入")
+                print(f"  OK       官方修正仍在（:{line_of(content, m)}）— 這條原版問題不必再由補丁承接")
             else:
                 print(f"  CHANGED  官方修正形狀已變：/{pat}/")
                 print("           人工核對官方是否撤回修正、補丁要不要復役")

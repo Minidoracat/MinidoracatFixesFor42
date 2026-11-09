@@ -3,10 +3,12 @@
 --
 -- 以最小 stub 模擬 vanilla setReloadSpeed 與角色，驗證：
 --   * 原函式成功時完全透傳：不重算、不多寫變數、不印診斷
---   * 原函式拋錯且「手持非 HandWeapon」（已知壞形狀）時 fallback 公式正確：
+--   * 原函式拋錯且「手持非 HandWeapon」（已知壞形狀一）時 fallback 公式正確：
 --       rack=false → 0.8 ＋ 技能×0.10 － 恐慌×0.05
 --       rack=true  → 0.8 ＋ 技能×0.04（不扣恐慌）
 --       駕駛中再 ×0.8
+--   * 已知壞形狀二（42.22：沒穿彈藥背帶、vanilla 對 nil strap 取 getClothingItemName）同一個 fallback，
+--     診斷各自一 session 一次；穿著背帶或錯誤訊息不同都不算
 --   * 原函式因其他原因拋錯（手持 HandWeapon／判斷不了）→ 原樣重拋，不冒充
 --   * fallback 自己也炸（getMoodles 缺）→ 整體退 1.0，例外不外洩
 --   * 診斷每 session 只印一次
@@ -36,6 +38,9 @@ local function near(a, b) return type(a) == "number" and math.abs(a - b) < 1e-9 
 -- ── stub 環境 ──────────────────────────────────────────────────
 Perks = { Reloading = "Reloading" }
 MoodleType = { PANIC = "PANIC" }
+ItemBodyLocation = { AMMO_STRAP = "AMMO_STRAP" }
+-- Kahlua 的 pcall 拿到的是 RuntimeException 的 getMessage() 加類別名（KahluaThread.java:1446-1448）
+local NO_STRAP_ERR = "attempted index: getClothingItemName of non-table: null java.lang.RuntimeException"
 
 -- PZ 的 instanceof：以 stub 物件的 __kind 欄位模擬
 function instanceof(obj, className)
@@ -44,7 +49,7 @@ end
 
 local prints, originalCalls, bootHandlers
 
--- opts.hand: nil＝空手；"gun"＝HandWeapon；"flashlight"＝非武器物品
+-- opts.hand: nil＝空手；"gun"＝HandWeapon；"flashlight"＝非武器物品；opts.strap：穿在 AMMO_STRAP 的物品
 local function newCharacter(opts)
     opts = opts or {}
     local c = { vars = {}, setVariableCalls = 0 }
@@ -58,6 +63,10 @@ local function newCharacter(opts)
         return c.primary
     end
     c.getPerkLevel = function(_, perk) return opts.perk or 0 end
+    c.getWornItem = function(_, location)
+        if location == ItemBodyLocation.AMMO_STRAP then return opts.strap end
+        return nil
+    end
     if not opts.noMoodles then
         c.getMoodles = function()
             return { getMoodleLevel = function(_, t) return opts.panic or 0 end }
@@ -75,11 +84,11 @@ local function newCharacter(opts)
     return c
 end
 
--- 模擬 vanilla setReloadSpeed：character.crashy 時重現 :95 的 call-nil
+-- 模擬 vanilla setReloadSpeed：character.crashy 時重現 :95 的 call-nil；character.crashMessage 換成指定訊息
 local function vanillaSetReloadSpeed(character, rack)
     originalCalls[#originalCalls + 1] = { character = character, rack = rack }
     if character.crashy then
-        error("Object tried to call nil in setReloadSpeed")
+        error(character.crashMessage or "Object tried to call nil in setReloadSpeed")
     end
     character:setVariable("ReloadSpeed", 42) -- 哨兵值，代表「vanilla 自己算的結果」
 end
@@ -255,6 +264,51 @@ for k in pairs(ISReloadWeaponAction) do
 end
 check("10 只新增 sentinel", #extra == 0, table.concat(extra, ","))
 check("10 既有成員保留", ISReloadWeaponAction.someOtherMember == "keep")
+
+-- ── 11. 已知壞形狀二（42.22）：沒穿彈藥背帶 ─────────────────────
+realPrint("[11] fallback：沒穿彈藥背帶、對 nil strap 取值")
+resetEnv()
+loadFix()
+c = newCharacter({ hand = "gun", perk = 4, panic = 2 })
+c.crashy, c.crashMessage = true, NO_STRAP_ERR
+ok = pcall(ISReloadWeaponAction.setReloadSpeed, c, false)
+check("11 不外洩例外", ok)
+check("11 速度=0.8+4*0.10-2*0.05=1.1（無背帶加成）", near(c.vars.ReloadSpeed, 1.1), tostring(c.vars.ReloadSpeed))
+check("11 印自己的診斷、不寫原版檔名行號", printCount("missing ammo strap") == 1 and not printed("non-firearm")
+    and not printed("ISReloadWeaponAction.lua"))
+c.vars.ReloadSpeed = nil
+pcall(ISReloadWeaponAction.setReloadSpeed, c, true)
+check("11 第二次（rack）仍 fallback 但不再印", near(c.vars.ReloadSpeed, 0.96) and printCount("missing ammo strap") == 1,
+    tostring(c.vars.ReloadSpeed))
+local torch = newCharacter({ hand = "flashlight", perk = 4, panic = 2 })
+torch.crashy = true
+pcall(ISReloadWeaponAction.setReloadSpeed, torch, false)
+check("11 兩種形狀的診斷各印一次", printCount("non-firearm") == 1 and printCount("missing ammo strap") == 1)
+
+resetEnv()
+loadFix()
+c = newCharacter({ hand = "gun", perk = 4, strap = { __kind = "Clothing" } })
+c.crashy, c.crashMessage = true, NO_STRAP_ERR
+okUnknown = pcall(ISReloadWeaponAction.setReloadSpeed, c, false)
+check("11 穿著背帶卻同樣拋錯 → 未知、重拋", not okUnknown and c.vars.ReloadSpeed == nil)
+
+resetEnv()
+loadFix()
+c = newCharacter({ hand = "gun", perk = 4 })
+c.crashy, c.crashMessage = true, "attempted index: getClothingItem of non-table: null"
+okUnknown = pcall(ISReloadWeaponAction.setReloadSpeed, c, false)
+check("11 沒穿背帶但錯誤不是 getClothingItemName → 未知、重拋", not okUnknown and c.vars.ReloadSpeed == nil)
+
+for _, msg in ipairs({ "attempted index: getClothingItemName of non-table: false java.lang.RuntimeException",
+    "getClothingItemName: invalid clothing data" }) do
+    resetEnv()
+    loadFix()
+    c = newCharacter({ hand = "gun", perk = 4 })
+    c.crashy, c.crashMessage = true, msg
+    okUnknown = pcall(ISReloadWeaponAction.setReloadSpeed, c, false)
+    check("11 沒穿背帶、同方法名但不是對 nil 取值（" .. msg .. "）→ 未知、重拋",
+        not okUnknown and c.vars.ReloadSpeed == nil and printed("NOT masking it") and not printed("missing ammo strap"))
+end
 
 -- ── 結果 ───────────────────────────────────────────────────────
 print = realPrint

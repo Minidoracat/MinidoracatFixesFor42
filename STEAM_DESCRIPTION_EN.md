@@ -16,6 +16,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [list]
 [*] Some animal corpses can never be butchered
 [*] Reloading does nothing with a non-firearm in hand and an ammo strap worn
+[*] Revolvers and shotguns won't reload while wearing a shoulder holster, chest rig or ALICE belt (42.22)
 [*] Server error when a petted animal just died or despawned
 [*] Milking produces nothing
 [*] Liquid vanishes when pouring into another container

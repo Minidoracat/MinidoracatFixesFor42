@@ -3,6 +3,28 @@
 本 MOD 每加一項修復，就在這裡登記一筆：症狀、根因、修法、驗證方式、可退場條件。
 「可退場」= 官方哪天修好了，就從 MOD 移除該檔並在此標記為已退場。
 
+## 42.22.2 對版（2026-11-10）
+
+以 42.22.2 原版 Lua 與反編譯快照 `42.22.2-20261109` 逐項比對 42.21.0（各節行號仍以標示的版本為準）；`check_vanilla_alignment.py` 77 條全部對齊。
+
+| 修復 | 42.22.2 | 依據 |
+|---|---|---|
+| `MDFX_ReloadSpeedGuard` | 還需要，**擴充**：42.22 新增一種原版錯誤（形狀二，見該節） | `ISReloadWeaponAction.lua:90`、`:100`／`:102` |
+| `MDFX_HutchNullSlotGuard` | 崩潰路徑官方已修（`IsoHutch.removeFromWorld` 判 null）；客戶端仍寫入 null 格，本修復仍在清，是否退場待裁定 | 見該節「42.22 對版」 |
+| `MDFX_HealthCheatPermission` | 還需要：42.22 官方補上了權限驗證，但參數不對時原版仍會出錯；本修復照樣安裝 | 見該節「42.22 對版」 |
+| `MDFX_ButcherMeatRatio` | 還需要：42.22 的 `ISButcherAnimal:complete` 多擋了已撿走的屍體，壞屍體仍在 `ButcheringUtil.lua:70` 出錯 | `ISButcherAnimal.lua:51-57` |
+| `MDFX_FarmingGosPrune` | 還需要；移出前的等待原本防的 chunk 讀寫競態，42.22 官方已補上，等待保留當保險 | 見該節「設計審查」 |
+| `MDFX_DeathSync` | 還需要：殭屍拖倒致死仍只在客戶端判定，42.22 的命中改動沒碰這條 | `PlayerHitReactionState`、`Bite` 兩版相同 |
+| 其餘現役 14 支、已退場 3 支 | 原版 Lua 檔沒改或改動與修復無關；依賴的 Java 類別沒改或只改行號，現役的還需要、已退場的仍不介入 | — |
+
+實機（42.22.2，`fixes-e2e` skill 的情境，輪次名 `fx4222-*`，跑完 33 輪；各輪判定寫在該 skill 的狀態表）：安裝面兩端沒有 `NOT installed`；
+修正組全部通過（裝彈兩種形狀的單人與多人、農作物同步、農作物存檔三件的單人與多人、餵水與動物動作、MOD 選項三種、雞舍、全域物件重複新增、
+充電器、多人死亡同步、健康作弊）。原版對照組（把修正檔拿掉）照樣重現的有：裝彈形狀二、農作物重複同步、餵水與動物動作、MOD 選項被清空、
+全域物件重複新增、充電器每幀重算、多人死亡沒同步、健康作弊參數不對時出錯；不再重現的有：雞舍卸載崩潰（42.22 官方已修）、失效房間崩潰（42.21 已修）、
+健康作弊的權限缺口（42.22 官方已修）。沒有實機重現的（封包重建時物件剛好消失這類時序）照舊只驗安裝面與離線測試：撫摸、擠奶、倒液體、換裝、擺家具、鎖車門、屠宰。
+裝彈形狀一與多人死亡同步的修正組第一次沒過，原因都在情境（探針把被接住的原版錯誤算成失敗；這次的伺服器範本沒有進場隱身，角色太早被殺），改情境後重跑通過。
+死亡同步第一次那輪，走原版路徑的 B 屍體在死後 6.5 秒就不在了（推測是被咬死後屍變，沒有直接證據），重跑那輪 3 秒與 12 秒都在；和本修復無關（B 不經過修復），記在 skill 的情境專屬坑。
+
 ---
 
 ## MDFX_ButcherMeatRatio — 屠宰壞屍體（modData 缺 `meatRatio`）
@@ -127,12 +149,12 @@ carcass=nil 時診斷不再進 `pcall` 取 `AnimalType`：正式服 42.21 實見
 
 ---
 
-## MDFX_ReloadSpeedGuard — `setReloadSpeed` 對「手持非槍械」缺防護
+## MDFX_ReloadSpeedGuard — `setReloadSpeed` 對「手持非槍械」與「沒穿彈藥背帶」缺防護
 
 | 項目 | 內容 |
 |------|------|
 | 檔案 | `shared/Fixes/MDFX_ReloadSpeedGuard.lua` |
-| 影響版本 | Build 42.20.4 |
+| 影響版本 | 形狀一（手持非槍械）Build 42.20.4 起；形狀二（穿 `RELOAD_FAST_MAGAZINES` 裝備、沒穿彈藥背帶）Build 42.22.0 起，42.22.2 仍在 |
 | 端 | shared（server／client／單人同一段程式碼同一爆點，三端都保護） |
 | 狀態 | **現役** |
 
@@ -145,6 +167,11 @@ carcass=nil 時診斷不再進 `pcall` 取 `AnimalType`：正式服 42.21 實見
 java.lang.RuntimeException: Object tried to call nil in setReloadSpeed
   Lua(Vanilla).setReloadSpeed(ISReloadWeaponAction.lua:95)
 ```
+
+42.22 起另一種：穿肩掛槍套、胸掛或 ALICE 腰帶吊帶，沒穿彈藥背帶時，裝填左輪、散彈槍、
+栓動步槍等不吃彈匣的槍（或手拿近戰武器對彈匣裝子彈）一開始就出錯：
+`attempted index: getClothingItemName of non-table: null`，一顆都裝不進去，之後裝彈動作每幀再出一個錯誤，直到動作被取消
+（42.22.2 實機對照組，見「驗證」）。官方論壇 42.22.0 已有回報（topic 102797，ALICE 腰帶吊帶＋左輪）。
 
 ### 根因
 
@@ -166,11 +193,13 @@ server 端 `serverStart()`（:69-78）→ `initVars()`（:53-55）→ `setReload
 直到 timeout。單人與 MP 客戶端走 `start()` → `initVars()`（:23）同樣會炸，
 所以修在 shared。
 
-順帶記錄一個**尚未修**的隔壁地雷：:100/:102 在 `reloadFast` 為 true、沒穿背帶時
-`strap:getClothingItemName()` 對 nil 解參考。要到達那裡需要手持 shell/bullets
-型**槍械**＋帶 RELOAD_FAST tag＋沒穿背帶＋tag 細項全不匹配，實戰 log 零實據。
-該形狀手持的是槍械、不吻合本補丁的辨識條件，會走「重拋」路徑原樣暴露——
-刻意不擴大承接範圍。
+42.22 的 :88／:90 多看 `RELOAD_FAST_MAGAZINES`：:88 看手上（`hasEquippedTag`），:90 的 gate 另加
+`character:hasWornTag(ItemTag.RELOAD_FAST_MAGAZINES)`（`IsoGameCharacter.java:5099`，看身上穿的）。
+原版帶這個標籤的是 `HolsterShoulder`（shoulderholster）、`Bag_ChestRig`(`_Tarp`)、`Bag_ALICE_BeltSus`(`_Camo`、`_Green`)（webbing），
+都不在 `AMMO_STRAP`。穿著它們、沒穿彈藥背帶時 gate 也會進來；槍吃彈匣就在 :98 結束，
+不吃彈匣時（散彈槍走 :100，左輪、栓動步槍與手持近戰武器走 :102）前面的標籤都不符，
+就對 nil 的 `strap` 呼叫 `getClothingItemName()`（**形狀二**）。42.21 這兩行也在，但要手上拿著
+帶 `RELOAD_FAST_*` 標籤的東西才進得來，正式服沒有紀錄；42.22 起一般裝備就會踩到。
 
 ### 修法
 
@@ -180,12 +209,16 @@ Reload／Eject／Insert／LoadBullets／UnloadFirearm／UnloadMagazine 的 initV
 
 1. 先 `pcall` 原函式，成功即結束——**正常玩家的裝彈速度公式一個位元都沒動**，
    vanilla 更新公式時正常路徑自動跟進。
-2. 原函式拋出時**正面辨識已知壞形狀**：手持物存在且
-   `not instanceof(gun, "HandWeapon")`。吻合才以 vanilla `:76-83`／`:109-112`
+2. 原函式拋出時**正面辨識已知壞形狀**：
+   - 形狀一：手持物存在且 `not instanceof(gun, "HandWeapon")`；
+   - 形狀二：`getWornItem(ItemBodyLocation.AMMO_STRAP)` 是 nil，而且錯誤訊息含 Kahlua 對 nil 取值的完整訊息
+     `attempted index: getClothingItemName of non-table: null`（`KahluaThread.java:1134-1137`；只比方法名稱會連別的 `getClothingItemName` 錯誤一起吞掉）。
+   吻合才以 vanilla `:76-83`／`:109-112`
    的「無背帶加成」語意重算：`0.8 ＋ 裝填技能×0.10 － 恐慌×0.05`（rack 時
-   `＋技能×0.04`、不扣恐慌）、駕駛中再 `×0.8`，寫入 `ReloadSpeed` 後印一次
-   診斷。背帶那段（:85-108）本來就只對「手持槍械」有意義，跳過它是這個
-   形狀下的正確語意，不是少算。重算再失敗整體退 1.0（下游
+   `＋技能×0.04`、不扣恐慌）、駕駛中再 `×0.8`，寫入 `ReloadSpeed` 後各印一次
+   診斷（兩種形狀分開）。形狀一：背帶那段（:85-108）本來就只對「手持槍械」有意義，跳過它是這個
+   形狀下的正確語意，不是少算。形狀二：走到 strap 取值＝前面的標籤都不符，沒穿背帶時原版本來就是
+   無加成，fallback 等於原版本來要給的值。重算再失敗整體退 1.0（下游
    `getReloadTime`（:70）`getVariableFloat("ReloadSpeed", 1.0)` 的預設值），
    不用算到一半的值。
 3. 原函式因**其他原因**拋出（未來版本的新問題、或連辨識都失敗）→ 印一次
@@ -200,38 +233,66 @@ vanilla 改係數會被抓到。
 server 端能連炸 7 次到 :95 也順帶證明了 fallback 用的
 `getMoodles()`／`getPerkLevel()` 在 server 端安全（:79-:82 每次都先執行過）。
 
+**已知限制：原版的錯誤堆疊照樣進 log**。Kahlua 在拋出的當下就把錯誤與 Lua 堆疊寫進 log、錯誤計數加一，`pcall` 接住也一樣
+（`KahluaThread.java:893-896`；家族 `pitfalls.md`「包在 `pcall` 裡只會印一段堆疊」）。所以每次走 fallback，`console.txt`／
+`server-console.txt` 仍有一段 `setReloadSpeed` 的原版堆疊（堆疊裡多一框 `MDFX_ReloadSpeedGuard.lua` 的 `wrapper`），裝彈照常完成；
+本 MOD 自己的診斷才是一 session 一次。2026-11-10 42.22.2 實機 `fx4222-reload-sp` 的 `client1/console.txt` 可見。玩家畫面沒有提示（錯誤計數在原版只有
+除錯用的錯誤視窗 `DebugErrorsWindow.lua` 在讀）。要讓堆疊消失得改成「先判斷、不呼叫原版」，那要把原版 :86-:104 的分支抄進來，沒做。
+看 log 數原版錯誤時，帶 `wrapper(MDFX_ReloadSpeedGuard.lua` 這一框的是已被接住的。
+
 **安裝機制**：sentinel 存 wrapper 自身引用；`Core.ResetLua` 重載時重新包裝、
 後載 MOD 整支替換時 `OnGameBoot` 復查把「他的版本」當新 original 再包一層。
 與另兩檔同款，詳見 MDFX_ButcherMeatRatio 節。
 
 ### 驗證
 
-`lua scripts/test_reload_speed_guard.lua` — 29 項，全綠。涵蓋：原函式成功時
+`lua scripts/test_reload_speed_guard.lua` — 38 項，全綠。涵蓋：原函式成功時
 完全透傳（不重算、不多寫變數、不印診斷）、已知壞形狀 fallback 三種精確值
 （rack=false：`0.8+4×0.10−2×0.05=1.1`；rack=true：`0.8+5×0.04=1.0` 恐慌不參與；
 駕駛：`×0.8`）、診斷恰一次、未知原因（手持槍械卻拋／辨識自身拋錯／空手拋錯）
 原樣重拋且不寫變數、fallback 也炸整體退 1.0、`setVariable` 拋錯不外洩、
 重複載入不疊、後載 MOD 替換後復查重裝（正常路徑透傳到替換版＋壞形狀恢復被擋）、
-vanilla 缺席不亂補、成員快照。
+vanilla 缺席不亂補、成員快照；形狀二：手持槍械、沒穿背帶、對 nil 取 `getClothingItemName` 的錯誤走 fallback（rack 與否都對），
+兩種形狀的診斷各印一次、新的診斷不寫原版檔名行號；穿著背帶卻同樣拋錯、沒穿背帶但錯誤不是 `getClothingItemName`、
+或方法名稱相同但不是對 nil 取值（`non-table: false`、其他訊息）都原樣重拋。
 
-**mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`）：
+**mutation 驗證**（`抽掉防線 → 對應檢查轉紅 → 還原全綠`；2026-11-10 對現行 38 項重量）：
 
 | 突變 | 轉紅 |
 |------|------|
-| 抽掉 `pcall` 保護 | 4 項（例外外洩、fallback 缺席） |
-| 辨識永真（吞掉一切 exception） | 6 項（未知原因該重拋的全部失守） |
-| fallback 係數 0.10→0.20 | 2 項（精確值 1.5≠1.1） |
+| 抽掉 `pcall` 保護（直接呼叫原函式） | 測試在第 [3] 節中斷（例外外洩） |
+| 辨識永真（吞掉一切 exception） | 10 項（未知原因該重拋的全部失守） |
+| fallback 係數 0.10→0.20 | 4 項（精確值 1.5≠1.1） |
 | OnGameBoot 復查永遠自認在位 | 1 項（替換後 guard 未恢復） |
+| 形狀二不看有沒有穿背帶 | 1 項（穿著背帶的同樣錯誤被吞） |
+| 形狀二不看錯誤訊息 | 7 項（別的錯誤被吞） |
+| 形狀二只比方法名稱 | 2 項（同方法名、不是對 nil 取值的錯誤被吞） |
+| 拿掉形狀二 | 5 項（42.22 的錯誤外洩） |
+| 兩種形狀共用一次診斷旗標 | 1 項（第二種形狀不印） |
+| 形狀二印形狀一的訊息 | 3 項 |
 
 遊戲內：手持手電筒＋穿彈藥背帶對彈匣裝彈——修復前 log 出現
 `Object tried to call nil in setReloadSpeed` 且裝彈無反應；修復後裝彈正常完成、
 log 出現一行 `[MinidoracatFixes] setReloadSpeed crashed ... fallback`。
 手持槍械正常裝彈速度不變。
 
+形狀二實機（2026-11-10，42.22.2，`fixes-e2e` skill 的 `reload-strap --define kit=holster`：穿肩掛槍套、沒穿彈藥背帶、手持空的左輪，走原版介面裝 6 顆）：
+
+- 對照組（修正檔拿掉）單人 `fx4222-rlh-ctl-sp`、多人 `fx4222-rlh-ctl-mp`：`start()` → `initVars()` → `setReloadSpeed`（`ISReloadWeaponAction.lua:102`）
+  拋 `attempted index: getClothingItemName of non-table: null`，多人伺服器的 `serverStart()`（:164）同樣拋；20 秒內一顆都沒裝進去，
+  之後 `update`（:13）每幀再拋 `__sub not defined for operands`（單人 20 秒約 4,800 次，console.txt 開頭被洗掉，完整記錄在 `launcher.txt`）。
+- 修正組單人 `fx4222-rlh-sp-final`、多人 `fx4222-rlh-mp-final`：`ReloadSpeed=0.800` 等於無背帶公式，6 顆裝滿、子彈扣 6 顆；診斷行
+  `setReloadSpeed crashed on a missing ammo strap` 每端恰一行（多人的伺服器與客戶端各一行），沒有 `NOT masking it`。
+
+形狀一同日在 42.22.2 重跑（`kit=strap`：彈藥背帶＋手持手電筒，對彈匣裝 5 顆）：單人 `fx4222-reload-sp2`、多人 `fx4222-reload-mp2` 都 PASS，
+診斷行 `setReloadSpeed crashed on a non-firearm` 每端恰一行。
+
 ### 可退場條件
 
-官方在 :95 前檢查手持物是否槍械（`check_vanilla_alignment.py` 對
+形狀一：官方在 :95 前檢查手持物是否槍械（`check_vanilla_alignment.py` 對
 `instanceof(gun, "HandWeapon")` 形狀有 exithint），或改用基類安全的查法。
+形狀二：官方在 :100／:102 對 `strap` 判 nil（exithint：`strap and strap:getClothingItemName()`）。
+兩種都修好才移出；只修一種時，把那一種的辨識拿掉。
 
 ---
 
@@ -614,8 +675,9 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
   原版 55 種作物有 11 種帶 bane。
 - B 的 priority 從 6 改成 4242：同 priority 會互相取代（`MapObjects.java:148-151`），6 是
   「比原版高一格」最常見的選擇，被別的 MOD 取代時 hook 會靜默消失。
-- B 的等待理由是 `ServerChunkLoader` 的競態：已被存檔執行緒拿走、正在寫的 chunk 不會被之後的讀取
-  等待；再加 30 秒真實時間，是因為全員睡覺快轉時 10 遊戲分鐘可能不到 1 秒。
+- B 的等待理由原本是 `ServerChunkLoader` 的競態：42.21 已被存檔執行緒拿走、正在寫的 chunk 不會被之後的讀取
+  等待。42.22 起讀 chunk 時改拿存檔執行緒手上那份（`ServerChunkLoader` `getPendingChunkData`，佇列與正在寫的都找），
+  這個競態已由官方補上；等待保留當保險，程式不改。再加 30 秒真實時間，是因為全員睡覺快轉時 10 遊戲分鐘可能不到 1 秒。
 - A 只往前調：時鐘由 C 還原後，最後一次存檔之後才卸載的 chunk 可能帶著略新的 `lastWaterHour`，
   照原版無條件寫會把本來幾小時後就要長的作物往後延幾百小時。
 
@@ -623,10 +685,10 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 
 - **移出期間，dead／rotten 每 10 遊戲分鐘 1/5000 變成 destroyed 的外觀轉換暫停**，格子再載入後照常。
   這也讓它們較晚進入 `plowFadeCheck` 的清除範圍。這是本修復唯一看得到的行為差異，使用者已同意。
-- **移出之後 chunk 是唯一的來源**：chunk 存檔失敗（`ServerChunkLoader.java:449-463` 只記 log；
-  `IsoChunk.java:4280-4282` 先記 checksum 再寫檔，之後同內容的存檔會被跳過），或改過的客戶端在最後一次
+- **移出之後 chunk 是唯一的來源**：chunk 存檔失敗（`ServerChunkLoader` 存檔執行緒只記 log），或改過的客戶端在最後一次
   掃描到卸載之間改了那格的 modData（`ObjectModDataPacket.java:21-27,46-58` 不驗來源），重建出來的就是
-  那份內容。原版客戶端不送農作物 modData。
+  那份內容。原版客戶端不送農作物 modData。42.21 另有「`IsoChunk` 先記 checksum 再寫檔、之後同內容的存檔被跳過」，
+  42.22 起專用伺服器的卸載與存檔改走 `ServerChunkLoader.writeChunk`（先寫檔再記 checksum），不再適用。
 - **整個 MOD 移除時**，被移出、所在區域之後沒再載入過的踩爛／已收成作物會變回原版的孤兒；
   dead／rotten 會由原版 `LoadPlant` 走 `stateFromIsoObject` 重新登記。移出部分可以先單獨退場，
   重建部分要等官方替 trampledSprite 註冊 OnLoad。三份 Workshop 描述都有寫。
@@ -653,7 +715,8 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 | `test_farming_stall_heal.lua` | 72 | 拿掉 seeded 判斷、兩個觸發條件、LIMIT 的 ×10／+12／+50／rotTime、FastGrow、pcall、marker、「只往前」、「lastWaterHour 領先才重設」、原版來源檢查（整段、`/mods/`、反斜線、大小寫、檔名、pcall）等，共 32 項 |
 
 `python scripts/check_vanilla_alignment.py` 為三支登記了爆點、依賴符號與公式係數（`SandboxOptions.java:232`
-的 FarmingSpeedNew 下限 0.1 是 Java，腳本查不到，記在 `MDFX_FarmingStallHeal.lua` 檔頭）。
+的 FarmingSpeedNew 下限 0.1 是 Java，腳本查不到，記在 `MDFX_FarmingStallHeal.lua` 檔頭）；42.22.2 起另以 `javap` 登記
+兩條 Java 前提：`SliceY` 的 10,485,760 byte 緩衝、`SGlobalObjectSystem.save()` 先開 `FileOutputStream` 才序列化。
 
 **實機**（`fixes-e2e` 的 `farming-gos`，no-Steam 專用伺服器＋MP 客戶端，同一輪兩個場次；另跑一次單人）：
 時鐘先設 30000 模擬老伺服器，在 Muldraugh 蓋 25 株（生長中 4、枯死 4、腐爛 4、踩爛 4、已收成 4、翻土 2，
@@ -1370,9 +1433,18 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 只在伺服器、`getAnimalInside`／`getAnimal(Integer)`／`getDeadBody(Integer)`／`isSlave`、`MapObjects.OnLoadWithSprite(KahluaTable, …)`、
 `IsoChunk` 分派 `MapObjects.loadGridSquare`、`AddItemToMapPacket` 觸發 `OnObjectAdded`、`IsoGridSquare.getHutch`）與 `HutchDefinitions.lua` 的圖塊欄位。
 
+### 42.22 對版
+
+- **崩潰路徑官方已修**：42.22.2 `IsoHutch.removeFromWorld`（`IsoHutch.java:1016-1025`）與 `releaseAllAnimals`（`:1036-1044`）
+  先判 null 才用；官方 QA 在論壇也說雞舍崩潰在 42.22 已修（topic 102995「Chicken Hutch Crash」）。`check_vanilla_alignment.py`
+  改登記成 retired 指紋（官方判 null 還在）。
+- **成因還在**：客戶端仍寫入 null 格（`NetworkPlayerAI.java:392`、`AnimalUpdatePacket.java:197`）。原版雞舍選單「已滿」
+  （`ISHutchMenu.lua:57`）與畜牧區動物數（`ISDesignationAnimalZoneUI.lua:286`）照樣把 null 格算進去，本修復照樣把 null 清掉。
+- 照下方退場條件已可移出，但移出後「沒滿卻顯示已滿」會回來（2026-10-03 使用者同意的差異），是否退場待使用者裁定，見知識庫 `open-issues.md`。
+
 ### 可退場條件
 
-官方在 `IsoHutch.removeFromWorld` 略過 null（`check_vanilla_alignment.py` 有 exithint），或客戶端兩條同步路徑改成 remove 舊格、
+官方在 `IsoHutch.removeFromWorld` 略過 null（42.22 已達成），或客戶端兩條同步路徑改成 remove 舊格、
 不再 put null。只修後者時，已載入的雞舍裡還有 null，要等玩家重新載入那一帶；兩者擇一修好即可移出。
 
 ---
@@ -1590,7 +1662,7 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 | 項目 | 內容 |
 |------|------|
 | 檔案 | `shared/Fixes/MDFX_DeathSync.lua` |
-| 影響版本 | Build 42.21.0 實測（反編譯快照 `42.21.0-20260928`；`projectzomboid.jar` sha256 `e1a69eb7…`） |
+| 影響版本 | Build 42.21.0 實測（反編譯快照 `42.21.0-20260928`；`projectzomboid.jar` sha256 `e1a69eb7…`）；Build 42.22.2 仍在（2026-11-10 實機，見「驗證」） |
 | 端 | 多人：客戶端送指令、dedicated server 處理（兩半在同一檔，執行期以 `isClient()`／`isServer()` 分流）；單人不作用 |
 | 類型 | 原版**多人死亡同步缺口**：伺服器沒處理到的死亡，由死者自己的客戶端通知後，照原版伺服器路徑補上 |
 | 狀態 | **現役**（42.21.0-0.16.0 起） |
@@ -1697,6 +1769,15 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 `ds-fix-1029e`（arm 步驟還沒有 NEED），結果相同。死後 3 秒與 12 秒兩次查詢之間（伺服器時間相隔約 9.5 秒）存活時數增加 0.064 遊戲小時＝一遊戲小時
 約 149 秒，和沙盒換算相符。更早的 `ds-fix-1029a`～`c` 是舊版（沒有存活時數這道、或用死亡點距離），結果不再引用。
 
+42.22.2（2026-11-10，同一份情境加上「A 先活過最小存活時間」的等待；這次用的伺服器範本一天 90 分鐘，門檻 0.133 遊戲小時）：
+
+- 對照組 `fx4222-death-ctl`：伺服器角色 12 秒時仍 `dead=false hp=1.00`、屍體 0；按重生被拒（`Coop player 1/4 already exists`），`players[0]` 68 秒都是 nil。
+  原版在 42.22.2 沒有修這條。（這一輪的 RESULT 是 `INCONCLUSIVE`：當時情境還沒有那段等待，A 的存活時間前提不成立；這個前提只影響修正組。）
+- 修正組 `fx4222-death-fix2`：A 7 項、B 6 項全過。A：`processed a death the server missed … n=1`、`user test died at (10722,9727,0) (non pvp)`、屍體 1 具、
+  12 件物品各恰一份、重生正常，舊回報 `ignored … alive 0.001 game hours (< 0.133)`。B 走原版路徑、沒有補丁行，14 件物品各恰一份。
+- 42.22 的伺服器 `die()` 改呼叫 `dropHeldItemsServer()`（`IsoGameCharacter.java:14872-14892`），手上的東西照樣掉在地上、物品守恆不變；
+  `GameServer.java:905-916` 新增「延遲斷線佇列裡已死亡的玩家補 `die()`」，和本修復不衝突（本修復只處理伺服器上還活著的角色）。
+
 ### 可退場條件
 
 官方讓伺服器處理客戶端判定的死亡（例如拖倒致死改由伺服器判定，或客戶端死亡時送死亡封包），或 `ConnectCoopPacket` 遇到舊角色還活著時
@@ -1713,7 +1794,7 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 | 影響版本 | Build 42.21.0 實測（原版 `media/lua/server/ClientCommands.lua` sha256 `c9de3d3024a46e2b…`；反編譯快照 `42.21.0-20260928`） |
 | 端 | 多人伺服器（dedicated server 與合作主機的伺服器程序；本檔放 `shared/` 只為了比原版 `server/` 先載入，客戶端與單人不作用） |
 | 類型 | 原版**伺服器指令的驗證缺口**：沒有 `UseHealthCheat` 的寄件者不能用健康作弊；參數不對不再讓原版丟錯 |
-| 狀態 | **現役**（未發布） |
+| 狀態 | **現役**（42.21.0-0.17.0 起） |
 
 > 本條是安全修正：依家族保密規則（`pz-family-docs/conventions.md`「保密紅線」與內容歸宿表），原版缺口的細節、繞過方式與正式服紀錄只寫在本機知識庫，
 > 這裡只記修法、驗證與退場條件。
@@ -1800,9 +1881,22 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 伺服器的拒絕與壞參數 log 行數符合 skill 的判定，`SERVER STARTED` 之後零例外。對照組用加入本補丁前的版本（`--rev MinidoracatFixesFor42=dc709c1`，
 `fixes-hc-ctl-1107a`）：`RESULT FAIL class=check`，原版缺口重現，壞參數讓伺服器丟 Lua 錯誤。
 
+### 42.22 對版
+
+42.22 官方已在原版指令補上權限驗證，管理員對別人用健康面板時也改由伺服器直接處理；細節照保密規則只寫在本機知識庫
+`server-commands.md`。參數仍沒有驗證：2026-11-10 實機 `fx4222-hc-ctl`（42.22.2、修正檔拿掉）一般帳號改不了別人與自己，
+但管理員送出 5 個參數不對的請求後，伺服器的 Lua 錯誤計數由 0 增加到 20。本修復在 42.22.2 照樣安裝（分派器形狀沒變），被拒的請求照樣記一行、
+參數不對照樣擋下；轉送票只在 42.21 有作用。退場條件還沒達成，照舊保留。`check_vanilla_alignment.py` 把權限檢查改登記成 retired 指紋（官方驗證還在）。
+
+修正組實機（2026-11-10，42.22.2，`fx4222-hc-fix`，情境已照 42.22 的原版行為改寫）：兩個客戶端 `RESULT PASS`（管理員 8 項、一般帳號 7 項）；
+5 個參數不對的請求伺服器 Lua 錯誤 0 → 0、各記一行；一般帳號的請求被拒並記錄；管理員對自己、對別人照原版生效。
+已知差異：管理員剛對某位玩家用過健康面板後 30 秒內，那位玩家自己送出同部位、同動作的請求時，本修復把它當成 42.21 的轉送交給原版，
+原版照樣拒絕（不改任何人），只是這一筆不記 `denied`。
+
 ### 可退場條件
 
-官方讓 `onHealthCheatCurrentPlayer` 自己驗證權限與參數，而且管理員對別人作弊的轉送路徑仍可用。`check_vanilla_alignment.py` 的前提條目轉 CHANGED 或退場提示出現時，
+官方讓 `onHealthCheatCurrentPlayer` 自己驗證權限與參數，而且管理員對別人作弊的轉送路徑仍可用（42.22 的狀態見上一節）。
+`check_vanilla_alignment.py` 的前提條目轉 CHANGED 或退場提示出現時，
 重跑 E2E `health-cheat` 拿掉修正檔的那一輪：一般帳號改不了別人、管理員三項照樣過、壞參數不丟錯，就移出本檔。
 
 ---

@@ -22,7 +22,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | 修復 | 端 | 症狀 |
 |------|----|------|
 | `MDFX_ButcherMeatRatio` | server | 屠宰某些動物屍體（modData 缺 `meatRatio`，多為動物 MOD 產物）時 `ButcheringUtil.lua:70` 串接 nil 拋錯，連鎖 NetTimedAction NPE；玩家花完整段動作一塊肉都拿不到，該動物永遠屠宰不了 |
-| `MDFX_ReloadSpeedGuard` | shared | 手持非槍械物品＋穿彈藥背帶（或 RELOAD_FAST 裝備）對彈匣裝彈，`ISReloadWeaponAction.lua:95` 對非武器呼叫 `getMagazineType` 拋錯；裝彈流程沒開始就中斷，「按了沒反應」 |
+| `MDFX_ReloadSpeedGuard` | shared | 手持非槍械物品＋穿彈藥背帶（或 RELOAD_FAST 裝備）對彈匣裝彈，`ISReloadWeaponAction.lua:95` 對非武器呼叫 `getMagazineType` 拋錯；42.22 起穿肩掛槍套、胸掛或愛麗絲揹帶、沒穿彈藥背帶時，裝填左輪、散彈槍等不吃彈匣的槍，`:100`／`:102` 對 nil 的背帶取值拋錯。兩種都讓裝彈流程沒開始就中斷，「按了沒反應」 |
 | `MDFX_PetAnimalGuard` | server | 撫摸動作送到伺服器時動物已死亡／卸載，3 秒後 `ISPetAnimal.lua:88` 對 nil 拋錯；比照 vanilla 自家寫法乾淨結束動作 |
 | `MDFX_WorldObjectCheckWeapon` | server | **已退場**（42.21 官方把 `checkWeapon` 搬到 shared 的 `ItemUtils.checkWeapon`；補丁偵測到就不安裝，保留為 regression 保險）。42.20.4：工具在最後一擊剛好用壞時，`ISWorldObjectContextMenu.checkWeapon` 在 dedicated server 上不存在，`ISDestroyStuffAction.lua:312`／`ISPickUpGroundCoverItem.lua:35`／`ISRemoveBush.lua:79` 拋錯；動作沒收尾、壞工具不卸裝 |
 | `MDFX_MilkAnimalGuard` | server | 桶子已不是流體容器時 `ISMilkAnimal.lua:70` 對 nil 解參考；擠奶動畫演完、桶子沒有奶 |
