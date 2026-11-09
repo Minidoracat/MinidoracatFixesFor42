@@ -39,9 +39,13 @@ null 與「沒有這個 key」對原版的 get() 等價；拿掉後 size() 只�
 GameClient.update 在 IngameState.updateInternal 之前、OnTick 在之後（GameWindow.java:284-363）：
 同一幀內剛寫進 null 又剛好卸載那座雞舍時，仍走原版崩潰路徑。null 格裡有屍體時不清。
 
+【42.22】
+IsoHutch.removeFromWorld 改成先判 null（IsoHutch.java:1016-1025），崩潰路徑官方已修；上面兩條寫 null 的同步路徑沒改
+（NetworkPlayerAI.java:392、AnimalUpdatePacket.java:197）。本補丁在 42.22 剩下的作用是讓「已滿」判斷與畜牧區動物數不算 null 格。
+
 【退場條件】
-官方在 IsoHutch.removeFromWorld 略過 null，或客戶端同步改成 remove 舊格、不再 put null。
-遊戲更新後跑 `python scripts/check_vanilla_alignment.py`（本修復登記的是 Java 指紋）。
+客戶端兩條同步路徑改成 remove 舊格、不再 put null。只在 IsoHutch.removeFromWorld 略過 null（42.22 已做）不算：
+null 格還在，size() 照樣多算。遊戲更新後跑 `python scripts/check_vanilla_alignment.py`（本修復登記的是 Java 指紋）。
 ]]
 
 if MDFX_HutchNullSlotGuard then return end

@@ -19,6 +19,7 @@ description=[h2]🐛 Currently included[/h2]
 description=[list]
 description=[*] Some animal corpses can never be butchered
 description=[*] Reloading does nothing with a non-firearm in hand and an ammo strap worn
+description=[*] Revolvers and shotguns won't reload while wearing a shoulder holster, chest rig or ALICE belt (42.22)
 description=[*] Server error when a petted animal just died or despawned
 description=[*] Milking produces nothing
 description=[*] Liquid vanishes when pouring into another container

@@ -10,7 +10,7 @@
 | 修復 | 42.22.2 | 依據 |
 |---|---|---|
 | `MDFX_ReloadSpeedGuard` | 還需要，**擴充**：42.22 新增一種原版錯誤（形狀二，見該節） | `ISReloadWeaponAction.lua:90`、`:100`／`:102` |
-| `MDFX_HutchNullSlotGuard` | 崩潰路徑官方已修（`IsoHutch.removeFromWorld` 判 null）；客戶端仍寫入 null 格，本修復仍在清，是否退場待裁定 | 見該節「42.22 對版」 |
+| `MDFX_HutchNullSlotGuard` | 崩潰路徑官方已修（`IsoHutch.removeFromWorld` 判 null）；客戶端仍寫入 null 格，本修復保留，繼續清（使用者 2026-11-10 裁定，退場條件已改） | 見該節「42.22 對版」 |
 | `MDFX_HealthCheatPermission` | 還需要：42.22 官方補上了權限驗證，但參數不對時原版仍會出錯；本修復照樣安裝 | 見該節「42.22 對版」 |
 | `MDFX_ButcherMeatRatio` | 還需要：42.22 的 `ISButcherAnimal:complete` 多擋了已撿走的屍體，壞屍體仍在 `ButcheringUtil.lua:70` 出錯 | `ISButcherAnimal.lua:51-57` |
 | `MDFX_FarmingGosPrune` | 還需要；移出前的等待原本防的 chunk 讀寫競態，42.22 官方已補上，等待保留當保險 | 見該節「設計審查」 |
@@ -1444,12 +1444,14 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
   改登記成 retired 指紋（官方判 null 還在）。
 - **成因還在**：客戶端仍寫入 null 格（`NetworkPlayerAI.java:392`、`AnimalUpdatePacket.java:197`）。原版雞舍選單「已滿」
   （`ISHutchMenu.lua:57`）與畜牧區動物數（`ISDesignationAnimalZoneUI.lua:286`）照樣把 null 格算進去，本修復照樣把 null 清掉。
-- 照下方退場條件已可移出，但移出後「沒滿卻顯示已滿」會回來（2026-10-03 使用者同意的差異），是否退場待使用者裁定，見知識庫 `open-issues.md`。
+- **保留**（使用者 2026-11-10 裁定）：照原本「兩者擇一」的退場條件已可移出，但移出後「沒滿卻顯示已滿」會回來（2026-10-03 使用者同意的差異）。
+  本修復在 42.22 的作用只剩這一項；退場條件改成下方寫的那一條。
 
 ### 可退場條件
 
-官方在 `IsoHutch.removeFromWorld` 略過 null（42.22 已達成），或客戶端兩條同步路徑改成 remove 舊格、
-不再 put null。只修後者時，已載入的雞舍裡還有 null，要等玩家重新載入那一帶；兩者擇一修好即可移出。
+官方讓客戶端兩條同步路徑（`NetworkPlayerAI.parse(AnimalPacket)`、`AnimalUpdatePacket.parse`）改成 remove 舊格、不再 put null。
+`IsoHutch.removeFromWorld` 略過 null（42.22 已達成）只解決崩潰，不算退場條件：null 格還在，「已滿」判斷與畜牧區動物數照樣多算。
+官方修好後，已載入的雞舍裡還有 null，要等玩家重新載入那一帶才消失。`check_vanilla_alignment.py` 登記了兩條寫入路徑的指紋，轉 CHANGED 時回頭看。
 
 ---
 

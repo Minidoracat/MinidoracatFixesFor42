@@ -146,7 +146,8 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Side effect[/b]: the "hutch full" check and the animal-zone count no longer count empty slots (vanilla counted them).
 [*] [b]Log[/b]: when it acts, console.txt shows [MinidoracatFixes] MDFX_HutchNullSlotGuard removed null slot(s).
 [*] [b]Scope[/b]: each player's game in MP only; servers and SP aren't affected. Players get it when the server updates the mod.
-[*] [b]Retired[/b]: once vanilla skips empty slots on unload, or its sync stops leaving them.
+[*] [b]Build 42.22[/b]: vanilla fixed the disconnect on unload; the empty slot records are still left behind. This fix stays and keeps clearing them, so the "hutch full" check and the animal count stay correct.
+[*] [b]Retired[/b]: once vanilla's MP sync stops leaving empty slot records.
 [/list]
 === 🧰 Mod settings & battery charger performance
 [h3]Mod settings reset to defaults after a restart, or all vanish at once[/h3]
