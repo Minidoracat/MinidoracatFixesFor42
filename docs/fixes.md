@@ -172,6 +172,10 @@ java.lang.RuntimeException: Object tried to call nil in setReloadSpeed
 栓動步槍等不吃彈匣的槍（或手拿近戰武器對彈匣裝子彈）一開始就出錯：
 `attempted index: getClothingItemName of non-table: null`，一顆都裝不進去，之後裝彈動作每幀再出一個錯誤，直到動作被取消
 （42.22.2 實機對照組，見「驗證」）。官方論壇 42.22.0 已有回報（topic 102797，ALICE 腰帶吊帶＋左輪）。
+正式服 log 實據：2026-11-09 升到 42.22.2 後的第一個場次（約 85 分鐘）出現 20 次，都在 `:100`（散彈槍），13 次由裝彈
+（`ISReloadWeaponAction:serverStart`）、7 次由上膛（`ISRackFirearm:serverStart`）進來；當時線上的 0.17.0 還不認得這種形狀，
+照設計印一行 `NOT masking it (re-throwing): attempted index: getClothingItemName of non-table: null java.lang.RuntimeException` 後原樣重拋
+（這串就是形狀二辨識比對的實際訊息）。之後三個深夜場次是 0 次。
 
 ### 根因
 
