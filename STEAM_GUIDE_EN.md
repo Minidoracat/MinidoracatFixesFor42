@@ -208,6 +208,16 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Scope[/b]: in MP it runs on the server and takes effect once the server updates the mod and restarts; in SP it takes effect once you update the mod.
 [*] [b]Retired[/b]: once vanilla (in SP and on servers) clears worn items itself when they leave your inventory, and servers stop re-creating worn items from the list your game sends.
 [/list]
+=== 🧰 A boulder with missing pieces can't be destroyed
+[h3]Large objects with missing pieces (for example a boulder that only half spawned) can't be destroyed with a sledgehammer[/h3]
+[list]
+[*] [b]Symptom[/b]: an object that covers several squares (a 2x2 boulder, a two-square bench and the like) is missing some of its pieces. You hit what is left with a sledgehammer: the cursor is green, the action finishes, the sledgehammer wears as usual, but the object stays and no message appears, however often you try. Happens in SP and MP; the usual case is a boulder that only half spawned when the map was generated.
+[*] [b]Cause[/b]: when the game removes an object that covers several squares, it first looks for every piece of the set around it; if any piece is missing it removes nothing, yet the sledgehammer action still counts as done.
+[*] [b]Fix[/b]: when the sledgehammer action finished and the game allowed it, but the object is still there, the game is asked once more the vanilla way; if the set still can't be found, only the piece you hit is removed. Hit the other pieces one by one. Complete large objects are still destroyed as a whole, as in vanilla; without a sledgehammer, on servers that only allow sledgehammers in safehouses, or when another mod doesn't let you destroy it, nothing changes.
+[*] [b]Log[/b]: the first time per start, the server's server-console.txt (console.txt in SP) gets one line: [MinidoracatFixes] MDFX_SledgeRemnantGuard vanilla left <tile> at <x>,<y>,<z> standing after a sledgehammer hit ….
+[*] [b]Scope[/b]: in MP it runs on the server and takes effect once the server updates the mod and restarts; in SP it takes effect once you update the mod.
+[*] [b]Retired[/b]: once vanilla lets you destroy large objects with missing pieces with a sledgehammer.
+[/list]
 === 🧰 Multiplayer: only admins can use the health cheat
 [h3]Stronger server-side validation: only admins can use the health cheat (an admin feature)[/h3]
 [list]
@@ -235,6 +245,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Vehicle below the ground[/b]: it only puts the car back after it dropped; it doesn't stop the drop itself, and the car lands from slightly above the ground. A car already buried with nobody driving it isn't handled (vanilla pulls its height back to the floor when the server reloads that vehicle). Squares without a floor (e.g. the map edge) aren't handled.
 [*] [b]New windows[/b]: these four sets still can't switch between north and west like older windows: a north window only goes back on a north-wall frame, a west one on a west-wall frame. Pointing a north window at a west-wall frame isn't red, but clicking does nothing (vanilla behavior).
 [*] [b]Placed bag still worn[/b]: it takes a second or two after placing. If you place an item less than a second after putting it on, in rare cases it still stays until you relog. It doesn't fix why your game decided wrong; appearance mods and vanilla's placing flow are untouched.
+[*] [b]Objects with missing pieces[/b]: only the sledgehammer is fixed. Furniture with missing pieces still can't be picked up or disassembled, and it still doesn't disappear when zombies or players break it. Only the piece you hit is removed each time. Large stations that hold crafting equipment or fluids (the kind built from the build menu) aren't handled when pieces are missing and still can't be destroyed.
 [/list]
 === ⚠️ Before removing this mod
 [list]

@@ -2203,6 +2203,108 @@ log 上限與上限提示；出錯後停用並只印一次；多人客戶端不�
 
 ---
 
+## MDFX_SledgeRemnantGuard — 缺片的多格物件用大錘拆不掉
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_SledgeRemnantGuard.lua` |
+| 影響版本 | Build 42.22.2 實測（原版 `shared/TimedActions/ISDestroyStuffAction.lua`，反編譯快照 `42.22.2-20261109`）；殘骸拆不掉在 42.20 就有（見 `MDFX_MultiTileFurniture`） |
+| 端 | 多人伺服器與單人（放 `server/`，沒有 `isServer()` 閘門；多人客戶端不安裝：大錘的 `complete` 在伺服器跑） |
+| 類型 | 原版**靜默不移除**；只在原版完成之後補移除被敲的那一片 |
+| 狀態 | **現役**（`42.22.2-0.17.1` 之後的下一版起） |
+
+### 症狀
+
+- 佔好幾格的物件（2×2 的大石頭、雙格長椅這類）少了其中幾片時，用大錘敲剩下的任何一片：游標是綠的、動作跑完、大錘照樣耗損，物件留在原地，沒有任何訊息。單人與多人都一樣。
+- 玩家回報（Discord，2026-11-10）：路上三顆巨石大錘拆不掉。伺服器存檔裡那三顆都只剩兩片（`boulders_16`～`31` 每四片一顆），是世界生成只生成了一半。
+
+### 根因（行號為 42.22.2 原版 Lua 與反編譯快照）
+
+- 大錘完成時（`ISDestroyStuffAction:complete`，`:111-350`；多人由伺服器執行）一般物件走 `:330` 的 `self.item:getSquare():transmitRemoveItemFromSquare(self.item)`。
+- 一個參數的版本固定要求安全移除（`IsoGridSquare.java:5929-5931`）。物件是多格的（`IsoObjectUtils.isObjectMultiSquare`，圖塊有 SpriteGrid 就算）時，
+  伺服器先找齊整組（`getAllMultiTileObjects` → `getSpriteGridMultiTileObjects`，`IsoObjectUtils.java:83-155`：整組每一格都要有那一格的圖塊），
+  找不齊就回 -1、什麼都不移除（`IsoGridSquare.java:5938-5956`）。單人走 `RemoveTileObject(obj, true)` → `safelyRemoveTileObjectFromSquare`（`:32-41`），同樣回 -1。
+- 警告只在除錯模式印（`Core.debug`）。`complete` 不看回傳值，照常擲大錘耐久、回 true。
+- 兩個參數的版本傳 `false` 就只移除那一片（伺服器 `GameServer.RemoveItemFromMap`，會送客戶端；客戶端收到後也只移除那一個物件，`RemoveItemFromSquarePacket.processClient`）。
+
+### 修法
+
+包裝 `ISDestroyStuffAction.complete`，只在原函式之後看：
+
+1. 原樣呼叫原函式。回傳值不是 `true` 就照回，不做任何事（沒大錘、`SledgehammerOnlyInSafehouse`、別的 MOD 的權限檢查拒絕）。
+2. 回 `true` 而目標已經不在格子上（`getObjectIndex() == -1`）＝原版移掉了，不做任何事。
+3. 目標還在格子上、圖塊屬於多格圖塊組（`getSpriteGrid() ~= nil`）、物件沒有 component（`componentSize() == 0`），而且**確定缺片**：
+   照引擎找整組的走法（`IsoObjectUtils.java:115-155`）看這一組佔的每一格，有一格載入了卻沒有那一格的圖塊才算。格子沒載入不算；
+   圖塊組裡本來就沒有圖塊的位置也不算。
+4. 照原版伺服器端的兩道拒絕再確認一次（`:116-130`：沒有大錘或離太遠、`SledgehammerOnlyInSafehouse`），不過就不動。
+5. 用原版同一個呼叫再問引擎一次。引擎找得齊，就照原版整組移除；仍回 -1 才呼叫 `transmitRemoveItemFromSquare(item, false)` 只移除被敲的那一片，
+   確認它真的不在格子上之後印一次診斷行。
+
+第 3 步只用來決定「要不要碰」，移除還是交給引擎：`IsoObjectUtils` 沒有曝露給 Lua，問引擎找不找得齊只能用會移除的那個呼叫，所以先要有缺片的證據才問。
+整組都在的不管：原函式回 true 不代表它要求過移除（別的 MOD 可能刻意留著這個物件）。
+不是多格圖塊的不管：原版回 true 而物件還在，是別的原因（例：NicksSledgehammerFix 把轉角牆原地換成半面牆）。
+有 component 的物件不管：整組找不齊時，原版的 `dumpContentsInSquare`（`:132`）只倒了被敲那一片自己的容器就返回（`IsoObjectUtils.java:161-180`），
+component 的內容（製作中的材料、液體）沒倒，單片移除會連內容一起刪。
+第 4 步：原版自己回 true 時那兩道一定過了；整支取代 `complete` 的 MOD（NicksSledgehammerFix 的版本沒有這兩道）照樣回 true，
+不確認的話，那個缺口會延伸到原本拆不掉的殘片。大錘剛好在這一下用壞時這一步也不過，殘片留到下一下。
+自己那一段出錯、或單片移除之後物件還在（Java 端拋例外時 Lua 只拿到 nil，所以移除後讀回 `getObjectIndex()`）：印一次、照回原版的結果。
+
+安裝：放 `server/`，載入時包一次；`OnInitGlobalModData` 再檢查一次，比本檔晚載入的 `server/` 檔整支替換 `complete` 時重新包上。
+不掛 `OnGameBoot`：單人進場時才載 `server/`（`GameLoadingState.java:149`），那時 `OnGameBoot` 早就觸發過了。
+
+### 和原版的差異
+
+- 原本敲不掉的缺片多格圖塊物件（巨石、一般家具），敲哪一片就少哪一片；同一組剩下的其他片不動，要一片一片敲。
+- 完整的多格物件、單格物件、被拒絕的大錘動作都照原版：正常情況引擎只被呼叫一次，結果不變。原函式回 true 卻留著整組都在的多格物件時也不碰。
+- 一組的其他格子有沒載入的、而載入的那幾格都不缺時不介入，照原版敲不掉（分不出是缺片還是沒載入；玩家身邊的格子都載入，沒有實測到這種情況）。
+- 沒有改的原版行為：缺片的多格家具仍然撿不起來、拆解不了（原版 `ISMoveableSpriteProps:getSpriteGridInfo` 找不齊就不給撿，實機 `canPickUpMoveable=false`）；
+  殭屍或玩家打壞這類殘骸時照樣不會消失（同一個安全移除，讀碼）；有 component 的多格設施缺片時照樣拆不掉；
+  圖塊組有空位置的多格物件，引擎連完整的也算找不齊（讀碼，沒查原版有沒有這種圖塊組），完整的照原版不動。
+
+### 和 `MDFX_MultiTileFurniture`（0.4.0 移出）的差別
+
+那一項在沒有行為人的情況下判斷「這是殘骸」再刪（事後掃描、右鍵選單），在 Lua 重寫找齊整組的掃描時，review 抓到「格子沒載入被當成缺片」。
+這一項只接在玩家揮完大錘、原版已判定可拆之後，移除的就是玩家敲的那一片；缺片的判斷把沒載入的格子當成「不知道」，最後找不找得齊仍由引擎回答。
+它不清別的片、不加選單、不處理撿起。
+
+### 和其他 MOD
+
+- NicksSledgehammerFix（3780532913）在 `shared/` 整支取代 `complete`；本檔在 `server/`，載入較晚，包到的是它的版本（實機一起載入通過）。
+  它的版本沒有原版 42.22.2 `:116-130` 的伺服器端拒絕，所以本補丁動手前自己照原版確認（修法第 4 步）。
+- MinidoracatSafehouseFor42 在開服時把 `complete` 再包一層（`Permissions.lua` 的 `wrapCompleteCells`），沒有建造權限時回 false、不呼叫內層：本補丁不會跑。
+  包裝先後反過來也一樣，因為第 1 步看的是整條鏈的回傳值（離線測試兩種先後都驗，實機驗安全屋在外層）。
+
+### Log
+
+- `[MinidoracatFixes] MDFX_SledgeRemnantGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit (a multi-tile object with missing pieces); removed that piece. Further ones not logged this session. …`
+  ——每次開機第一次介入時印一行（多人在 `server-console.txt`，單人在 `console.txt`）。
+- `[MinidoracatFixes] MDFX_SledgeRemnantGuard could not check for or remove a leftover piece; vanilla result kept: …`——自己那段出錯、或單片移除之後物件還在（`… is still on its square after the single-piece removal`），照原版結果，一次。
+  沒有敲殘缺物件卻看到這一行＝檢查用到的引擎方法變了，本補丁已經不運作，回頭對版（`check_vanilla_alignment.py` 的依賴符號會先轉紅）。
+- `[MinidoracatFixes] MDFX_SledgeRemnantGuard NOT installed: vanilla ISDestroyStuffAction shape changed; …`——包裝目標不在，回頭對版。
+
+### 驗證
+
+離線：`lua scripts/test_sledge_remnant_guard.lua`（照載原版 `ISDestroyStuffAction.lua`，Java 端的格子、圖塊組與兩種移除用 Lua 模擬，80 項）；`--mutants` 35 個突變都要被抓到。
+
+實機（42.22.2，9950X3D，`fixes-e2e` 的 `broken-multitile` 情境；伺服器在 Muldraugh 主街旁的空地照圖塊自己的 SpriteGrid 擺一顆完整的 2×2 巨石、
+一顆只剩 `boulders_19`＋`boulders_16` 的巨石、一張只剩一片的雙格長椅，客戶端用原版大錘游標敲）：
+
+- 原版對照（`6b1d79b`，沒有本檔）多人 `fxbm-ctl-mp-1111a`、單人 `fxbm-ctl-sp-1111a`：`RESULT PASS steps=9 checks=8`。完整巨石敲一下四片都消失；
+  殘缺巨石的兩片與殘缺長椅，游標綠色、完成端 `complete` 回 true，伺服器與客戶端都還在。
+- 修正組（收錄版本的守衛，暫時 commit `0be4dc22`）多人 `fxbm-fix-mp-1111f`、單人 `fxbm-fix-sp-1111f`（都同時載 NicksSledgehammerFix）：`RESULT PASS steps=9 checks=10`。
+  完整巨石照樣整組消失；殘缺巨石敲第一片後只剩另一片、再敲就沒了；殘缺長椅敲掉；兩端一致。診斷行恰一行，沒有 `NOT installed` 與失敗行，伺服器開服後沒有例外。
+  review 前的版本（`fd6b8c5e`，`-1111b` 三輪）與 review 期間的三版（`-1111c`、`-1111d`、`-1111e`）結果相同。
+- 安全屋拒絕（`fxbm-fix-sh-mp-1111f`，同一個暫時 commit，另載 MinidoracatSafehouseFor42 `7ec0774`，把它的權限判斷換成對大錘一律拒絕）：`RESULT PASS steps=12 checks=12`。
+  `complete` 回 false、殘缺巨石還在、本補丁沒印診斷行；還原後照常敲得掉。
+- 沒有實機驗的：原版伺服器端拒絕的再確認（修法第 4 步）不過的情況、沒載入的格子、圖塊組的空位置、單片移除失敗，只有離線測試。
+
+### 可退場條件
+
+官方讓缺片的多格物件拆得掉：`transmitRemoveItemFromSquare` 對找不齊的整組不再回 -1，或大錘改用別的移除方式。到時原版在第 2 步就移掉了，本補丁自動不介入。
+`check_vanilla_alignment.py` 的爆點轉 CHANGED 時，重跑 E2E `broken-multitile` 的對照組：`hit-broken-*` 的殘片被原版敲掉了，就移出本檔。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

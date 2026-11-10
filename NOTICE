@@ -35,6 +35,8 @@ MIT 涵蓋（Minidoracat 自有著作）
      （`client/ISUI/ISWorldObjectContextMenu.lua:896-912` 的等價實作）
    - `shared/Fixes/MDFX_ReloadSpeedGuard.lua` 的 `fallbackSpeed`
      （`shared/TimedActions/ISReloadWeaponAction.lua:76-83`、`:109-112` 的公式改寫）
+   - `server/Fixes/MDFX_SledgeRemnantGuard.lua` 的 `vanillaAllows`
+     （`shared/TimedActions/ISDestroyStuffAction.lua:116-130` 的等價實作）
    - 各 `MDFX_*.lua` 檔頭註解、`scripts/check_vanilla_alignment.py` 指紋、
      `scripts/test_*.lua` 中標示 `vanilla :行號` 的單行至數行片段
 

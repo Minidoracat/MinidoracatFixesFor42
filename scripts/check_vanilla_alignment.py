@@ -1311,6 +1311,153 @@ FIXES = [
             r"public static zombie\.characters\.IsoPlayer getSpecificPlayer\(int\);",
         ],
     },
+    # ── MDFX_SledgeRemnantGuard：缺片的多格物件大錘拆不掉，原版完成後只補移除被敲的那一片 ─────────────
+    {
+        "name": "MDFX_SledgeRemnantGuard",
+        "file": "media/lua/shared/TimedActions/ISDestroyStuffAction.lua",
+        "crash": [
+            # :329-330 一般物件用一個參數的移除（安全移除）。行變了＝官方動了大錘的移除方式，重跑 E2E broken-multitile 對照組
+            r"else --not a corner wall, just remove it\s*self\.item:getSquare\(\):transmitRemoveItemFromSquare\(self\.item\)",
+        ],
+        "depends": [
+            # wrapper 的包裝目標
+            r"function\s+ISDestroyStuffAction:complete\s*\(\s*\)",
+            # 「回 true＝原版判定可拆、也試著移除了」的前提：complete 結尾回 true（:349）
+            r"return true;\s*end\s*function\s+ISDestroyStuffAction:getDuration",
+            # 被敲那一片自己的容器原版先倒了（:132）；守衛只多擋有 component 的物件
+            r"self\.item:dumpContentsInSquare\(\)",
+            # 原版伺服器端的兩道拒絕（:116-130）：守衛的 vanillaAllows 照這兩段寫。轉紅＝原版改了拒絕條件，vanillaAllows 要跟著改
+            r"function\s+ISDestroyStuffAction:hasSledgehammerInRange\s*\(\s*character\s*,\s*item\s*\)",
+            r"if not self\.character:isBuildCheat\(\) and not self:hasSledgehammerInRange\(self\.character, self\.item\) then\s*return false",
+            r'if getServerOptions\(\):getBoolean\("SledgehammerOnlyInSafehouse"\) then\s*local role = self\.character:getRole\(\)\s*'
+            r"local isPrivileged = role and role:hasCapability\(Capability\.UseBuildCheat\)\s*if not isPrivileged then\s*"
+            r"local safe = SafeHouse\.isSafeHouse\(self\.item:getSquare\(\), nil, false\)\s*"
+            r"if not \(safe and safe:playerAllowed\(self\.character\)\) then\s*return false",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（成因：伺服器的安全移除，多格物件找不齊整組就回 -1）",
+        "class": "zombie.iso.IsoGridSquare",
+        "crash": [
+            # transmitRemoveItemFromSquare(obj, safelyRemove)（IsoGridSquare.java:5933-5960）：isObjectMultiSquare → getAllMultiTileObjects 回 false → 回 -1
+            r"public int transmitRemoveItemFromSquare\(zombie\.iso\.IsoObject, boolean\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoObjectUtils\.isObjectMultiSquare:\(Lzombie/iso/IsoObject;\)Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoObjectUtils\.getAllMultiTileObjects:\(Lzombie/iso/IsoObject;Ljava/util/ArrayList;\)Z\s+\d+: ifeq"
+            r"(?:(?!\n  \S)[\s\S])*?\d+: iconst_m1\s+\d+: ireturn",
+        ],
+        "depends": [
+            # 一個參數的版本固定傳 true（:5929-5931）：守衛「再問一次」用的就是它
+            r"public int transmitRemoveItemFromSquare\(zombie\.iso\.IsoObject\);\s+Code:\s+0: aload_0\s+1: aload_1\s+2: iconst_1\s+"
+            r"3: invokevirtual #\d+\s+// Method transmitRemoveItemFromSquare:\(Lzombie/iso/IsoObject;Z\)I",
+            # safelyRemove 是 false 時直接 GameServer.RemoveItemFromMap（只移除那一片、送客戶端）
+            r"public int transmitRemoveItemFromSquare\(zombie\.iso\.IsoObject, boolean\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoObjectUtils\.getAllMultiTileObjects:(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/network/GameServer\.RemoveItemFromMap:\(Lzombie/iso/IsoObject;\)I\s+\d+: ireturn\s*\n",
+            # 單人：RemoveTileObject(obj, true) 走 IsoObjectUtils.safelyRemoveTileObjectFromSquare（:5705-5708）
+            r"public int RemoveTileObject\(zombie\.iso\.IsoObject, boolean\);\s+Code:\s+0: iload_2\s+1: ifeq\s+\d+\s+4: aload_1\s+"
+            r"5: invokestatic\s+#\d+\s+// Method zombie/iso/IsoObjectUtils\.safelyRemoveTileObjectFromSquare:\(Lzombie/iso/IsoObject;\)I",
+            # 守衛看每一格有哪些物件
+            r"public java\.util\.List<zombie\.iso\.IsoObject> getObjects\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（成因：單人的安全移除；多格的判斷看圖塊的 SpriteGrid）",
+        "class": "zombie.iso.IsoObjectUtils",
+        "crash": [
+            # safelyRemoveTileObjectFromSquare（IsoObjectUtils.java:32-62）：getAllMultiTileObjects 回 false → 回 -1
+            r"public static int safelyRemoveTileObjectFromSquare\(zombie\.iso\.IsoObject\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method getAllMultiTileObjects:\(Lzombie/iso/IsoObject;Ljava/util/ArrayList;\)Z\s+\d+: ifne"
+            r"(?:(?!\n  \S)[\s\S])*?\d+: iconst_m1\s+\d+: ireturn",
+        ],
+        "depends": [
+            # isObjectMultiSquare（:20-30）看圖塊的 SpriteGrid：守衛用 getSpriteGrid() 認多格圖塊
+            r"public static boolean isObjectMultiSquare\(zombie\.iso\.IsoObject\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/sprite/IsoSprite\.getSpriteGrid:\(\)Lzombie/iso/sprite/IsoSpriteGrid;",
+            # dumpContentsInSquare（:161-205）：整組找不齊就在倒 component 之前返回。守衛因此不管有 component 的物件；
+            # 轉紅＝官方改了倒內容的順序，重看那個條件
+            r"public static void dumpContentsInSquare\(zombie\.iso\.IsoObject\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method getAllMultiTileObjects:\(Lzombie/iso/IsoObject;Ljava/util/ArrayList;\)Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/entity/Component\.dumpContentsInSquare:\(\)V",
+            # getSpriteGridMultiTileObjects（:115-155）找整組的走法：守衛的缺片判斷照這個順序看每一格。
+            # 轉紅＝引擎改了找整組的方式，重看 hasMissingPiece 還對不對得上
+            r"private static boolean getSpriteGridMultiTileObjects\(zombie\.iso\.IsoObject, java\.util\.ArrayList<zombie\.iso\.IsoObject>\);"
+            r"(?:(?!\n  \S)[\s\S])*?IsoSpriteGrid\.getSpriteGridPosX:(?:(?!\n  \S)[\s\S])*?IsoSpriteGrid\.getSpriteGridPosY:"
+            r"(?:(?!\n  \S)[\s\S])*?IsoSpriteGrid\.getSpriteGridPosZ:(?:(?!\n  \S)[\s\S])*?IsoSpriteGrid\.getLevels:"
+            r"(?:(?!\n  \S)[\s\S])*?IsoCell\.getGridSquare:\(III\)Lzombie/iso/IsoGridSquare;"
+            r"(?:(?!\n  \S)[\s\S])*?IsoSpriteGrid\.getSprite:\(III\)Lzombie/iso/sprite/IsoSprite;"
+            r"(?:(?!\n  \S)[\s\S])*?// Method verifyObject:",
+            # verifyObject（:157-159）比的是同一個圖塊物件
+            r"private static boolean verifyObject\(zombie\.iso\.IsoObject, zombie\.iso\.sprite\.IsoSprite\);(?:(?!\n  \S)[\s\S])*?\d+: if_acmpne",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（依賴：物件還在不在格子上、圖塊的 SpriteGrid）",
+        "class": "zombie.iso.IsoObject",
+        "depends": [
+            r"public int getObjectIndex\(\);",
+            r"public zombie\.iso\.sprite\.IsoSpriteGrid getSpriteGrid\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（依賴：多格圖塊組的大小與每一格的圖塊）",
+        "class": "zombie.iso.sprite.IsoSpriteGrid",
+        "depends": [
+            r"public zombie\.iso\.sprite\.IsoSprite getSprite\(int, int, int\);",
+            r"public int getSpriteGridPosX\(zombie\.iso\.sprite\.IsoSprite\);",
+            r"public int getSpriteGridPosY\(zombie\.iso\.sprite\.IsoSprite\);",
+            r"public int getSpriteGridPosZ\(zombie\.iso\.sprite\.IsoSprite\);",
+            r"public int getWidth\(\);",
+            r"public int getHeight\(\);",
+            r"public int getLevels\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（依賴：照座標取格子，沒載入回 null）",
+        "class": "zombie.iso.IsoCell",
+        "depends": [
+            r"public zombie\.iso\.IsoGridSquare getGridSquare\(int, int, int\);",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（依賴：getCell）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            r"public static zombie\.iso\.IsoCell getCell\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（安裝：復查用的 OnInitGlobalModData）",
+        "class": "zombie.world.moddata.GlobalModData",
+        "depends": [
+            # GlobalModData.java:54，由 IsoWorld.init 呼叫（單人與伺服器都在所有 Lua 載完之後）
+            r"public void init\(\)(?:(?!\n  \S)[\s\S])*?// String OnInitGlobalModData",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（安裝：單人進場時才載 server/）",
+        "class": "zombie.gameStates.GameLoadingState",
+        "depends": [
+            # GameLoadingState.java:149。OnGameBoot 在主選單就觸發過，所以復查不能掛它
+            r"public void enter\(\);(?:(?!\n  \S)[\s\S])*?// String server\s+\d+: invokestatic\s+#\d+\s+"
+            r"// Method zombie/Lua/LuaManager\.LoadDirBase:\(Ljava/lang/String;\)V",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（依賴：物件的 component 數）",
+        "class": "zombie.entity.GameEntity",
+        "depends": [
+            r"public final int componentSize\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SledgeRemnantGuard（前提：客戶端收到移除封包只移除那一個物件）",
+        "class": "zombie.network.packets.RemoveItemFromSquarePacket",
+        "depends": [
+            # processClient（RemoveItemFromSquarePacket.java:75-97）：RemoveTileObject(o, 車庫門或雙扇門才整組)
+            r"public void processClient\(zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoGridSquare\.RemoveTileObject:\(Lzombie/iso/IsoObject;Z\)I",
+        ],
+    },
 ]
 
 
