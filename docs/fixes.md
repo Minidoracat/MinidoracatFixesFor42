@@ -1995,6 +1995,79 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
 
 ---
 
+## MDFX_WindowFaceGuard — 北側牆上的新款窗拆下後裝不回去
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `shared/Fixes/MDFX_WindowFaceGuard.lua` |
+| 影響版本 | Build 42.22.2 實測（原版 `shared/Moveables/ISMoveableSpriteProps.lua`，反編譯快照 `42.22.2-20261109`） |
+| 端 | 三端、無閘門（客戶端的放置游標與完成端的 `placeMoveable` 都呼叫同一個判斷；多人的完成端是伺服器） |
+| 類型 | 原版**判錯方向**；原版說放不上時照北向再問原版一次 |
+| 狀態 | **現役**（`42.22.2-0.17.1` 之後的下一版起） |
+
+### 症狀
+
+- Build 42 新增的四個窗 tileset（`fixtures_windows_white`、`_metal`、`_church`、`_wood`）裡北向（`Facing=N`）的窗，用撬棍拆下來之後，
+  放置游標指回原本的北牆窗框永遠是紅色，裝不回去。窗框還在、是空的，木工等級與鐵鎚都夠。單人與多人都一樣。
+- 舊 tileset（`fixtures_windows_01`）的窗不受影響。
+- 玩家回報（Discord，2026-11-10）：白色窗框拆下後裝不回原位。
+
+### 根因（行號為 42.22.2 原版 Lua）
+
+- `ISMoveableSpriteProps:canPlaceMoveableInternal` 的 Window 分支在 `:1941` 決定找哪一道牆的窗框：
+  `local isNorth = (self:hasFaces() and self.facing == "N" or self.facing == "S") or false`。`Facing=N` 的窗要 `hasFaces()` 也是 true 才算北向。
+- `hasFaces()`（`:258-276`）要圖塊有 `Noffset`／`Woffset` 這類換面資料。這份資料由引擎讀圖塊定義時，替同一個 tileset 裡 `GroupName`＋`CustomName`
+  相同的一組圖互寫；一組超過 4 張就整組不寫（`IsoWorld.java:1316-1338`）。
+- 四個新 tileset 各自整個 tileset 用同一組名稱，共 396 張窗都沒有換面資料：北向的 198 張 `isNorth` 算成 false，原版改找西牆的窗框（`:1942`），找不到。
+- 放下去的那一段（`placeMoveableInternal` `:2077`）與走過去的那一段（`walkToAndEquip` `:3081`）都直接照 `Facing` 判斷，只有 `:1941` 多看了 `hasFaces()`。
+- 多人遊戲時伺服器完成放置動作會再判一次（`placeMoveable` `:2050`），所以客戶端與伺服器都要修。
+
+### 修法
+
+包裝 `ISMoveableSpriteProps.canPlaceMoveableInternal`：
+
+1. 先原樣呼叫原函式。原版說放得上就照原版。
+2. 原版說放不上、而且這張是 `type == "Window"`、`facing == "N"` 時，暫時把這個實例的 `facing` 改成 `"S"`，以 `pcall` 再呼叫原函式一次，呼叫完立刻改回 `"N"`。
+   原版在 `:1941` 自己把 `"S"` 當北向，找的是同一道北牆窗框。窗框、已有的窗、技能、工具都還是原版那一段在判。
+3. 第二次說放得上才回它的結果，並印一次診斷行。第二次拋錯：印一次警告，回原版第一次的結果。
+
+不複製 Window 分支的判斷（遊戲更新時會和原版走偏）。不補圖塊的換面資料（會改 396 張圖塊的屬性，其他讀這些屬性的 MOD 會跟著變）。
+
+### 和原版的差異
+
+- 原本放不上的北向新款窗，指到北牆的空窗框時變成放得上（使用者 2026-11-10 同意）。
+- 原本放得上的情況不變：第 1 步原版回 true 就直接回。有換面資料的北向窗原版本來就照北向判，再判一次結果相同。
+- 沒有改的原版行為：這些窗仍然不能在北、西之間換面（西向的新款窗指到北牆窗框照樣放不上）；北向的新款窗指到西牆窗框時，
+  游標不是紅色但點下去不排任何動作（`walkToAndEquip` 照 `Facing` 找北牆窗框，找不到）。
+
+### Log
+
+- `[MinidoracatFixes] MDFX_WindowFaceGuard: vanilla refused north-facing window <圖塊> on its north frame (it looked for a west frame); accepted at <x>,<y>,<z>. Further occurrences not logged this session. …`
+  ——每次開機第一次放行時印一行。多人遊戲時客戶端（`console.txt`）與伺服器（`server-console.txt`）各印各的。
+- `[MinidoracatFixes] MDFX_WindowFaceGuard: the north-facing re-check threw; keeping the vanilla answer: …`——第二次呼叫拋錯（原版第一次沒拋），照原版結果，一次。
+- `[MinidoracatFixes] MDFX_WindowFaceGuard NOT installed: vanilla ISMoveableSpriteProps shape changed; …`——包裝目標不在，回頭對版。
+
+### 驗證
+
+離線：`lua scripts/test_window_face_guard.lua`（照載原版 `ISMoveableSpriteProps.lua`，55 項）；`--mutants` 17 個突變都要被抓到。
+
+實機（42.22.2，9950X3D，`fixes-e2e` 的 `window-faces` 情境；地點是玩家回報的房子，北向窗 `fixtures_windows_white_25` 在 7317,8541，西向窗 `_24` 在 7320,8539）：
+
+- 原版對照（MOD 樹沒有本檔）多人 `fxwf-ctl-mp-1110e`、單人 `fxwf-ctl-sp-1110d`：`RESULT PASS steps=17 checks=12`。北向窗拆下後游標指回原窗框 `canCreate=false`；
+  不經游標直接排放置動作，完成端 `canPlaceInternal=false`、不放、物品留在背包。西向窗拆下再放回成功。舊款西向窗指到同一個北牆窗框，游標自己換成北向並放得上。
+  另外三組的北向窗（`fixtures_windows_metal_1`、`_church_1`、`_wood_1`）游標同樣被拒。四組實機都讀到 `hasFaces=false`。
+- 修正組（收錄前的同一份程式，`--src` 指向匯出的 MOD 樹）多人 `fxwf-fix-mp-1110e`、單人 `fxwf-fix-sp-1110c`：`RESULT PASS steps=14 checks=10`。北向窗放回原窗框，伺服器那一格有 `fixtures_windows_white_25`；
+  另外三組游標可放（沒有實際放）；西向窗與「北向窗指到西牆窗框」和對照組相同。客戶端與伺服器各一行診斷，沒有 `NOT installed`、`re-check threw`。
+
+玩家另外回報的兩格西向窗（7320,8539、7322,8536）沒有重現：7320,8539 那扇拆下再放回，多人、單人多輪都成功，原因沒查到。
+
+### 可退場條件
+
+官方替這四個 tileset 補上換面資料，或 `:1941` 不再看 `hasFaces()`。兩種情況原版在第 1 步就回放得上，本補丁自動不介入。
+`check_vanilla_alignment.py` 的爆點行轉 CHANGED 時，重跑 E2E `window-faces` 的對照組：`RESULT INCONCLUSIVE`（圖塊有換面資料了）或北向窗游標可放，就移出本檔。
+
+---
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

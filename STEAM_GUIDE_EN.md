@@ -11,7 +11,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Requires[/b]: Build 42.20.4+.
 [*] [b]Install[/b]: subscribe and enable; no settings, sandbox options or keys. In MP the server enables it.
 [*] [b]Vanilla bugs only[/b]: no balance changes, items or UI.
-[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, one that has the server handle multiplayer deaths it missed, one that puts a vehicle back above the ground after it dropped below it, and one that strengthens the server's validation of the health cheat.
+[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, one that has the server handle multiplayer deaths it missed, one that puts a vehicle back above the ground after it dropped below it, one that lets a window vanilla misjudged go back on its wall, and one that strengthens the server's validation of the health cheat.
 [*] [b]Rechecked after game updates[/b]: fixes are removed once officially fixed.
 [/list]
 === 🧰 Animals: butchering, petting, milking, watering, leashing
@@ -95,6 +95,15 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Fix[/b]: the vehicle is checked first; with such a part it stops as vanilla intended, touching no door rather than inventing new behavior.
 [*] [b]Scope[/b]: MP server.
 [*] [b]Retired[/b]: when vanilla fixes that note.
+[/list]
+[h3]New Build 42 windows can't be put back on a north wall[/h3]
+[list]
+[*] [b]Symptom[/b]: windows from the four window sets added in Build 42, taken off a north wall with a crowbar, always show red when you point them back at their own frame. The frame is still there and you have the skill and a hammer. Older windows are fine.
+[*] [b]Cause[/b]: to pick the wall, vanilla also wants the tile to have "other face" data. Each new set shares one name across about a hundred tiles, and the game only builds that data for groups of four or fewer, so these have none; a north window is treated as a west one and vanilla looks for a west-wall frame.
+[*] [b]Fix[/b]: when vanilla refuses a north window, it is asked again as a north-wall window and allowed if that passes. The frame, existing-window, skill and tool checks are still vanilla's; anything vanilla already allowed is unchanged.
+[*] [b]Log[/b]: the first time per start, one line [MinidoracatFixes] MDFX_WindowFaceGuard: vanilla refused north-facing window … (in MP, one in the server's server-console.txt and one in the player's console.txt).
+[*] [b]Scope[/b]: SP, MP server and each player's game (in MP the server checks placement again, so both sides need it).
+[*] [b]Retired[/b]: once vanilla gives these sets their face data or changes that check; vanilla then allows it itself and this fix stops acting.
 [/list]
 === 🧰 Crops: sync traffic, the farming save, join errors
 [h3]The server keeps re-sending unchanged crop data near farmland[/h3]
@@ -214,6 +223,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Multiplayer deaths[/b]: the message has to reach the server before you finish the new character and press Play; if the connection is slower than that, the first respawn may still be refused (black screen). Reconnect and make a new character; the body stays where you died. A character that dies this way within 30 seconds of spawning isn't handled and gets the vanilla black screen.
 [*] [b]Health cheat[/b]: for 30 seconds after an admin uses it on someone, the one command that player's game sends back (same body part, same action) still goes through. If an admin uses it on split-screen player 2-4, or the player's game sends it back after 30 seconds, it is logged as denied; if an admin used the health cheat shortly before a denied line (about the same second for split-screen, 30+ seconds before for a late reply; the server's Logs *_cmd.txt shows the admin's player.onHealthCheat), don't treat it as a cheater straight away. The log-line limit is per player, so each split-screen player has their own; reconnecting or respawning under a new name may restart it.
 [*] [b]Vehicle below the ground[/b]: it only puts the car back after it dropped; it doesn't stop the drop itself, and the car lands from slightly above the ground. A car already buried with nobody driving it isn't handled (vanilla pulls its height back to the floor when the server reloads that vehicle). Squares without a floor (e.g. the map edge) aren't handled.
+[*] [b]New windows[/b]: these four sets still can't switch between north and west like older windows: a north window only goes back on a north-wall frame, a west one on a west-wall frame. Pointing a north window at a west-wall frame isn't red, but clicking does nothing (vanilla behavior).
 [/list]
 === ⚠️ Before removing this mod
 [list]

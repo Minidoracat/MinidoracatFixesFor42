@@ -1139,6 +1139,25 @@ FIXES = [
             r"// Method onTick:\(\)V",
         ],
     },
+    {
+        "name": "MDFX_WindowFaceGuard",
+        "file": "media/lua/shared/Moveables/ISMoveableSpriteProps.lua",
+        "crash": [
+            # :1941 北向與否多看了 hasFaces()：沒有換面資料的北向窗被當成西向。行變了＝官方動了這個判斷，重跑 E2E window-faces 對照組
+            r'local\s+isNorth\s*=\s*\(self:hasFaces\(\)\s+and\s+self\.facing\s*==\s*"N"\s+or\s+self\.facing\s*==\s*"S"\)\s+or\s+false',
+        ],
+        "depends": [
+            # wrapper 的包裝目標與參數順序
+            r"function\s+ISMoveableSpriteProps:canPlaceMoveableInternal\s*\(\s*_character\s*,\s*_square\s*,\s*_item\s*,\s*_forceTypeObject\s*\)",
+            # 「把 facing 暫時改成 S 就會找北牆窗框」的前提：:1941 把 "S" 當北向、:1942／:1944 照 isNorth 找窗框與已有的窗
+            r'self:getWallForFacing\(_square,\s*isNorth\s+and\s+"S"\s+or\s+"E",\s*"WindowFrame"\)',
+            r"_square:getWindow\(isNorth\s+and\s+GridSquareEdgeFacingDirection\.NORTH_SOUTH\s+or\s+GridSquareEdgeFacingDirection\.EAST_WEST\)",
+            # 放下去那一段（placeMoveableInternal :2077）直接照 Facing 判北向：判斷放行後窗會放在北牆
+            r'local\s+north\s*=\s*self\.facing\s+and\s+\(self\.facing\s*==\s*"N"\s+or\s+self\.facing\s*==\s*"S"\)',
+            # 完成端（多人是伺服器）會再判一次（placeMoveable :2050）：本補丁放 shared/ 的理由
+            r"if\s+item\s+and\s+\(self:canPlaceMoveableInternal\(_character,\s*_square,\s*item\)\s+or\s+_forceAllow\)\s+then",
+        ],
+    },
 ]
 
 

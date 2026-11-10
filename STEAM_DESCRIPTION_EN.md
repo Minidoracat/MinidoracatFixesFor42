@@ -8,7 +8,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [h2]📦 Requirements[/h2]
 [list]
 [*] Supported version: Build 42.20.4+
-[*] Singleplayer and multiplayer; in MP the server enables it. The reload and battery-charger fixes run on the server and in each player's game, the death-sync fix only in multiplayer (on the server and in each player's game), the mod-settings fix only in each player's game (settings wiped by Apply in a main menu without this mod come back from a backup the next time you load in), the hen-house and vehicle-below-ground fixes only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
+[*] Singleplayer and multiplayer; in MP the server enables it. The reload, battery-charger and window fixes run on the server and in each player's game, the death-sync fix only in multiplayer (on the server and in each player's game), the mod-settings fix only in each player's game (settings wiped by Apply in a main menu without this mod come back from a backup the next time you load in), the hen-house and vehicle-below-ground fixes only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
 [*] [b]Add/remove mid-save:[/b] safe to add; before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
 [/list]
 
@@ -32,6 +32,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Idle car battery chargers near a generator make the server and players recompute power use every frame, slowing things down
 [*] Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone
 [*] Multiplayer: your vehicle drops below the ground while driving: black screen, the car stays stuck underground after you get out, even after relogging
+[*] Windows from the four new Build 42 sets can't be put back on a north wall after you pick them up
 [*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 [/list]
 📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840467]Fixes Mod Guide: Fix List & Details[/url]
