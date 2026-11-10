@@ -36,6 +36,7 @@ description=[*] Idle car battery chargers near a generator make the server and p
 description=[*] Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone
 description=[*] Multiplayer: your vehicle drops below the ground while driving: black screen, the car stays stuck underground after you get out, even after relogging
 description=[*] Windows from the four new Build 42 sets can't be put back on a north wall after you pick them up
+description=[*] Multiplayer: after you place a worn bag or clothing item on the ground, it still shows on your character and its hotbar slots stay until you relog
 description=[*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 description=[/list]
 description=📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840467]Fixes Mod Guide: Fix List & Details[/url]

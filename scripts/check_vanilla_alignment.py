@@ -1158,6 +1158,140 @@ FIXES = [
             r"if\s+item\s+and\s+\(self:canPlaceMoveableInternal\(_character,\s*_square,\s*item\)\s+or\s+_forceAllow\)\s+then",
         ],
     },
+    # ── MDFX_StaleWornGuard：放到地上（或別的容器）的物品還留在穿戴清單，伺服器定期拿掉 ─────────────
+    {
+        "name": "MDFX_StaleWornGuard（成因：伺服器放下物品時不碰穿戴）",
+        "file": "media/lua/shared/TimedActions/ISDropWorldItemAction.lua",
+        "crash": [
+            # complete :81-91：放到地上再移出物品欄，中間沒有脫下。行變了＝官方動了這段，重跑 E2E stale-worn 對照組
+            r"local worldItem = self\.sq:AddWorldInventoryItem\(self\.item,[^\n]*\n(?:(?!removeWornItem)[\s\S])*?"
+            r"self\.character:getInventory\(\):Remove\(self\.item\);\s*"
+            r"sendRemoveItemFromContainer\(self\.character:getInventory\(\),\s*self\.item\);\s*if instanceof\(worldItem",
+        ],
+        "exithint": [
+            # 官方若讓放下的動作自己脫下
+            r"removeWornItem|setWornItem|getWornItems\(\):remove",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（成因：要不要先脫下，由客戶端排動作時判斷）",
+        "file": "media/lua/server/BuildingObjects/ISPlace3DItemCursor.lua",
+        "crash": [
+            # create :38-40（:27-29 是「全部放置」的同一段）
+            r'if self\.chr:isEquipped\(item\) then\s*ISTimedActionQueue\.add\(ISUnequipAction:new\(self\.chr, item, 1, "place"\)\);',
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（成因：伺服器照客戶端的清單穿回；物品欄沒有就另建一件）",
+        "class": "zombie.network.packets.SyncClothingPacket",
+        "crash": [
+            # process（SyncClothingPacket.java:192-204）：getItemWithID 找不到 → CreateItem → setID（沿用清單上的編號）→ WornItems.setItem。
+            # 守衛把「另建的物件、同編號的真物品這位玩家穿過」當殘留；轉紅＝官方改了伺服器收清單的方式，重看守衛的判定
+            # 開頭那段鎖 :193 的 Clothing 轉型：背包轉不過去，所以每收到一次清單都重穿（另建）一次
+            # setID 那段：另建的物件不沿用編號的話，守衛照編號比先例就永遠對不上
+            r"private void process\(\);(?:(?!\n  \S)[\s\S])*?// Method zombie/characters/WornItems/WornItems\.getItemById:\(I\)Lzombie/inventory/InventoryItem;"
+            r"\s+\d+: ldc(?:_w)?\s+#\d+\s+// class zombie/inventory/types/Clothing"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/inventory/ItemContainer\.getItemWithID:\(I\)Lzombie/inventory/InventoryItem;"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/inventory/InventoryItemFactory\.CreateItem:\(Ljava/lang/String;\)Lzombie/inventory/InventoryItem;"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/inventory/InventoryItem\.setID:\(I\)V"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/characters/WornItems/WornItems\.setItem:",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：removeWornItem 走 setWornItem、結尾 syncClothing；isDead）",
+        "class": "zombie.characters.IsoGameCharacter",
+        "depends": [
+            # removeWornItem(item, forceDropTooHeavy)（IsoGameCharacter.java:3516-3518）
+            r"public void removeWornItem\(zombie\.inventory\.InventoryItem, boolean\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method setWornItem:\(Lzombie/scripting/objects/ItemBodyLocation;Lzombie/inventory/InventoryItem;Z\)V",
+            # setWornItem（:3460-3505）
+            r"public void setWornItem\(zombie\.scripting\.objects\.ItemBodyLocation, zombie\.inventory\.InventoryItem, boolean\);"
+            r"(?:(?!\n  \S)[\s\S])*?// Method syncClothing:\(\)V",
+            # setWornItem 把舊的那件移出每幀更新清單（:3464-3466）：守衛拿掉真物品後要登記回去
+            r"public void setWornItem\(zombie\.scripting\.objects\.ItemBodyLocation, zombie\.inventory\.InventoryItem, boolean\);"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoCell\.addToProcessItemsRemove:\(Lzombie/inventory/InventoryItem;\)V",
+            r"public boolean isDead\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：伺服器的 syncClothing 把穿戴清單送給所有客戶端）",
+        "class": "zombie.characters.IsoPlayer",
+        "depends": [
+            # IsoPlayer.java:8956-8959
+            r"public void syncClothing\(\);(?:(?!\n  \S)[\s\S])*?// Field zombie/network/GameServer\.server:Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/network/PacketTypes\$PacketType\.SyncClothing:(?:(?!\n  \S)[\s\S])*?"
+            r"// InterfaceMethod zombie/network/packets/INetworkPacket\.sendToAll:",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：WornItems）",
+        "class": "zombie.characters.WornItems.WornItems",
+        "depends": [
+            r"public zombie\.inventory\.InventoryItem getItemByIndex\(int\);",
+            r"public int size\(\);",
+            r"public boolean contains\(zombie\.inventory\.InventoryItem\);",
+            r"public zombie\.scripting\.objects\.ItemBodyLocation getLocation\(zombie\.inventory\.InventoryItem\);",
+            r"public zombie\.characters\.WornItems\.BodyLocationGroup getBodyLocationGroup\(\);",
+            # setItem（WornItems.java:53-59）：可同時穿多件的部位不移除舊的。這行沒了＝多件部位也拿得掉，守衛可以不再跳過
+            r"(?s)public void setItem\(zombie\.scripting\.objects\.ItemBodyLocation, zombie\.inventory\.InventoryItem\);"
+            r"(?:(?!\n  [a-z]).)*?BodyLocationGroup\.isMultiItem:",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：部位能不能同時穿多件）",
+        "class": "zombie.characters.WornItems.BodyLocationGroup",
+        "depends": [
+            r"public boolean isMultiItem\(zombie\.scripting\.objects\.ItemBodyLocation\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：物品所在的容器與地上物件）",
+        "class": "zombie.inventory.InventoryItem",
+        "depends": [
+            r"public zombie\.inventory\.ItemContainer getContainer\(\);",
+            r"public zombie\.iso\.objects\.IsoWorldInventoryObject getWorldItem\(\);",
+            r"public int getID\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（前提：移出物品欄後 getContainer() 是 null）",
+        "class": "zombie.inventory.ItemContainer",
+        "depends": [
+            # Remove(InventoryItem)（ItemContainer.java:2084-2094）
+            r"public void Remove\(zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?aconst_null\s+\d+: putfield\s+#\d+\s+"
+            r"// Field zombie/inventory/InventoryItem\.container:",
+        ],
+        "exithint": [
+            # 官方若在物品離開容器時順手脫下（Remove 已經呼叫 removeFromHands，最自然的修法位置）
+            r"public void Remove\(zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?// Method zombie/characters/IsoGameCharacter\.removeWornItem:",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（前提：放到地上的物品有 getWorldItem()）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            # AddWorldInventoryItem(item, x, y, height, transmit, synchSpawn)（IsoGridSquare.java:6066-6126）
+            r"public zombie\.inventory\.InventoryItem AddWorldInventoryItem\(zombie\.inventory\.InventoryItem, float, float, float, boolean, boolean\);"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/inventory/InventoryItem\.setWorldItem:",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：IsoCell.addToProcessItems）",
+        "class": "zombie.iso.IsoCell",
+        "depends": [
+            # IsoCell.java:2294-2301：取消待移除、沒有才加入
+            r"public void addToProcessItems\(zombie\.inventory\.InventoryItem\);",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（依賴：getOnlinePlayers 在伺服器回 GameServer.getPlayers）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            # LuaManager.java:4474-4480
+            r"getOnlinePlayers\(\);(?:(?!\n  \S)[\s\S])*?// Field zombie/network/GameServer\.server:Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/network/GameServer\.getPlayers:",
+        ],
+    },
 ]
 
 

@@ -26,6 +26,17 @@
   > `[MinidoracatFixes] MDFX_WindowFaceGuard: vanilla refused north-facing window <圖塊> on its north frame …`。
   > 四組的圖塊是 `fixtures_windows_white`、`fixtures_windows_metal`、`fixtures_windows_church`、`fixtures_windows_wood`。
 
+- **多人遊戲把穿著的背包或衣物放到地上後，身上還畫著它、要重新登入才好**。多人遊戲用右鍵「放置物品」把正穿著的背包放到地上，
+  背包已經在地上，背上卻還畫著，背包給的快捷列欄位也不消失，重新登入才恢復；開著會更換角色外觀的 MOD（幻化類）時特別容易遇到。
+  原因是要不要先脫下由玩家的遊戲在放下那一刻判斷，判斷錯時伺服器只把物品放到地上、沒有清掉穿戴。本修正讓伺服器每秒檢查一次：
+  穿著的物品如果已經在地上或在別的容器裡，連兩次檢查都一樣，就從穿戴拿掉並通知所有玩家的遊戲，一到兩秒內背上的東西與快捷列欄位就消失。
+  正常的穿、脫、換穿、扔掉完全不變。只在多人遊戲的伺服器執行，伺服器更新 MOD 並重啟後生效；單人不作用。
+
+  > 技術要點：每次介入在伺服器的 server-console.txt 印一行
+  > `[MinidoracatFixes] MDFX_StaleWornGuard removed stale worn item <物品>#<編號> (on the ground|in another container|re-created from a client list) from player="<帳號>" at <x>,<y>,<z> (#n)`
+  > （每次開機最多 20 行）。伺服器照玩家的遊戲送來的清單另外建立的穿戴物件，只有同一位玩家先前穿過同編號的真物品時才處理；
+  > 繃帶與傷口的模型不動。
+
 ## [42.22.2-0.17.1] - 2026-11-10
 
 ### 修正
