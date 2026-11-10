@@ -6,7 +6,7 @@ Project Zomboid Build 42 的常設修復合輯（client + server）。
 
 只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
 不加物品、不加介面、不加設定選項；正常遊玩的行為不變，只在原本會炸掉的
-地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器）、替伺服器補上它漏掉的多人死亡、強化伺服器對健康作弊的驗證，或讓存檔不會撐破引擎上限
+地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器）、替伺服器補上它漏掉的多人死亡、把多人遊戲裡掉到地板下的車放回地面、強化伺服器對健康作弊的驗證，或讓存檔不會撐破引擎上限
 （看得到的行為差異都登記在 docs/fixes.md 各項，例如沒人的區域裡，枯死／腐爛作物慢慢變成踩爛外觀的轉換會暫停
 （`MDFX_FarmingGosPrune`），多人遊戲「重新連線後舊角色又活過來」改成一律算死亡（`MDFX_DeathSync`），沒有健康作弊權限的帳號不能再用它（`MDFX_HealthCheatPermission`））。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件；遊戲更新後跑
@@ -41,6 +41,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_GosDuplicateNewGuard` | client | 伺服器把連線加進廣播表，比打包連線清單（全域物件的整份清單）早了一段登入驗證（Steam 實測約 2 秒）；這段時間新增的作物、營火等全域物件同時出現在清單與延後的新增封包，原版 `CGlobalObjectSystem:newLuaObjectAt`（`CGlobalObjectSystem.lua:69-72`）不容許同座標已有物件，玩家進遊戲那一刻每個各跳兩條錯誤（`already an object at`＋`getModData of non-table`；資料沒壞，Java 照樣寫入）。`MDFX_FarmingGosPrune` 在區域載入時整批重建作物，讓它從零星變成一次數十條。同座標已有物件就沿用，伺服器送來的資料照原版寫入 |
 | `MDFX_ChargerIdleGuard` | shared | 原版 `IsoCarBatteryCharger.update` 對沒放電池或沒電的充電器每幀 `setActivated(false)`，而 `setActivated` 不比對狀態就 `IsoGenerator.updateGenerator`，附近發電機下一幀整份重跑 `setSurroundingElectricity`（逐件翻譯、現場編譯 regex）；伺服器與每個附近的客戶端都每幀做。沒啟動的充電器暫時移出每幀更新清單，一啟動就放回（自己開的當下、別人開的下一 tick）；充電行為與原版相同 |
 | `MDFX_DeathSync` | shared | 多人遊戲被殭屍圍住拖倒（沙盒 `ZombiesDragDown`）的死亡由受害者的客戶端判定（`PlayerHitReactionState`、`IsoPlayer.updateDeathDragDown` 只在客戶端 `Kill`）；伺服器要收到殭屍命中、再用自己看到的攻擊殭屍數算出拖倒才跟著 `Kill`（`Bite.process`），命中沒送到或伺服器算出的數不到門檻時，伺服器上的角色一直活著：不記死亡、不建屍體，按重生時 `ConnectCoopPacket` 看到舊角色還活著就拒絕，畫面全黑只剩介面；重連後有時回到原角色，有時要建新角色、屍體與裝備全沒。客戶端在 `OnPlayerDeath` 送指令，伺服器只處理寄件者自己的角色：還活著、沒開無敵、出生滿 30 秒（擋下重生之後才到的舊指令）就照原版伺服器路徑 `Kill(nil)` 再 `die()`，記錄死亡、屍體連同裝備留在原地、重生正常；伺服器已處理過的死亡不動。補處理與擋下各在伺服器記一行玩家與位置（每次開機各最多 20 行）；單人不作用 |
+| `MDFX_VehicleSinkGuard` | client（只在多人客戶端作用） | 多人遊戲裡車的物理在駕駛（或開車撞到它的人）的客戶端算，伺服器照收客戶端回報的高度；車被算到地板下時，原版 `BaseVehicle.update` 只用物理高度推算樓層、不放回地面（只有從存檔載入時夾高度）：坐在車上畫面全黑，下車後車陷在地下，伺服器照存，重登也一樣。客戶端每幀看本機模擬的車（`isLocalPhysicSim`）：物理原點比所在樓層地板低 0.25 以上、那一格有地板，就用原版 `setWorldTransform` 放回地面上（水平位置與方向不變）；翻覆又低於地板一層以上的先用 `setAngles` 扶正、保留車頭方向，翻覆而只低一點的照原版。判定條件與 `MinidoracatJavaPatchFor42` 的客戶端修補 W65 相同，可並存。每次放回在玩家 console 記一行（每次開機最多 20 行）；單人與伺服器不作用 |
 | `MDFX_HealthCheatPermission` | shared（只在伺服器作用） | 強化伺服器端驗證：健康作弊（管理員功能）只接受有 `UseHealthCheat` 的帳號；管理員對別人作弊時由對方客戶端轉回的那一筆照常放行，其餘拒絕；參數不對只拒絕、不再讓伺服器丟錯。管理員照原版。每次拒絕在伺服器記一行名稱、SteamID、目標與動作（每個連線每次開機最多 20 行；名稱由客戶端提供，認人看 SteamID）；單人與客戶端不作用 |
 | `MDFX_StaleRoomGuard` | client | **已退場**（42.21 官方在移除自建建築時一併重設它覆蓋的格子；補丁只在找到失效格子時動作，保留為 regression 保險）。42.20.4：拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單 |
 | `MDFX_Guard`（骨架，非修復） | shared | server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |

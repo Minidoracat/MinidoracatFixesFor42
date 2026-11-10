@@ -1905,6 +1905,89 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 `check_vanilla_alignment.py` 的前提條目轉 CHANGED 或退場提示出現時，
 重跑 E2E `health-cheat` 拿掉修正檔的那一輪：一般帳號改不了別人、管理員三項照樣過、壞參數不丟錯，就移出本檔。
 
+## MDFX_VehicleSinkGuard — 多人遊戲開車時車掉到地板下（畫面全黑、車陷在地下、重登也一樣）
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_VehicleSinkGuard.lua` |
+| 影響版本 | Build 42.22.2 實測（反編譯快照 `42.22.2-20261109`；`BaseVehicle.update` 的寫法 42.21 相同） |
+| 端 | 多人遊戲的客戶端（`isClient()`；單人與伺服器不作用） |
+| 類型 | 原版**不把掉到地板下的車放回地面**；事後放回，不處理車為什麼掉下去 |
+| 狀態 | **現役**（`42.22.2-0.17.1` 之後的下一版起） |
+
+### 症狀
+
+- 多人遊戲開車時（高速行駛、碰撞，或畫面突然被拉回之後）畫面突然全黑，只剩介面與小地圖。
+- 下車後車身陷在地面下、上不去；重新登入也一樣。
+- 玩家回報紀錄與成因分析在 `MinidoracatServerAnalyze` 的事件報告（2026-11-10）。
+
+### 根因（行號為 42.22.2 反編譯快照）
+
+- 多人遊戲裡，車的物理只在駕駛（或開車撞到它的人）的客戶端算（`isLocalPhysicSim()`：授權 `Local`／`LocalCollide`）；伺服器照收客戶端回報的位置與高度
+  （`VehiclePhysicsPacket.processServer` 直接寫入，沒有夾樓層）。
+- 原生物理在一次碰撞、或車被拉到地面碰撞體還沒建好的地方時，可能把車推到地板下。`BaseVehicle.update()`（`BaseVehicle.java:3402-3451`）只用物理高度
+  推算樓層，不把車放回地板以上；原版只有從存檔載入時（`BaseVehicle.load`，`:2738-2740`）把高度夾在樓層地板以上。
+- 坐在車上時鏡頭跟著車的物理高度，原點在地板下就全黑；車一路往下掉（對照組 5 秒掉到 −145），伺服器照那個高度存檔，重新登入拿到的還是地下的車。
+
+### 修法
+
+- **掛點**：`OnTick`（`IngameState.updateInternal` 在 `IsoWorld.update` 之後才分派，所有車的 `update` 已跑完）。只在 `isClient()` 時做事。
+- **看哪些車**：`getCell():getVehicles()`（回 `Set`，用一個重複使用的 `ArrayList:addAll` 取出）裡 `isLocalPhysicSim()` 的車。
+- **判定**（和 `MinidoracatJavaPatchFor42` 的客戶端修補 W65 相同）：物理原點（`getWorldTransform():getOrigin():y()`）比所在樓層地板
+  （`floor(getZ()) × 2.44949`）低 0.25 以上，而且那一格 `hasFloor()`。翻覆的車（`getUpVectorDot() < 0.8`，原版 `MINIMUM_DOT_UPRIGHT`）要低於地板一層以上才處理。
+- **放回**：翻覆的先用原版 `setAngles(0, 車頭角度, 0)` 扶正（車頭角度由前向量的水平分量算出，方向不變）；再把原點的高度改成放回高度，
+  用原版 `setWorldTransform` 寫回（客戶端走原生 `teleportVehicle`，速度一併歸零）。水平位置不動。本機下一則車輛物理封包就把地面上的高度送給伺服器。
+- **放回高度**：樓層地板＋原版 `CarController` 生成車輛的算法 `−min(模型偏移＋第一個輪子偏移－輪半徑, 重心偏移－車身高÷2)`，至少 0.1。
+- **自保**：每幀整段 `pcall`；出錯就停用本補丁並印一次。缺 `Transform`／`Vector3f`／`ArrayList`／`OnTick` 等印 `NOT installed`、不登記。
+- **診斷**：每次放回印一行 `MDFX_VehicleSinkGuard vehicle <編號> <車型> at <x>,<y> (<授權描述>): physics height … is below the floor of level …; [flipped (up …), set upright keeping its heading, ]lifted to … (#n)`，
+  每次啟動最多 20 行（之後照樣放回、不再記）。使用者要能從玩家 console 統計發生次數，所以不是一個 session 一次。
+
+### 與 W65 的差異
+
+- **放回高度的輪半徑用上限 0.5**：Lua 讀不到 `VehicleScript.Wheel.radius`（public 實例欄位、沒有 getter；Kahlua 只曝露方法與 public static 欄位）。
+  原版 130 個有輪子的車輛腳本，輪半徑乘模型縮放最大 0.273，所以車放在比停放高度略高的地方、自己落回地面。實測 SUV：停放高度 0.320、放回 0.610，約 1.4 秒落定。
+  官方替 `Wheel` 加 `getRadius` 之後改讀實際值（`check_vanilla_alignment.py` 有退場提示）。
+- **不另外把速度歸零**：W65 自己清速度；Lua 沒有對應的 setter，靠原生 `teleportVehicle` 清（實測放回後下一拍速度 0.1～0.2、之後靜止）。
+- **並存**：裝了修補包的客戶端，W65 在車的 `update` 裡先放回，本補丁在同一幀稍後看到的高度已經正常，不介入。
+
+### 與原版的差異
+
+- 掉到地板下的本機模擬車會被放回地面（原版一路往下掉）。只在原版本來就壞掉的狀態下介入；沒掉下去的車、翻覆而只低一點的車照原版。使用者 2026-11-10 同意。
+
+### 已知限制
+
+- 不處理車為什麼掉下去；只在掉下去之後放回，放回時車從略高於地面的地方落下。
+- 原點在地板下、那一格卻沒有地板的車（地圖邊緣、還沒載入的格子）照原版。
+- 已經陷在地下、沒有人在開的車不處理：它不由任何客戶端模擬，伺服器重新從存檔載入那台車時原版會夾回地板。
+- 單人遊戲的車不由客戶端授權模擬（`isLocalPhysicSim()` 恆為 false），本補丁不作用。
+- 伺服器端沒有等價的防護：沒裝本 MOD 的客戶端（或改過的客戶端）回報的地下高度，伺服器照收。那是 `MinidoracatJavaPatchFor42` 伺服器修補 W64 的範圍。
+
+### 驗證
+
+`lua scripts/test_vehicle_sink_guard.lua` — 66 項，全綠。假 Java 端照快照形狀模擬車輛（物理原點、授權、朝上程度、前向量）、`setAngles`、`setWorldTransform`、
+車輛腳本與 `Set` 形狀的車輛清單。涵蓋：淺於門檻不動、剛過門檻放回、樓上的車以該層地板為準、翻覆而不到一層不動、翻覆又超過一層扶正並保留車頭方向、
+沒有地板或格子沒載入不動、非本機模擬不動、單人與伺服器不動、沒有輪子的車與模型偏移缺值的放回高度、同一幀已被放回的車不再動（W65 並存）、
+log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT installed`、重複載入不疊。
+
+**mutation 驗證**（`--mutants`，35 個全部抓到）：每個判定條件、每個常數、放回高度公式的每一項、扶正角度、授權過濾、`isClient` 閘門、log 上限、`pcall` 與停用各一個以上。
+
+`python scripts/check_vanilla_alignment.py` 登記 10 條（Java 指紋）：成因兩條（`BaseVehicle.update` 恰一個 `setWorldTransform`、沒有夾高度；
+`VehiclePhysicsPacket.processServer` 沒有夾樓層）、放回高度公式的來源（`CarController` 建構子）、依賴（`VehicleScript`、`Wheel`、`Transform.getOrigin`、
+`IsoGridSquare.hasFloor`、`IsoCell.getVehicles` 回 `Set`、`LuaManager$Exposer` 曝露 `Transform`／`Vector3f`）、前提（`OnTick` 在 `IsoWorld.update` 之後）；
+退場提示：`Wheel` 出現 `getRadius`。
+
+實機（`fixes-e2e` skill 的 `vehicle-sink`，2026-11-10，42.22.2 專用伺服器＋一個客戶端，原版伺服器、沒有任何 Java 修補）：
+
+- 修正組 `fxvs-fix-1110a`：`RESULT PASS steps=14 checks=17`。怠速、原點在地板下 0.10、翻覆而在地板下 1.2 都不介入；翻覆的車掉過一層（−2.475）那一幀扶正放回；
+  四輪朝天、車頭 30°、高度 −20 的車下一拍回到 0.610、朝上 1.000、車頭仍 30°，守衛恰好介入一次；之後 15 秒高度 0.320、速度 0、守衛沒有再介入，
+  伺服器記的高度 0.320、朝上 1.000；正的車設到地板下 0.6 下一拍放回、不扶正。每幀成本：附近 4 台車時 4 µs（參考值）。兩端沒有 `NOT installed`、沒有停用訊息。
+- 對照組 `fxvs-ctl-1110a`（把本檔拿掉）：同樣設到 −20，5 秒後高度 −145.8、仍四輪朝天、速度 50，畫面全黑只剩介面。
+
+### 可退場條件
+
+官方在 `BaseVehicle.update()` 把掉到地板下的車放回地面，或伺服器收車輛高度時夾樓層。`check_vanilla_alignment.py` 的兩條成因任一轉 CHANGED 時，
+重跑 E2E `vehicle-sink` 的對照組（`--define mode=control`）：車自己回到地面就移出本檔。
+
 ---
 
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`

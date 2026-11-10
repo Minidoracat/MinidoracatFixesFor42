@@ -1021,6 +1021,124 @@ FIXES = [
             r"\d+: invokeinterface\s+#\d+,\s+3\s+// InterfaceMethod se/krka/kahlua/vm/KahluaTable\.rawset:",
         ],
     },
+    {
+        "name": "MDFX_VehicleSinkGuard（成因：update 不把掉到地板下的車放回）",
+        "class": "zombie.vehicles.BaseVehicle",
+        "crash": [
+            # update()（42.22.2 BaseVehicle.java:3402-3451）只用物理高度推算樓層：整個方法恰一個 setWorldTransform
+            # （格子沒載入時把車夾回 chunk 的那一個），沒有 PZMath.clamp。轉紅＝官方在 update 補了放回地面，本修復可以退場
+            r"public void update\(\);(?:(?!\n  \S)(?!// Method setWorldTransform:)(?!PZMath\.clamp)[\s\S])*"
+            r"// Method setWorldTransform:\(Lzombie/core/physics/Transform;\)V"
+            r"(?:(?!\n  \S)(?!// Method setWorldTransform:)(?!PZMath\.clamp)[\s\S])*(?=\n  \S)",
+        ],
+        "formula": [
+            # 樓層＝floor(物理高度 ÷ 2.44949 + 0.05)：守衛的 LEVEL_HEIGHT 與「車所在樓層」（getZ）都依這一段
+            r"public void update\(\);(?:(?!\n  \S)[\s\S])*?// float 2\.44949f\s+\d+: fdiv\s+\d+: ldc(?:_w)?\s+#\d+\s+// float 0\.05f\s+"
+            r"\d+: fadd\s+\d+: invokestatic\s+#\d+\s+// Method zombie/core/math/PZMath\.fastfloor:\(F\)I",
+            # 翻覆門檻 MIN_UPRIGHT 抄自這個常數（javap -c 不印值，值在 BaseVehicle.java:238）
+            r"public static final float MINIMUM_DOT_UPRIGHT;",
+        ],
+        "depends": [
+            r"public boolean isLocalPhysicSim\(\);",
+            r"public zombie\.core\.physics\.Transform getWorldTransform\(zombie\.core\.physics\.Transform\);",
+            # setWorldTransform（:4083-4101）在客戶端呼叫原生 teleportVehicle（原生端會清掉線速度與角速度）
+            r"public void setWorldTransform\(zombie\.core\.physics\.Transform\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/core/physics/Bullet\.teleportVehicle:",
+            # setAngles（:4114-4129）：rotationXYZ 後整個 transform 經 setWorldTransform 放回，原點不變
+            r"public void setAngles\(float, float, float\);(?:(?!\n  \S)[\s\S])*?rotationXYZ(?:(?!\n  \S)[\s\S])*?"
+            r"// Method setWorldTransform:",
+            r"public float getUpVectorDot\(\);",
+            r"public org\.joml\.Vector3f getForwardVector\(org\.joml\.Vector3f\);",
+            r"public short getId\(\);",
+            r"public java\.lang\.String getAuthorizationDescription\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（成因：伺服器照收客戶端回報的高度）",
+        "class": "zombie.network.packets.vehicle.VehiclePhysicsPacket",
+        "crash": [
+            # processServer：setZ 與 jniTransform 原點直接寫入，整個方法沒有 clamp。轉紅＝官方在伺服器夾樓層，回頭評估退場
+            r"public void processServer\(zombie\.network\.PacketTypes\$PacketType, zombie\.core\.raknet\.UdpConnection\);"
+            r"(?:(?!\n  \S)(?!clamp)[\s\S])*// Method zombie/vehicles/BaseVehicle\.setZ:\(F\)F"
+            r"(?:(?!\n  \S)(?!clamp)[\s\S])*(?=\n  \S|\n\})",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（放回高度的公式來源：CarController 生成車輛）",
+        "class": "zombie.core.physics.CarController",
+        "formula": [
+            # 建構子（CarController.java:70-80）：−min(模型偏移＋輪子偏移－輪半徑, 重心偏移－車身高÷2)。守衛照抄，輪半徑改用上限
+            r"public zombie\.core\.physics\.CarController\(zombie\.vehicles\.BaseVehicle\);(?:(?!\n  \S)[\s\S])*?"
+            r"VehicleScript\.getModelOffset:(?:(?!\n  \S)[\s\S])*?VehicleScript\$Wheel\.getOffset:(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/scripting/objects/VehicleScript\$Wheel\.radius:F(?:(?!\n  \S)[\s\S])*?"
+            r"VehicleScript\.getCenterOfMassOffset:(?:(?!\n  \S)[\s\S])*?VehicleScript\.getExtents:",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（依賴：VehicleScript）",
+        "class": "zombie.scripting.objects.VehicleScript",
+        "depends": [
+            r"public org\.joml\.Vector3f getModelOffset\(\);",
+            r"public org\.joml\.Vector3f getExtents\(\);",
+            r"public org\.joml\.Vector3f getCenterOfMassOffset\(\);",
+            r"public int getWheelCount\(\);",
+            r"public zombie\.scripting\.objects\.VehicleScript\$Wheel getWheel\(int\);",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（依賴：輪子；輪半徑只有欄位、Lua 讀不到）",
+        "class": "zombie.scripting.objects.VehicleScript$Wheel",
+        "depends": [
+            r"public org\.joml\.Vector3f getOffset\(\);",
+        ],
+        "formula": [
+            # WHEEL_RADIUS 抄這個欄位的預設值（VehicleScript.java:2697，0.5）
+            r"public float radius;",
+        ],
+        "exithint": [
+            # 官方加了 getter：守衛可以改讀實際輪半徑，放回高度就和原版生成車輛完全相同
+            r"public float getRadius\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（依賴：Transform.getOrigin）",
+        "class": "zombie.core.physics.Transform",
+        "depends": [
+            r"public org\.joml\.Vector3f getOrigin\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（依賴：IsoGridSquare.hasFloor）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            r"public boolean hasFloor\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（依賴：IsoCell.getVehicles 回 Set，守衛以 ArrayList.addAll 取出）",
+        "class": "zombie.iso.IsoCell",
+        "depends": [
+            r"public java\.util\.Set<zombie\.vehicles\.BaseVehicle> getVehicles\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（依賴：Transform／Vector3f／輪子曝露給 Lua）",
+        "class": "zombie.Lua.LuaManager$Exposer",
+        "depends": [
+            r"// class zombie/core/physics/Transform\s+\d+: invokevirtual #\d+\s+// Method setExposed:",
+            r"// class org/joml/Vector3f\s+\d+: invokevirtual #\d+\s+// Method setExposed:",
+            r"// class zombie/scripting/objects/VehicleScript\$Wheel\s+\d+: invokevirtual #\d+\s+// Method setExposed:",
+        ],
+    },
+    {
+        "name": "MDFX_VehicleSinkGuard（前提：OnTick 在所有車的 update 之後）",
+        "class": "zombie.gameStates.IngameState",
+        "depends": [
+            # updateInternal：IsoWorld.update（車的 update 在裡面）之後才 onTick
+            r"updateInternal\(\);(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoWorld\.update:\(\)V(?:(?!\n  \S)[\s\S])*?"
+            r"// Method onTick:\(\)V",
+        ],
+    },
 ]
 
 
