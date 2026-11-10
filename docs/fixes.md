@@ -2056,7 +2056,7 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
 - 原版對照（MOD 樹沒有本檔）多人 `fxwf-ctl-mp-1110e`、單人 `fxwf-ctl-sp-1110d`：`RESULT PASS steps=17 checks=12`。北向窗拆下後游標指回原窗框 `canCreate=false`；
   不經游標直接排放置動作，完成端 `canPlaceInternal=false`、不放、物品留在背包。西向窗拆下再放回成功。舊款西向窗指到同一個北牆窗框，游標自己換成北向並放得上。
   另外三組的北向窗（`fixtures_windows_metal_1`、`_church_1`、`_wood_1`）游標同樣被拒。四組實機都讀到 `hasFaces=false`。
-- 修正組（收錄前的同一份程式，`--src` 指向匯出的 MOD 樹）多人 `fxwf-fix-mp-1110e`、單人 `fxwf-fix-sp-1110c`：`RESULT PASS steps=14 checks=10`。北向窗放回原窗框，伺服器那一格有 `fixtures_windows_white_25`；
+- 修正組多人 `fxwf-fix-mp-1110f`、單人 `fxwf-fix-sp-1110d`（收錄的 commit `54055b5`）：`RESULT PASS steps=14 checks=10`。北向窗放回原窗框，伺服器那一格有 `fixtures_windows_white_25`；
   另外三組游標可放（沒有實際放）；西向窗與「北向窗指到西牆窗框」和對照組相同。客戶端與伺服器各一行診斷，沒有 `NOT installed`、`re-check threw`。
 
 玩家另外回報的兩格西向窗（7320,8539、7322,8536）沒有重現：7320,8539 那扇拆下再放回，多人、單人多輪都成功，原因沒查到。
