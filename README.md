@@ -6,9 +6,9 @@ Project Zomboid Build 42 的常設修復合輯（client + server）。
 
 只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
 不加物品、不加介面、不加設定選項；正常遊玩的行為不變，只在原本會炸掉的
-地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器）、替伺服器補上它漏掉的多人死亡、把多人遊戲裡掉到地板下的車放回地面、讓原版判錯方向的北向新款窗裝得回去、把已經放到地上卻還留在穿戴清單的物品從穿戴拿掉、讓缺了幾片的多格物件用大錘敲得掉、強化伺服器對健康作弊的驗證，或讓存檔不會撐破引擎上限
+地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器）、替伺服器補上它漏掉的多人死亡、把多人遊戲裡掉到地板下的車放回地面、讓原版判錯方向的北向新款窗裝得回去、把已經放到地上卻還留在穿戴清單的物品從穿戴拿掉、讓缺了幾片的多格物件用大錘敲得掉、強化伺服器對健康作弊與大錘拆除的驗證，或讓存檔不會撐破引擎上限
 （看得到的行為差異都登記在 docs/fixes.md 各項，例如沒人的區域裡，枯死／腐爛作物慢慢變成踩爛外觀的轉換會暫停
-（`MDFX_FarmingGosPrune`），多人遊戲「重新連線後舊角色又活過來」改成一律算死亡（`MDFX_DeathSync`），沒有健康作弊權限的帳號不能再用它（`MDFX_HealthCheatPermission`））。每一項修復都在
+（`MDFX_FarmingGosPrune`），多人遊戲「重新連線後舊角色又活過來」改成一律算死亡（`MDFX_DeathSync`），沒有健康作弊權限的帳號不能再用它（`MDFX_HealthCheatPermission`），大錘拆除的程式被 MOD 換掉時，不符合原版伺服器規則的拆除照樣拒絕（`MDFX_SledgehammerGuard`））。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件；遊戲更新後跑
 `python scripts/check_vanilla_alignment.py` 一鍵確認各修復的 vanilla 前提是否仍成立。
 
@@ -44,7 +44,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_VehicleSinkGuard` | client（只在多人客戶端作用） | 多人遊戲裡車的物理在駕駛（或開車撞到它的人）的客戶端算，伺服器照收客戶端回報的高度；車被算到地板下時，原版 `BaseVehicle.update` 只用物理高度推算樓層、不放回地面（只有從存檔載入時夾高度）：坐在車上畫面全黑，下車後車陷在地下，伺服器照存，重登也一樣。客戶端每幀看本機模擬的車（`isLocalPhysicSim`）：物理原點比所在樓層地板低 0.25 以上、那一格有地板，就用原版 `setWorldTransform` 放回地面上（水平位置與方向不變）；翻覆又低於地板一層以上的先用 `setAngles` 扶正、保留車頭方向，翻覆而只低一點的照原版。判定條件與 `MinidoracatJavaPatchFor42` 的客戶端修補 W65 相同，可並存。每次放回在玩家 console 記一行（每次開機最多 20 行）；單人與伺服器不作用 |
 | `MDFX_WindowFaceGuard` | shared | Build 42 新增的四個窗 tileset（`fixtures_windows_white`／`_metal`／`_church`／`_wood`）沒有換面資料（同名的一組超過 4 張，引擎不寫 `Noffset`／`Woffset`），`ISMoveableSpriteProps:canPlaceMoveableInternal` 把北向（`Facing=N`）的窗當成西向、去找西牆窗框：用撬棍拆下後裝不回原本的北牆窗框，多人遊戲時伺服器也拒絕。原版說放不上、而且是北向的窗時，暫時把這個實例的 `facing` 改成 `"S"` 再問原版一次，放得上就放行；窗框、已有的窗、技能、工具仍由原版判，原本放得上的情況不變，這些窗仍不能在北、西之間換面。每次開機第一次放行印一行 |
 | `MDFX_StaleWornGuard` | server（多人伺服器與單人；多人客戶端不安裝） | 「放置物品」要不要先脫下，由客戶端排動作時用 `isEquipped` 判斷（`ISPlace3DItemCursor:create`）；`ISDropWorldItemAction:complete` 只把物品放到地上、移出物品欄，不碰穿戴。客戶端那一刻判斷錯（例：外觀 MOD 在畫面繪製期間把穿戴清單換成複製品），或多人伺服器在脫下後照客戶端的舊清單把它穿回（`SyncClothingPacket.process`；物品欄裡沒有的編號還會另建一件同編號的物件穿上），物品就在地上、穿戴清單卻還有它：背上照畫、背包給的快捷列欄位不消失，重登（單人重新讀檔）才好。每秒看一次玩家的穿戴（伺服器看線上玩家；單人看本機玩家，掛 `OnTickEvenPaused`，那時外觀 MOD 還沒換清單）、記下每位玩家穿過而且在主物品欄裡的編號：在地上或在別的容器裡的物品，或頂替它的另建物件（同一位玩家穿過同編號的真物品），同一個編號連兩次檢查都成立就用原版 `removeWornItem` 拿掉，伺服器把新清單送給所有客戶端。沒有先例的另建物件（繃帶與傷口模型）不動。每次介入記一行物品、玩家與位置（每次開機最多 20 行） |
-| `MDFX_SledgeRemnantGuard` | server（多人伺服器與單人；多人客戶端不安裝） | 佔好幾格的物件（2×2 的巨石、雙格長椅這類，圖塊屬於多格圖塊組）少了幾片時，大錘完成的 `ISDestroyStuffAction:complete` 用一個參數的 `transmitRemoveItemFromSquare` 移除目標，引擎要整組每一片都找得到才移除，找不齊就回 -1、什麼都不做，`complete` 照樣回 true：游標是綠的、動作跑完，物件留在原地，永遠拆不掉（世界生成只生成一半的巨石就是這樣）。原函式回 true、目標還在格子上、是多格圖塊、沒有 component、確定缺片（照引擎的走法看這一組的每一格：載入了卻沒有那一格的圖塊才算，沒載入的格子不算），而且原版伺服器端的兩道拒絕（沒大錘、`SledgehammerOnlyInSafehouse`）都不成立時，用同一個呼叫再問引擎一次，仍找不齊才只移除被敲的那一片；其餘的片一片一片敲。完整的多格物件、被拒絕的大錘動作（含別的 MOD 的權限檢查）照原版 |
+| `MDFX_SledgehammerGuard` | server（多人伺服器與單人；多人客戶端不安裝） | 兩件事包在 `ISDestroyStuffAction:complete` 同一個包裝裡。一、佔好幾格的物件（2×2 的巨石、雙格長椅這類，圖塊屬於多格圖塊組）少了幾片時，大錘完成用一個參數的 `transmitRemoveItemFromSquare` 移除目標，引擎要整組每一片都找得到才移除，找不齊就回 -1、什麼都不做，`complete` 照樣回 true：物件留在原地，永遠拆不掉（世界生成只生成一半的巨石就是這樣）。原函式回 true、目標還在格子上、是多格圖塊、沒有 component、確定缺片（照引擎的走法看這一組的每一格：載入了卻沒有那一格的圖塊才算，沒載入的格子不算）時，用同一個呼叫再問引擎一次，仍找不齊才只移除被敲的那一片。二、強化伺服器端驗證：呼叫原函式之前照原版 42.22 的伺服器規則（要帶著能用的大錘、`SledgehammerOnlyInSafehouse`）檢查一次，不過就回 false；原函式是原版時結果相同。每次拒絕記一行名稱、SteamID 與位置（每個連線每次開機最多 20 行） |
 | `MDFX_HealthCheatPermission` | shared（只在伺服器作用） | 強化伺服器端驗證：健康作弊（管理員功能）只接受有 `UseHealthCheat` 的帳號；管理員對別人作弊時由對方客戶端轉回的那一筆照常放行，其餘拒絕；參數不對只拒絕、不再讓伺服器丟錯。管理員照原版。每次拒絕在伺服器記一行名稱、SteamID、目標與動作（每個連線每次開機最多 20 行；名稱由客戶端提供，認人看 SteamID）；單人與客戶端不作用 |
 | `MDFX_StaleRoomGuard` | client | **已退場**（42.21 官方在移除自建建築時一併重設它覆蓋的格子；補丁只在找到失效格子時動作，保留為 regression 保險）。42.20.4：拆掉或改建玩家自建建築的牆後，原版客戶端移除舊房間卻沒重設部分格子，任何玩家站上去，看得到他的客戶端都在 `ParameterFirearmRoomSize.getRoomSize` 出錯後被踢回主選單 |
 | `MDFX_Guard`（骨架，非修復） | shared | server 端守衛的共用骨架：`isServer()` 閘門、vanilla 形狀檢查、marker 冪等、`OnGameBoot` 復查、診斷節流 |
@@ -132,7 +132,7 @@ Lua／Python／PowerShell 程式、文件，以及封面圖像（`preview.png`�
 不在本授權範圍內：
 
 - Project Zomboid © The Indie Stone。本 MOD 為非官方粉絲作品，不重新散布遊戲檔案；
-  `MDFX_WorldObjectCheckWeapon.lua`、`MDFX_ReloadSpeedGuard.lua` 與 `MDFX_SledgeRemnantGuard.lua` 內三段標示
+  `MDFX_WorldObjectCheckWeapon.lua`、`MDFX_ReloadSpeedGuard.lua` 與 `MDFX_SledgehammerGuard.lua` 內三段標示
   `vanilla :行號` 的等價實作，以及各檔頭註解、`scripts/check_vanilla_alignment.py`、
   `scripts/test_*.lua` 中的短引用，著作權仍屬 The Indie Stone，清單見 [NOTICE](NOTICE)。
 - CleanUI 等被修補的第三方 MOD 著作權屬其原作者；本專案只在執行期偵測與包裝，

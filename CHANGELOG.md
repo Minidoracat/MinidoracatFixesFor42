@@ -46,8 +46,18 @@
   只修大錘：缺片的家具仍然撿不起來、拆解不了。多人遊戲在伺服器執行，伺服器更新 MOD 並重啟後生效；單人更新 MOD 後就生效。
 
   > 技術要點：每次開機第一次介入時，伺服器的 server-console.txt（單人是 console.txt）印一行
-  > `[MinidoracatFixes] MDFX_SledgeRemnantGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit (a multi-tile object with missing pieces); removed that piece. …`。
+  > `[MinidoracatFixes] MDFX_SledgehammerGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit (a multi-tile object with missing pieces); removed that piece. …`。
   > 有 component 的多格物件（建造選單蓋的設施這類）不處理：缺片時原版沒有把裡面的東西倒出來，只移除一片會連內容一起刪掉。
+
+- **強化伺服器端驗證：大錘拆除照原版的伺服器規則檢查**。多人伺服器在大錘拆除之前，照原版的規則再檢查一次：
+  角色要帶著能用的大錘、離目標夠近；伺服器開了「大錘只能在安全屋用」時，要在允許自己用的安全屋裡（有建造作弊權限的帳號除外）。
+  不符合就拒絕、不拆任何東西。只用原版的大錘拆除時結果和原版相同；有些 MOD 會整個換掉大錘拆除的程式，這時也照原版的規則檢查。
+  伺服器更新 MOD 並重啟後生效。
+
+  > 技術要點：每次拒絕在 server-console.txt 印一行
+  > `[MinidoracatFixes] MDFX_SledgehammerGuard refused a sledgehammer hit (<規則>) on <圖塊> at <x>,<y>,<z> by player="<名稱>" onlineID=… steamid~… (#n)`
+  > （每個連線每次開機最多 20 行）。名稱由客戶端提供，認人看 SteamID；這裡的 SteamID 是近似值，
+  > 精確值看伺服器 Logs 的 `*_user.txt` 裡這位玩家 `fully connected` 那一行。
 
 ## [42.22.2-0.17.1] - 2026-11-10
 

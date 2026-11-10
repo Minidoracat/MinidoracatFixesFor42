@@ -214,7 +214,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]症狀[/b]：佔好幾格的物件（2×2 的大石頭、雙格長椅這類）少了其中幾片時，用大錘敲剩下的部分：游標是綠的、動作跑完、大錘照常耗損，東西卻還在原地，也沒有任何訊息，怎麼敲都敲不掉。單人與多人都會發生；常見的是地圖生成時只生成一半的大石頭。
 [*] [b]原因[/b]：遊戲移除佔好幾格的物件時，要先在周圍把整組的每一片都找到才動手；少了任何一片就整個不移除，大錘的動作卻照樣算完成。
 [*] [b]處理[/b]：大錘敲完、遊戲也判定可以拆，但東西還在原地時，再照原版的方式問遊戲一次；還是找不齊整組，就只移除你敲的那一片。剩下的片要一片一片敲。完整的大型物件照原版一次整組拆掉；沒有大錘、伺服器限制只能在安全屋用大錘、或其他 MOD 不准你拆的情況，照樣拆不了。
-[*] [b]記錄檔[/b]：每次開機第一次介入時，伺服器的 server-console.txt（單人是 console.txt）印一行 [MinidoracatFixes] MDFX_SledgeRemnantGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit …。
+[*] [b]記錄檔[/b]：每次開機第一次介入時，伺服器的 server-console.txt（單人是 console.txt）印一行 [MinidoracatFixes] MDFX_SledgehammerGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit …。
 [*] [b]生效範圍[/b]：多人遊戲在伺服器作用，伺服器更新本 MOD 並重啟後生效；單人更新本 MOD 後就生效。
 [*] [b]官方修好後[/b]：官方讓缺片的大型物件用大錘拆得掉之後移出。
 [/list]
@@ -226,6 +226,15 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]記錄檔[/b]：伺服器的 server-console.txt 每次拒絕印一行 [MinidoracatFixes] MDFX_HealthCheatPermission denied …，帶名稱、SteamID、目標與動作，方便服主找出外掛（每個連線每次開機最多 20 行）。名稱由客戶端提供，認人看 SteamID；這裡的 SteamID 是近似值（伺服器的 Lua 讀不到完整數字），精確值看同一秒伺服器 Logs 資料夾 *_cmd.txt 的那一行。
 [*] [b]生效範圍[/b]：只在多人遊戲的伺服器作用；單人不作用。
 [*] [b]官方修好後[/b]：等原版伺服器自己完整驗證健康作弊、而且管理員對別人作弊仍能用之後移出。
+[/list]
+=== 🧰 多人遊戲：大錘拆除照原版的伺服器規則
+[h3]強化伺服器端驗證：大錘拆除照原版的伺服器規則檢查[/h3]
+[list]
+[*] [b]處理[/b]：多人伺服器在大錘拆除之前，照原版的規則再檢查一次：角色要帶著能用的大錘、離目標夠近；伺服器開了「大錘只能在安全屋用」時，要在允許自己用的安全屋裡（有建造作弊權限的帳號除外）。不符合就拒絕、不拆任何東西。
+[*] [b]和原版的差異[/b]：只用原版的大錘拆除時，結果和原版相同。有些 MOD 會整個換掉大錘拆除的程式，這時也照原版的規則檢查。
+[*] [b]記錄檔[/b]：伺服器的 server-console.txt 每次拒絕印一行 [MinidoracatFixes] MDFX_SledgehammerGuard refused a sledgehammer hit …，帶規則、目標、位置、名稱與 SteamID（每個連線每次開機最多 20 行）。名稱由客戶端提供，認人看 SteamID；這裡的 SteamID 是近似值（伺服器的 Lua 讀不到完整數字），精確值看伺服器 Logs 資料夾 *_user.txt 裡這位玩家 fully connected 那一行。
+[*] [b]生效範圍[/b]：多人遊戲在伺服器作用，伺服器更新本 MOD 並重啟後生效；單人時結果和原版相同。
+[*] [b]官方修好後[/b]：常見的會換掉大錘拆除的 MOD 都帶上原版的規則之後移出。
 [/list]
 === ⚠️ 已知限制
 [list]

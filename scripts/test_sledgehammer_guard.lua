@@ -1,5 +1,5 @@
--- MDFX_SledgeRemnantGuard 離線自我檢查
--- 用法（repo 根目錄）： lua scripts/test_sledge_remnant_guard.lua [--mutants]
+-- MDFX_SledgehammerGuard 離線自我檢查
+-- 用法（repo 根目錄）： lua scripts/test_sledgehammer_guard.lua [--mutants]
 --
 -- 照載本機遊戲的原版 shared/TimedActions/ISDestroyStuffAction.lua（PZ_HOME 可改安裝目錄），大錘完成的那一段全部由原版做；
 -- Java 端用 Lua 照形狀模擬：格子的物件清單、多格圖塊組（SpriteGrid）、getCell():getGridSquare（沒建過的格子＝沒載入）、
@@ -9,6 +9,8 @@
 --   * 對照組（不載補丁）重現：完整的 2x2 巨石敲一下整組消失；只剩兩片的巨石 complete 回 true、物件還在
 --   * 修正組：完整的照原版（引擎只被呼叫一次）；缺片的敲哪片少哪片、回傳值不變、診斷行恰一次
 --   * 原版或外層／內層的包裝回 false（安全屋限定、權限拒絕）時不動
+--   * 原函式被整支換成沒有原版伺服器規則的版本時，照原版規則先擋（沒大錘、太遠、限定安全屋、目標已不在）；拒絕記 log
+--     （每個連線有上限、名稱淨化、目標已不在不記）；檢查本身出錯時原樣重拋、不呼叫原函式
 --   * 原版回 true 而留著的不是多格圖塊（別的 MOD 原地換牆）、或留著的是整組都在的多格物件：不動
 --   * 缺的那幾格沒載入：不當成缺片；確定缺片而引擎這次移得掉：照引擎的結果；單片移除沒成功：報失敗、不報 removed
 --   * 有 component 的殘片不動（原版沒倒 component 的內容）
@@ -19,7 +21,7 @@
 
 local PZ_HOME = os.getenv("PZ_HOME") or "D:/SteamLibrary/steamapps/common/ProjectZomboid"
 local VANILLA = PZ_HOME .. "/media/lua/shared/TimedActions/ISDestroyStuffAction.lua"
-local FIX = "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/media/lua/server/Fixes/MDFX_SledgeRemnantGuard.lua"
+local FIX = "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/42/media/lua/server/Fixes/MDFX_SledgehammerGuard.lua"
 
 local realPrint = print
 
@@ -193,7 +195,8 @@ function SLEDGE.damageCheck()
     return false
 end
 
--- opts.noSledge＝背包沒有大錘；opts.buildCheat＝建造作弊；opts.privileged＝角色的身分有 UseBuildCheat。
+-- opts.noSledge＝背包沒有大錘；opts.buildCheat＝建造作弊；opts.privileged＝角色的身分有 UseBuildCheat；opts.name＝客戶端給的名稱；
+-- SteamID 固定 76561198000000016（16 的倍數，轉成浮點數不失真）。
 -- 多人的一般玩家有身分、只是沒有那項權限；單人沒有身分（nil）
 local function player(x, y)
     local inv = { getFirstEvalRecurse = function(_, pred) return not opts.noSledge and pred(SLEDGE) and SLEDGE or nil end }
@@ -201,7 +204,8 @@ local function player(x, y)
     return { _class = "IsoPlayer", isBuildCheat = function() return opts.buildCheat == true end, isTimedActionInstant = function() return false end,
         getPerkLevel = function() return 5 end, getInventory = function() return inv end, getPrimaryHandItem = function() return SLEDGE end,
         getRole = function() return not opts.sp and role or nil end, getX = function() return x end, getY = function() return y end,
-        getZ = function() return 0 end }
+        getZ = function() return 0 end, getUsername = function() return opts.name or "tester" end,
+        getOnlineID = function() return opts.onlineID or 7 end, getSteamID = function() return 76561198000000016 end }
 end
 
 -- 重設全域、載原版，再視需要載補丁。o.client＝多人客戶端；o.sp＝單人；o.safehouseOnly＝伺服器選項 SledgehammerOnlyInSafehouse；
@@ -228,7 +232,10 @@ local function setup(srcs, withFix, o)
     Perks = setmetatable({}, { __index = name })
     CharacterActionAnims = setmetatable({}, { __index = name })
     Metabolics = setmetatable({}, { __index = name })
-    getServerOptions = function() return { getBoolean = function(_, k) return k == "SledgehammerOnlyInSafehouse" and opts.safehouseOnly == true end } end
+    getServerOptions = function()
+        if opts.optionsThrow then error("boom options") end
+        return { getBoolean = function(_, k) return k == "SledgehammerOnlyInSafehouse" and opts.safehouseOnly == true end }
+    end
     SafeHouse = { isSafeHouse = function()
         if opts.safeAllowed == nil then return nil end
         return { playerAllowed = function() return opts.safeAllowed end }
@@ -254,11 +261,11 @@ local function setup(srcs, withFix, o)
     end
     ISDestroyStuffAction = nil
     assert(load(srcs.vanilla, "=ISDestroyStuffAction.lua"))()
-    if withFix then assert(load(srcs.fix, "=MDFX_SledgeRemnantGuard.lua"))() end
+    if withFix then assert(load(srcs.fix, "=MDFX_SledgehammerGuard.lua"))() end
 end
 
 local function loadFix(srcs)
-    assert(load(srcs.fix, "=MDFX_SledgeRemnantGuard.lua"))()
+    assert(load(srcs.fix, "=MDFX_SledgehammerGuard.lua"))()
 end
 
 local function fireInit()
@@ -318,14 +325,14 @@ local function runAll(srcs, quiet)
         check(W.safe == 1 and W.single == 0, "fix: the engine is asked once on the normal path")
         check(hit(t.wall) == true and not W.has(7, 0, "walls_exterior_house_01_0") and W.safe == 2 and W.single == 0,
             "fix: a single-tile object is removed by vanilla alone")
-        check(printCount("MDFX_SledgeRemnantGuard") == 0, "fix: nothing logged when the guard does not act")
+        check(printCount("MDFX_SledgehammerGuard") == 0, "fix: nothing logged when the guard does not act")
     end)
 
     -- 修正組：建造作弊（不經過原版的大錘檢查）敲完整的，原版移掉之後補丁不再碰
     scenario(function()
         setup(srcs, true, { buildCheat = true, noSledge = true })
         local t = buildWorld()
-        check(hit(t.full) == true and fullGone() and W.safe == 1 and W.single == 0 and printCount("MDFX_SledgeRemnantGuard") == 0,
+        check(hit(t.full) == true and fullGone() and W.safe == 1 and W.single == 0 and printCount("MDFX_SledgehammerGuard") == 0,
             "fix: with build cheat a target vanilla already removed is left alone")
     end)
 
@@ -336,9 +343,9 @@ local function runAll(srcs, quiet)
         check(hit(t.half19) == true, "fix: the hit on a half boulder still returns true")
         check(not W.has(4, 0, "boulders_19") and W.has(4, 1, "boulders_16"), "fix: the piece that was hit is gone, the other one stays")
         check(W.safe == 2 and W.single == 1, "fix: vanilla call, one re-ask, one single-piece removal")
-        check(printCount("MDFX_SledgeRemnantGuard vanilla left boulders_19 at 4,0,0 standing") == 1, "fix: one diagnostic line with sprite and square")
+        check(printCount("MDFX_SledgehammerGuard vanilla left boulders_19 at 4,0,0 standing") == 1, "fix: one diagnostic line with sprite and square")
         check(hit(t.half16) == true and not W.has(4, 1, "boulders_16"), "fix: the second piece goes on its own hit")
-        check(printCount("MDFX_SledgeRemnantGuard") == 1, "fix: the second removal is not logged again")
+        check(printCount("MDFX_SledgehammerGuard") == 1, "fix: the second removal is not logged again")
         check(fullGone() == false and W.has(1, 0, "boulders_19"), "fix: the complete boulder next to it is untouched")
     end)
 
@@ -374,40 +381,115 @@ local function runAll(srcs, quiet)
         check(hit(t.half19) == nil and W.safe == 0 and W.single == 0, "fix: a nil result is passed through untouched")
     end)
 
-    -- 整支取代 complete 的 MOD 沒有原版伺服器端的兩道拒絕、照樣回 true：本補丁照原版再確認一次，不過就不拆
+    -- 整支取代 complete、沒有原版伺服器規則的 MOD（照樣用一個參數的移除、回 true）：本補丁照原版規則先擋，不呼叫它
     scenario(function()
+        local calls
         local function replaced(o)
             setup(srcs, false, o)
             local t = buildWorld()
-            ISDestroyStuffAction.complete = function(self) return true end
+            calls = 0
+            ISDestroyStuffAction.complete = function(self)
+                calls = calls + 1
+                self.item:getSquare():transmitRemoveItemFromSquare(self.item)
+                return true
+            end
             loadFix(srcs)
             return t
         end
         local t = replaced({ noSledge = true })
-        check(hit(t.half19) == true and W.has(4, 0, "boulders_19") and W.safe == 0 and W.single == 0,
-            "fix: no sledgehammer by vanilla's rule: the piece stays")
+        check(hit(t.full) == false and not fullGone() and calls == 0 and W.safe == 0,
+            "fix: no sledgehammer by vanilla's rule: refused before the replacement runs, the boulder stays")
+        check(printCount("refused a sledgehammer hit (no usable sledgehammer within reach) on boulders_19 at 1,0,0"
+            .. " by player=\"tester\" onlineID=7 steamid~76561198000000016 (#1)") == 1,
+            "fix: the refusal is logged with rule, target, name, onlineID and SteamID")
         t = replaced({ safehouseOnly = true })
-        check(hit(t.half19) == true and W.has(4, 0, "boulders_19") and W.safe == 0 and W.single == 0,
-            "fix: SledgehammerOnlyInSafehouse outside a safehouse: the piece stays")
+        check(hit(t.full) == false and not fullGone() and calls == 0, "fix: SledgehammerOnlyInSafehouse outside a safehouse: refused")
+        check(printCount("(SledgehammerOnlyInSafehouse outside an allowed safehouse)") == 1, "fix: the safehouse refusal names its rule")
         t = replaced({ safehouseOnly = true, safeAllowed = false })
-        check(hit(t.half19) == true and W.has(4, 0, "boulders_19") and W.safe == 0 and W.single == 0
-            and printCount("MDFX_SledgeRemnantGuard") == 0, "fix: a safehouse that does not allow the player: the piece stays, nothing logged")
+        check(hit(t.full) == false and not fullGone() and calls == 0, "fix: a safehouse that does not allow the player: refused")
+        t = replaced({ safehouseOnly = true, sp = true })
+        check(hit(t.full) == false and calls == 0, "fix: a character without a role is not privileged")
         t = replaced({ safehouseOnly = true, safeAllowed = true })
-        check(hit(t.half19) == true and not W.has(4, 0, "boulders_19"), "fix: inside a safehouse that allows the player the piece goes")
+        check(hit(t.full) == true and fullGone() and calls == 1, "fix: inside a safehouse that allows the player the hit goes through")
         t = replaced({ safehouseOnly = true, privileged = true })
-        check(hit(t.half19) == true and not W.has(4, 0, "boulders_19"), "fix: a role with UseBuildCheat is not bound by the safehouse option")
+        check(hit(t.full) == true and fullGone(), "fix: a role with UseBuildCheat is not bound by the safehouse option")
         t = replaced({ noSledge = true, buildCheat = true })
-        check(hit(t.half19) == true and not W.has(4, 0, "boulders_19"), "fix: build cheat needs no sledgehammer, as in vanilla")
+        check(hit(t.full) == true and fullGone(), "fix: build cheat needs no sledgehammer, as in vanilla")
+        t = replaced({ buildCheat = true, safehouseOnly = true })
+        check(hit(t.full) == false and not fullGone() and calls == 0,
+            "fix: build cheat does not exempt from SledgehammerOnlyInSafehouse, as in vanilla")
+        t = replaced({})
+        check(hit(t.half19) == true and not W.has(4, 0, "boulders_19") and calls == 1 and W.single == 1,
+            "fix: an allowed hit on a leftover piece goes through the replacement and the piece is removed")
+        check(printCount("refused") == 0, "fix: allowed hits are not logged as refusals")
+        t = replaced({})
+        check(ISDestroyStuffAction:new(player(t.full.sq.x + 3, t.full.sq.y + 0.5), t.full):complete() == false
+            and not fullGone() and calls == 0, "fix: too far from the target by vanilla's rule: refused")
+        check(printCount("refused a sledgehammer hit (no usable sledgehammer within reach)") == 1, "fix: the distance refusal is logged")
+        t = replaced({})
+        table.remove(t.half19.sq.objs, 1) -- 別人先拆掉了：目標已經不在格子上
+        check(hit(t.half19) == false and calls == 0 and printCount("refused") == 0,
+            "fix: a target already gone is refused like vanilla, without a refusal line")
+        replaced({ noSledge = true })
+        local weird = ISDestroyStuffAction:new(player(0.5, 0.5), {})
+        local ok, r = pcall(weird.complete, weird)
+        check(ok and r == false and calls == 0 and printCount("could not log a refused sledgehammer hit") == 1,
+            "fix: a failure while logging a refusal still refuses, without an error")
+        t = replaced({})
+        local nobody = setmetatable({ item = t.full }, ISDestroyStuffAction)
+        ok = pcall(nobody.complete, nobody)
+        check(not ok and calls == 0 and not fullGone(), "fix: a nil character fails like vanilla, without calling the replacement")
     end)
 
-    -- 這一下把大錘用壞：照原版的規則已經沒有大錘，殘片留到下一下
+    -- 拒絕的 log：每個連線每次開機最多 LOG_LIMIT 行，之後一行說明；客戶端給的名稱去掉控制字元與引號
+    scenario(function()
+        setup(srcs, true, { noSledge = true, name = "bad\nna\"me" })
+        local t = buildWorld()
+        for _ = 1, 23 do hit(t.half19) end
+        check(printCount("refused a sledgehammer hit") == 20 and printCount("reached LOG_LIMIT for player=\"bad?na?me\" onlineID=7") == 1,
+            "fix: refusals are logged up to the limit per connection, then one note")
+        check(printCount("by player=\"bad?na?me\"") == 20, "fix: control characters and quotes in the name are replaced")
+        check(W.has(4, 0, "boulders_19") and W.safe == 0, "fix: nothing is removed by refused hits")
+        opts.onlineID = 8
+        hit(t.half19)
+        check(printCount("refused a sledgehammer hit") == 21 and printCount("onlineID=8 steamid~") == 1,
+            "fix: another connection still gets its refusals logged")
+    end)
+
+    -- 規則檢查本身出錯（引擎 API 變了）：原版 complete 在同一處也會出錯。原樣重拋、只印一次，不呼叫原函式
+    scenario(function()
+        setup(srcs, false, { optionsThrow = true })
+        local t = buildWorld()
+        local calls = 0
+        ISDestroyStuffAction.complete = function(self)
+            calls = calls + 1
+            self.item:getSquare():transmitRemoveItemFromSquare(self.item)
+            return true
+        end
+        loadFix(srcs)
+        local ok, err = pcall(hit, t.wall)
+        check(not ok and string.find(tostring(err), "boom options", 1, true) and calls == 0
+            and W.has(7, 0, "walls_exterior_house_01_0"), "fix: a failing rule check is re-thrown and the replacement does not run")
+        ok = pcall(hit, t.full)
+        check(not ok and calls == 0 and not fullGone(), "fix: a complete object stays when the rule check fails")
+        check(printCount("could not check the server rules for a sledgehammer hit; NOT masking it (re-throwing): ") == 1,
+            "fix: the failing check is logged once")
+    end)
+
+    -- 目標是 nil：不檢查，交給原函式（原版回 false）
+    scenario(function()
+        setup(srcs, true)
+        buildWorld()
+        local a = ISDestroyStuffAction:new(player(0.5, 0.5), nil)
+        check(a:complete() == false and printCount("MDFX_SledgehammerGuard") == 0, "fix: a nil target is left to the original")
+    end)
+
+    -- 這一下把大錘用壞：規則在原函式之前就過了，和原版一樣這一下照拆
     scenario(function()
         setup(srcs, true, { breakOnHit = true })
         local t = buildWorld()
-        check(hit(t.half19) == true and W.has(4, 0, "boulders_19") and W.safe == 1 and W.single == 0
-            and printCount("MDFX_SledgeRemnantGuard") == 0, "fix: the hit that breaks the sledgehammer leaves the piece for the next one")
-        opts.breakOnHit, SLEDGE.broken = false, false
-        check(hit(t.half19) == true and not W.has(4, 0, "boulders_19"), "fix: the next hit with a working sledgehammer removes it")
+        check(hit(t.half19) == true and not W.has(4, 0, "boulders_19") and W.single == 1,
+            "fix: the hit that breaks the sledgehammer still removes the piece, as vanilla does for a complete object")
     end)
 
     -- 原版回 true 而物件留著，但不是多格圖塊（別的 MOD 原地換牆）：不動
@@ -421,7 +503,7 @@ local function runAll(srcs, quiet)
         -- 留著的是整組都在的多格物件（內層刻意不拆）：沒有缺片的證據，不碰，也不拿移除呼叫去問引擎
         check(hit(t.fullFar) == true and not fullGone() and W.has(2, 1, "boulders_17") and W.safe == 0 and W.single == 0,
             "fix: a complete group another mod kept in place is not removed")
-        check(printCount("MDFX_SledgeRemnantGuard") == 0, "fix: neither case is logged")
+        check(printCount("MDFX_SledgehammerGuard") == 0, "fix: neither case is logged")
     end)
 
     -- 缺的那幾格沒載入：分不出是缺片還是沒載入，不動
@@ -430,7 +512,7 @@ local function runAll(srcs, quiet)
         local t = buildWorld()
         W.squares["5,0"], W.squares["5,1"] = nil, nil
         check(hit(t.half19) == true and W.has(4, 0, "boulders_19") and W.safe == 1 and W.single == 0
-            and printCount("MDFX_SledgeRemnantGuard") == 0, "fix: pieces on squares that are not loaded do not count as missing")
+            and printCount("MDFX_SledgehammerGuard") == 0, "fix: pieces on squares that are not loaded do not count as missing")
     end)
 
     -- 確定缺片、但引擎這次移得掉（內層沒要求過移除）：照引擎的結果，不再補單片移除
@@ -441,7 +523,7 @@ local function runAll(srcs, quiet)
         loadFix(srcs)
         W.engineFixed = true
         check(hit(t.half19) == true and not W.has(4, 0, "boulders_19") and W.safe == 1 and W.single == 0
-            and printCount("MDFX_SledgeRemnantGuard") == 0, "fix: when the engine removes the piece on the re-ask nothing else is done")
+            and printCount("MDFX_SledgehammerGuard") == 0, "fix: when the engine removes the piece on the re-ask nothing else is done")
     end)
 
     -- 單片移除沒成功（Java 端例外，Lua 拿到 nil）：報失敗，不報 removed
@@ -479,7 +561,7 @@ local function runAll(srcs, quiet)
         W.object(11, 0, g.cells["1,0"])
         local c = W.object(10, 1, g.cells["0,1"])
         W.square(11, 1)
-        check(hit(a) == true and W.has(10, 0, "lshape_0") and W.safe == 1 and W.single == 0 and printCount("MDFX_SledgeRemnantGuard") == 0,
+        check(hit(a) == true and W.has(10, 0, "lshape_0") and W.safe == 1 and W.single == 0 and printCount("MDFX_SledgehammerGuard") == 0,
             "fix: an empty position in the sprite grid is not a missing piece")
         table.remove(W.squares["11,0"].objs)
         check(hit(c) == true and not W.has(10, 1, "lshape_2") and W.has(10, 0, "lshape_0") and W.single == 1,
@@ -492,7 +574,7 @@ local function runAll(srcs, quiet)
         local t = buildWorld()
         t.half19.components = 2
         check(hit(t.half19) == true and W.has(4, 0, "boulders_19") and W.safe == 1 and W.single == 0
-            and printCount("MDFX_SledgeRemnantGuard") == 0, "fix: a leftover piece that carries components is left as vanilla")
+            and printCount("MDFX_SledgehammerGuard") == 0, "fix: a leftover piece that carries components is left as vanilla")
         check(hit(t.half16) == true and not W.has(4, 1, "boulders_16"), "fix: the piece without components next to it still goes")
     end)
 
@@ -504,7 +586,7 @@ local function runAll(srcs, quiet)
         local ok, result = pcall(hit, t.half19)
         check(ok and result == true and W.has(4, 0, "boulders_19"), "fix: an error in the guard keeps the vanilla result")
         pcall(hit, t.half16)
-        check(printCount("MDFX_SledgeRemnantGuard could not check for or remove a leftover piece") == 1 and printCount("boom grid") == 1,
+        check(printCount("MDFX_SledgehammerGuard could not check for or remove a leftover piece") == 1 and printCount("boom grid") == 1,
             "fix: the guard's own error is logged once")
     end)
 
@@ -516,7 +598,7 @@ local function runAll(srcs, quiet)
         loadFix(srcs)
         local ok, err = pcall(hit, t.half19)
         check(not ok and string.find(tostring(err), "vanilla boom", 1, true) ~= nil, "fix: a vanilla error is not swallowed")
-        check(printCount("MDFX_SledgeRemnantGuard") == 0 and W.single == 0, "fix: nothing logged or removed for a vanilla error")
+        check(printCount("MDFX_SledgehammerGuard") == 0 and W.single == 0, "fix: nothing logged or removed for a vanilla error")
     end)
 
     -- 安裝：形狀不符、重複載入、後載 MOD 替換、多人客戶端
@@ -525,18 +607,18 @@ local function runAll(srcs, quiet)
         ISDestroyStuffAction = nil
         local ok = pcall(loadFix, srcs)
         fireInit()
-        check(ok and printCount("MDFX_SledgeRemnantGuard NOT installed") == 1, "missing class: NOT installed once, no error")
+        check(ok and printCount("MDFX_SledgehammerGuard NOT installed") == 1, "missing class: NOT installed once, no error")
         setup(srcs, false)
         ISDestroyStuffAction.complete = nil
         ok = pcall(loadFix, srcs)
-        check(ok and printCount("MDFX_SledgeRemnantGuard NOT installed") == 1, "missing method: NOT installed, no error")
+        check(ok and printCount("MDFX_SledgehammerGuard NOT installed") == 1, "missing method: NOT installed, no error")
     end)
     scenario(function()
         setup(srcs, false)
         local vanilla = ISDestroyStuffAction.complete
         loadFix(srcs)
         local first = ISDestroyStuffAction.complete
-        check(first ~= vanilla and ISDestroyStuffAction.MDFX_SledgeRemnantGuard == first, "the wrapper is installed and remembered")
+        check(first ~= vanilla and ISDestroyStuffAction.MDFX_SledgehammerGuard == first, "the wrapper is installed and remembered")
         loadFix(srcs)
         fireInit()
         check(ISDestroyStuffAction.complete == first, "loading twice or OnInitGlobalModData does not stack a second wrapper")
@@ -559,7 +641,7 @@ local function runAll(srcs, quiet)
         local vanilla = ISDestroyStuffAction.complete
         loadFix(srcs)
         fireInit()
-        check(ISDestroyStuffAction.complete == vanilla and ISDestroyStuffAction.MDFX_SledgeRemnantGuard == nil and #prints == 0,
+        check(ISDestroyStuffAction.complete == vanilla and ISDestroyStuffAction.MDFX_SledgehammerGuard == nil and #prints == 0,
             "MP client: not installed, nothing printed")
     end)
 
@@ -567,7 +649,7 @@ local function runAll(srcs, quiet)
     scenario(function()
         setup(srcs, true, { sp = true })
         local t = buildWorld()
-        check(ISDestroyStuffAction.MDFX_SledgeRemnantGuard == ISDestroyStuffAction.complete and hit(t.half19) == true
+        check(ISDestroyStuffAction.MDFX_SledgehammerGuard == ISDestroyStuffAction.complete and hit(t.half19) == true
             and not W.has(4, 0, "boulders_19") and W.has(4, 1, "boulders_16"), "single player: installed and removes the piece that was hit")
     end)
 
@@ -577,7 +659,7 @@ local function runAll(srcs, quiet)
         local t = buildWorld()
         W.engineFixed = true
         check(hit(t.half19) == true and not W.has(4, 0, "boulders_19") and W.safe == 1 and W.single == 0
-            and printCount("MDFX_SledgeRemnantGuard") == 0, "retire: with the engine fixed vanilla removes the piece and the guard stays out")
+            and printCount("MDFX_SledgehammerGuard") == 0, "retire: with the engine fixed vanilla removes the piece and the guard stays out")
     end)
 
     return checks, failures
@@ -585,20 +667,29 @@ end
 
 -- ── 突變 ───────────────────────────────────────────────────────────
 local MUTANTS = {
-    { "act even when the original did not return true", "if result == true then", "if true then" },
+    { "act even when the original did not return true", "        if result == true then\n", "        if true then\n" },
+    { "no rule check before the original",
+        "            if not pcall(logRefusal, self, why) then warnOnce(\"log\", \"could not log a refused sledgehammer hit.\") end\n            return false\n",
+        "            if not pcall(logRefusal, self, why) then warnOnce(\"log\", \"could not log a refused sledgehammer hit.\") end\n" },
+    { "refusal logging without pcall", "if not pcall(logRefusal, self, why) then", "if logRefusal(self, why) then" },
+    { "log refusals of targets already gone", "    if item:getObjectIndex() == -1 then return end -- 目標已經不在格子上", "    -- " },
+    { "a failed rule check passes to the original", "            error(why)\n", "" },
+    { "check a nil target", "    if item == nil then return nil end", "" },
+    { "one quota for everyone", "local key = sid ~= \"none\" and (sid .. \"|\" .. id) or (id .. \"|\" .. tostring(p:getUsername()))", "local key = \"all\"" },
     { "do not check that the target is still on its square", "if item == nil or item:getObjectIndex() == -1 then return end",
         "if item == nil then return end" },
     { "do not check for a multi-tile sprite", "item:getSpriteGrid() == nil or ", "" },
     { "do not check for components", " or item:componentSize() > 0", "" },
-    { "do not require evidence of a missing piece", "not vanillaAllows(action, item) or not hasMissingPiece(item, sq)", "not vanillaAllows(action, item)" },
-    { "do not re-check vanilla's refusals", "not vanillaAllows(action, item) or ", "" },
-    { "no sledgehammer re-check", "    if not character:isBuildCheat() and not action:hasSledgehammerInRange(character, item) then return false end\n", "" },
-    { "build cheat does not exempt from the sledgehammer re-check", "not character:isBuildCheat() and ", "" },
+    { "do not require evidence of a missing piece", "    if not hasMissingPiece(item, sq) then return end\n", "" },
+    { "no sledgehammer rule", 'return "no usable sledgehammer within reach"', "return nil" },
+    { "build cheat does not exempt from the sledgehammer rule", "not character:isBuildCheat() and ", "" },
     { "ignore SledgehammerOnlyInSafehouse", 'if getServerOptions():getBoolean("SledgehammerOnlyInSafehouse") then', "if false then" },
     { "a privileged role is not exempt", "if not (role and role:hasCapability(Capability.UseBuildCheat)) then", "if true then" },
     { "any role counts as privileged", "role and role:hasCapability(Capability.UseBuildCheat)", "role" },
     { "check a different capability", "role:hasCapability(Capability.UseBuildCheat)", "role:hasCapability(Capability.SeePlayersConnected)" },
-    { "any safehouse is enough", "if not (safe and safe:playerAllowed(character)) then return false end", "if not safe then return false end" },
+    { "any safehouse is enough", "if not (safe and safe:playerAllowed(character)) then", "if not safe then" },
+    { "refusals not limited", "    if n > LOG_LIMIT then\n", "    if false then\n" },
+    { "names not cleaned", '"[%c\\"]", "?"', '"[%z]", "?"' },
     { "count a square that is not loaded as a missing piece", "if other ~= nil then", "if true then" },
     { "an empty position in the sprite grid counts as a missing piece", "want ~= nil and cell:getGridSquare", "cell:getGridSquare" },
     { "any object on the square counts as the piece", "if objects:get(i):getSprite() == want then", "if true then" },
@@ -635,7 +726,7 @@ end
 
 local checks, failures = runAll(SOURCES, false)
 print = realPrint
-print(string.format("MDFX_SledgeRemnantGuard: %d checks, %d failed", checks, failures))
+print(string.format("MDFX_SledgehammerGuard: %d checks, %d failed", checks, failures))
 if failures > 0 then os.exit(1) end
 
 if arg[1] == "--mutants" then

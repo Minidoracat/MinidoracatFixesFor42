@@ -36,6 +36,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] After you place a worn bag or clothing item on the ground, it still shows on your character and its hotbar slots stay until you relog (in single player, until you reload your save)
 [*] Large objects with missing pieces (for example a boulder that only half spawned) can't be destroyed with a sledgehammer
 [*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
+[*] Stronger server-side validation: in multiplayer, sledgehammer destruction follows the vanilla server rules (you need a sledgehammer; on servers that limit it to safehouses, you must be in one)
 [/list]
 📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840467]Fixes Mod Guide: Fix List & Details[/url]
 

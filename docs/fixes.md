@@ -2203,14 +2203,14 @@ log 上限與上限提示；出錯後停用並只印一次；多人客戶端不�
 
 ---
 
-## MDFX_SledgeRemnantGuard — 缺片的多格物件用大錘拆不掉
+## MDFX_SledgehammerGuard — 缺片的多格物件用大錘拆不掉；強化伺服器端驗證（大錘拆除）
 
 | 項目 | 內容 |
 |------|------|
-| 檔案 | `server/Fixes/MDFX_SledgeRemnantGuard.lua` |
+| 檔案 | `server/Fixes/MDFX_SledgehammerGuard.lua` |
 | 影響版本 | Build 42.22.2 實測（原版 `shared/TimedActions/ISDestroyStuffAction.lua`，反編譯快照 `42.22.2-20261109`）；殘骸拆不掉在 42.20 就有（見 `MDFX_MultiTileFurniture`） |
 | 端 | 多人伺服器與單人（放 `server/`，沒有 `isServer()` 閘門；多人客戶端不安裝：大錘的 `complete` 在伺服器跑） |
-| 類型 | 原版**靜默不移除**；只在原版完成之後補移除被敲的那一片 |
+| 類型 | 一、原版**靜默不移除**：只在原版完成之後補移除被敲的那一片。二、強化伺服器端驗證：原函式之前照原版 42.22 的伺服器規則檢查一次 |
 | 狀態 | **現役**（`42.22.2-0.17.1` 之後的下一版起） |
 
 ### 症狀
@@ -2229,15 +2229,22 @@ log 上限與上限提示；出錯後停用並只印一次；多人客戶端不�
 
 ### 修法
 
-包裝 `ISDestroyStuffAction.complete`，只在原函式之後看：
+包裝 `ISDestroyStuffAction.complete`。
 
-1. 原樣呼叫原函式。回傳值不是 `true` 就照回，不做任何事（沒大錘、`SledgehammerOnlyInSafehouse`、別的 MOD 的權限檢查拒絕）。
+**原函式之前（強化伺服器端驗證）**：照原版 42.22.2 `:116-130` 的寫法檢查兩道規則：要帶著能用的大錘而且離目標夠近（`hasSledgehammerInRange`，建造作弊免檢）；
+伺服器選項 `SledgehammerOnlyInSafehouse` 開著時，沒有 `UseBuildCheat` 的角色要在允許自己用的安全屋裡。不過就回 false，不呼叫原函式。
+原版在這兩道之前沒有任何作用，所以原函式是原版時結果相同。整支取代 `complete` 的 MOD 不一定有這兩道，細節屬攻擊面分析，只寫在本機知識庫。
+目標是 nil 時不檢查，交給原函式（原版自己回 false）。檢查本身出錯（引擎 API 變了）時印一次、原樣重拋，不呼叫原函式：檢查照原版的寫法，原版的 `complete` 在同一處也會出錯。
+拒絕時每次記一行（每個連線有上限）；目標已經不在格子上（例：別人先拆掉了）時原版同樣回 false，不是違規，不記。
+
+**原函式之後（缺片的多格物件）**：
+
+1. 回傳值不是 `true` 就照回，不做任何事（原版或別的 MOD 判定不能拆）。
 2. 回 `true` 而目標已經不在格子上（`getObjectIndex() == -1`）＝原版移掉了，不做任何事。
 3. 目標還在格子上、圖塊屬於多格圖塊組（`getSpriteGrid() ~= nil`）、物件沒有 component（`componentSize() == 0`），而且**確定缺片**：
    照引擎找整組的走法（`IsoObjectUtils.java:115-155`）看這一組佔的每一格，有一格載入了卻沒有那一格的圖塊才算。格子沒載入不算；
    圖塊組裡本來就沒有圖塊的位置也不算。
-4. 照原版伺服器端的兩道拒絕再確認一次（`:116-130`：沒有大錘或離太遠、`SledgehammerOnlyInSafehouse`），不過就不動。
-5. 用原版同一個呼叫再問引擎一次。引擎找得齊，就照原版整組移除；仍回 -1 才呼叫 `transmitRemoveItemFromSquare(item, false)` 只移除被敲的那一片，
+4. 用原版同一個呼叫再問引擎一次。引擎找得齊，就照原版整組移除；仍回 -1 才呼叫 `transmitRemoveItemFromSquare(item, false)` 只移除被敲的那一片，
    確認它真的不在格子上之後印一次診斷行。
 
 第 3 步只用來決定「要不要碰」，移除還是交給引擎：`IsoObjectUtils` 沒有曝露給 Lua，問引擎找不找得齊只能用會移除的那個呼叫，所以先要有缺片的證據才問。
@@ -2245,8 +2252,6 @@ log 上限與上限提示；出錯後停用並只印一次；多人客戶端不�
 不是多格圖塊的不管：原版回 true 而物件還在，是別的原因（例：NicksSledgehammerFix 把轉角牆原地換成半面牆）。
 有 component 的物件不管：整組找不齊時，原版的 `dumpContentsInSquare`（`:132`）只倒了被敲那一片自己的容器就返回（`IsoObjectUtils.java:161-180`），
 component 的內容（製作中的材料、液體）沒倒，單片移除會連內容一起刪。
-第 4 步：原版自己回 true 時那兩道一定過了；整支取代 `complete` 的 MOD（NicksSledgehammerFix 的版本沒有這兩道）照樣回 true，
-不確認的話，那個缺口會延伸到原本拆不掉的殘片。大錘剛好在這一下用壞時這一步也不過，殘片留到下一下。
 自己那一段出錯、或單片移除之後物件還在（Java 端拋例外時 Lua 只拿到 nil，所以移除後讀回 `getObjectIndex()`）：印一次、照回原版的結果。
 
 安裝：放 `server/`，載入時包一次；`OnInitGlobalModData` 再檢查一次，比本檔晚載入的 `server/` 檔整支替換 `complete` 時重新包上。
@@ -2256,6 +2261,8 @@ component 的內容（製作中的材料、液體）沒倒，單片移除會連�
 
 - 原本敲不掉的缺片多格圖塊物件（巨石、一般家具），敲哪一片就少哪一片；同一組剩下的其他片不動，要一片一片敲。
 - 完整的多格物件、單格物件、被拒絕的大錘動作都照原版：正常情況引擎只被呼叫一次，結果不變。原函式回 true 卻留著整組都在的多格物件時也不碰。
+- 原函式是原版時，原函式之前的檢查和原版自己的檢查結果相同。載入整支取代 `complete` 的 MOD 時，不符合原版 42.22 伺服器規則的大錘拆除照原版拒絕（使用者 2026-11-11 同意）。
+- 除錯模式下背包沒有大錘時，原版的檢查會建一把臨時大錘（`:17-19`）；本補丁先檢查一次，等於多建一把。只在除錯模式。
 - 一組的其他格子有沒載入的、而載入的那幾格都不缺時不介入，照原版敲不掉（分不出是缺片還是沒載入；玩家身邊的格子都載入，沒有實測到這種情況）。
 - 沒有改的原版行為：缺片的多格家具仍然撿不起來、拆解不了（原版 `ISMoveableSpriteProps:getSpriteGridInfo` 找不齊就不給撿，實機 `canPickUpMoveable=false`）；
   殭屍或玩家打壞這類殘骸時照樣不會消失（同一個安全移除，讀碼）；有 component 的多格設施缺片時照樣拆不掉；
@@ -2270,38 +2277,47 @@ component 的內容（製作中的材料、液體）沒倒，單片移除會連�
 ### 和其他 MOD
 
 - NicksSledgehammerFix（3780532913）在 `shared/` 整支取代 `complete`；本檔在 `server/`，載入較晚，包到的是它的版本（實機一起載入通過）。
-  它的版本沒有原版 42.22.2 `:116-130` 的伺服器端拒絕，所以本補丁動手前自己照原版確認（修法第 4 步）。
 - MinidoracatSafehouseFor42 在開服時把 `complete` 再包一層（`Permissions.lua` 的 `wrapCompleteCells`），沒有建造權限時回 false、不呼叫內層：本補丁不會跑。
-  包裝先後反過來也一樣，因為第 1 步看的是整條鏈的回傳值（離線測試兩種先後都驗，實機驗安全屋在外層）。
+  包裝先後反過來也擋得住：本補丁在外層時，規則過了才呼叫內層，安全屋在內層照樣回 false；殘片處理看的是整條鏈的回傳值（離線測試兩種先後都驗，實機驗安全屋在外層）。
 
 ### Log
 
-- `[MinidoracatFixes] MDFX_SledgeRemnantGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit (a multi-tile object with missing pieces); removed that piece. Further ones not logged this session. …`
+- `[MinidoracatFixes] MDFX_SledgehammerGuard vanilla left <圖塊> at <x>,<y>,<z> standing after a sledgehammer hit (a multi-tile object with missing pieces); removed that piece. Further ones not logged this session. …`
   ——每次開機第一次介入時印一行（多人在 `server-console.txt`，單人在 `console.txt`）。
-- `[MinidoracatFixes] MDFX_SledgeRemnantGuard could not check for or remove a leftover piece; vanilla result kept: …`——自己那段出錯、或單片移除之後物件還在（`… is still on its square after the single-piece removal`），照原版結果，一次。
+- `[MinidoracatFixes] MDFX_SledgehammerGuard refused a sledgehammer hit (<規則>) on <圖塊> at <x>,<y>,<z> by player="<名稱>" onlineID=<n> steamid~<SteamID> (#n). …`
+  ——原函式之前的檢查拒絕時每次一行，每個連線每次開機最多 20 行，之後印一行 `reached LOG_LIMIT for player=… onlineID=… steamid~…; further refused sledgehammer hits from this connection are not logged this session.`。
+  規則是 `no usable sledgehammer within reach` 或 `SledgehammerOnlyInSafehouse outside an allowed safehouse`。名稱由客戶端提供，認人看 SteamID。
+  SteamID 是近似值（伺服器的 Lua 讀不到完整數字，捨入到 16 的倍數）；精確值看伺服器 `Logs/*_user.txt` 裡這位玩家 `fully connected` 那一行（開頭是 SteamID）。
+- `[MinidoracatFixes] MDFX_SledgehammerGuard could not log a refused sledgehammer hit. …`——記拒絕行時出錯，一次；那一下照樣拒絕。
+- `[MinidoracatFixes] MDFX_SledgehammerGuard could not check the server rules for a sledgehammer hit; NOT masking it (re-throwing): …`——檢查本身出錯，一次；原錯誤照樣拋出（原版在同一處也會出錯），這一下不拆。
+- `[MinidoracatFixes] MDFX_SledgehammerGuard could not check for or remove a leftover piece; vanilla result kept: …`——自己那段出錯、或單片移除之後物件還在（`… is still on its square after the single-piece removal`），照原版結果，一次。
   沒有敲殘缺物件卻看到這一行＝檢查用到的引擎方法變了，本補丁已經不運作，回頭對版（`check_vanilla_alignment.py` 的依賴符號會先轉紅）。
-- `[MinidoracatFixes] MDFX_SledgeRemnantGuard NOT installed: vanilla ISDestroyStuffAction shape changed; …`——包裝目標不在，回頭對版。
+- `[MinidoracatFixes] MDFX_SledgehammerGuard NOT installed: vanilla ISDestroyStuffAction shape changed; …`——包裝目標不在，回頭對版。
 
 ### 驗證
 
-離線：`lua scripts/test_sledge_remnant_guard.lua`（照載原版 `ISDestroyStuffAction.lua`，Java 端的格子、圖塊組與兩種移除用 Lua 模擬，80 項）；`--mutants` 35 個突變都要被抓到。
+離線：`lua scripts/test_sledgehammer_guard.lua`（照載原版 `ISDestroyStuffAction.lua`，Java 端的格子、圖塊組與兩種移除用 Lua 模擬，101 項）；`--mutants` 42 個突變都要被抓到。
 
 實機（42.22.2，9950X3D，`fixes-e2e` 的 `broken-multitile` 情境；伺服器在 Muldraugh 主街旁的空地照圖塊自己的 SpriteGrid 擺一顆完整的 2×2 巨石、
 一顆只剩 `boulders_19`＋`boulders_16` 的巨石、一張只剩一片的雙格長椅，客戶端用原版大錘游標敲）：
 
 - 原版對照（`6b1d79b`，沒有本檔）多人 `fxbm-ctl-mp-1111a`、單人 `fxbm-ctl-sp-1111a`：`RESULT PASS steps=9 checks=8`。完整巨石敲一下四片都消失；
   殘缺巨石的兩片與殘缺長椅，游標綠色、完成端 `complete` 回 true，伺服器與客戶端都還在。
-- 修正組（收錄版本的守衛，暫時 commit `0be4dc22`）多人 `fxbm-fix-mp-1111f`、單人 `fxbm-fix-sp-1111f`（都同時載 NicksSledgehammerFix）：`RESULT PASS steps=9 checks=10`。
+- 修正組（收錄版本的守衛，暫時 commit `41e4f5b3`，和收錄版只差一行註解）多人 `fxbm-fix-mp-1111i`、單人 `fxbm-fix-sp-1111i`（都同時載 NicksSledgehammerFix）：`RESULT PASS steps=9 checks=10`。
   完整巨石照樣整組消失；殘缺巨石敲第一片後只剩另一片、再敲就沒了；殘缺長椅敲掉；兩端一致。診斷行恰一行，沒有 `NOT installed` 與失敗行，伺服器開服後沒有例外。
-  review 前的版本（`fd6b8c5e`，`-1111b` 三輪）與 review 期間的三版（`-1111c`、`-1111d`、`-1111e`）結果相同。
-- 安全屋拒絕（`fxbm-fix-sh-mp-1111f`，同一個暫時 commit，另載 MinidoracatSafehouseFor42 `7ec0774`，把它的權限判斷換成對大錘一律拒絕）：`RESULT PASS steps=12 checks=12`。
+  只修殘片的 `e838cec` 版（`-1111f` 三輪）與更早的 review 版本（`-1111b`～`-1111e`）結果相同。
+- 安全屋拒絕（`fxbm-fix-sh-mp-1111i`，同一個暫時 commit，另載 MinidoracatSafehouseFor42，把它的權限判斷換成對大錘一律拒絕）：`RESULT PASS steps=12 checks=12`。
   `complete` 回 false、殘缺巨石還在、本補丁沒印診斷行；還原後照常敲得掉。
-- 沒有實機驗的：原版伺服器端拒絕的再確認（修法第 4 步）不過的情況、沒載入的格子、圖塊組的空位置、單片移除失敗，只有離線測試。
+- 伺服器規則（`fxbm-fix-srv-mp-1111i`，同一個暫時 commit；伺服器在大錘動作完成前把角色的大錘拿走，再敲完整巨石）：`RESULT PASS steps=11 checks=12`。
+  `complete` 回 false、巨石兩端都還在、拒絕行恰一行（`no usable sledgehammer within reach`）；之後殘片與長椅照常敲掉。
+- 沒有實機驗的：`SledgehammerOnlyInSafehouse`、規則檢查本身出錯、沒載入的格子、圖塊組的空位置、單片移除失敗，只有離線測試。
 
 ### 可退場條件
 
-官方讓缺片的多格物件拆得掉：`transmitRemoveItemFromSquare` 對找不齊的整組不再回 -1，或大錘改用別的移除方式。到時原版在第 2 步就移掉了，本補丁自動不介入。
-`check_vanilla_alignment.py` 的爆點轉 CHANGED 時，重跑 E2E `broken-multitile` 的對照組：`hit-broken-*` 的殘片被原版敲掉了，就移出本檔。
+缺片的多格物件：官方讓缺片的多格物件拆得掉：`transmitRemoveItemFromSquare` 對找不齊的整組不再回 -1，或大錘改用別的移除方式。到時原版在第 2 步就移掉了，本補丁自動不介入。
+`check_vanilla_alignment.py` 的爆點轉 CHANGED 時，重跑 E2E `broken-multitile` 的對照組：`hit-broken-*` 的殘片被原版敲掉了，就移出這一段。
+伺服器規則：常見的整支取代 `complete` 的 MOD 都帶上原版 42.22 的那兩道規則時可以拿掉；原函式是原版時這一段和原版同結果，留著無害。
+原版改了那兩道規則（指紋的依賴符號轉紅）時，照新的寫法改，或拿掉。
 
 ---
 

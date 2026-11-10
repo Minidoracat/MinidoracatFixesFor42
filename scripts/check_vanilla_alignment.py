@@ -1311,9 +1311,9 @@ FIXES = [
             r"public static zombie\.characters\.IsoPlayer getSpecificPlayer\(int\);",
         ],
     },
-    # ── MDFX_SledgeRemnantGuard：缺片的多格物件大錘拆不掉，原版完成後只補移除被敲的那一片 ─────────────
+    # ── MDFX_SledgehammerGuard：缺片的多格物件大錘拆不掉（原版完成後只補移除被敲的那一片）＋照原版伺服器規則先檢查 ─────────────
     {
-        "name": "MDFX_SledgeRemnantGuard",
+        "name": "MDFX_SledgehammerGuard",
         "file": "media/lua/shared/TimedActions/ISDestroyStuffAction.lua",
         "crash": [
             # :329-330 一般物件用一個參數的移除（安全移除）。行變了＝官方動了大錘的移除方式，重跑 E2E broken-multitile 對照組
@@ -1326,7 +1326,7 @@ FIXES = [
             r"return true;\s*end\s*function\s+ISDestroyStuffAction:getDuration",
             # 被敲那一片自己的容器原版先倒了（:132）；守衛只多擋有 component 的物件
             r"self\.item:dumpContentsInSquare\(\)",
-            # 原版伺服器端的兩道拒絕（:116-130）：守衛的 vanillaAllows 照這兩段寫。轉紅＝原版改了拒絕條件，vanillaAllows 要跟著改
+            # 原版伺服器端的兩道規則（:116-130）：守衛的 refusal 照這兩段寫。轉紅＝原版改了規則，refusal 要跟著改
             r"function\s+ISDestroyStuffAction:hasSledgehammerInRange\s*\(\s*character\s*,\s*item\s*\)",
             r"if not self\.character:isBuildCheat\(\) and not self:hasSledgehammerInRange\(self\.character, self\.item\) then\s*return false",
             r'if getServerOptions\(\):getBoolean\("SledgehammerOnlyInSafehouse"\) then\s*local role = self\.character:getRole\(\)\s*'
@@ -1336,7 +1336,7 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（成因：伺服器的安全移除，多格物件找不齊整組就回 -1）",
+        "name": "MDFX_SledgehammerGuard（成因：伺服器的安全移除，多格物件找不齊整組就回 -1）",
         "class": "zombie.iso.IsoGridSquare",
         "crash": [
             # transmitRemoveItemFromSquare(obj, safelyRemove)（IsoGridSquare.java:5933-5960）：isObjectMultiSquare → getAllMultiTileObjects 回 false → 回 -1
@@ -1361,7 +1361,7 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（成因：單人的安全移除；多格的判斷看圖塊的 SpriteGrid）",
+        "name": "MDFX_SledgehammerGuard（成因：單人的安全移除；多格的判斷看圖塊的 SpriteGrid）",
         "class": "zombie.iso.IsoObjectUtils",
         "crash": [
             # safelyRemoveTileObjectFromSquare（IsoObjectUtils.java:32-62）：getAllMultiTileObjects 回 false → 回 -1
@@ -1391,7 +1391,7 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（依賴：物件還在不在格子上、圖塊的 SpriteGrid）",
+        "name": "MDFX_SledgehammerGuard（依賴：物件還在不在格子上、圖塊的 SpriteGrid）",
         "class": "zombie.iso.IsoObject",
         "depends": [
             r"public int getObjectIndex\(\);",
@@ -1399,7 +1399,7 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（依賴：多格圖塊組的大小與每一格的圖塊）",
+        "name": "MDFX_SledgehammerGuard（依賴：多格圖塊組的大小與每一格的圖塊）",
         "class": "zombie.iso.sprite.IsoSpriteGrid",
         "depends": [
             r"public zombie\.iso\.sprite\.IsoSprite getSprite\(int, int, int\);",
@@ -1412,21 +1412,21 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（依賴：照座標取格子，沒載入回 null）",
+        "name": "MDFX_SledgehammerGuard（依賴：照座標取格子，沒載入回 null）",
         "class": "zombie.iso.IsoCell",
         "depends": [
             r"public zombie\.iso\.IsoGridSquare getGridSquare\(int, int, int\);",
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（依賴：getCell）",
+        "name": "MDFX_SledgehammerGuard（依賴：getCell）",
         "class": "zombie.Lua.LuaManager$GlobalObject",
         "depends": [
             r"public static zombie\.iso\.IsoCell getCell\(\);",
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（安裝：復查用的 OnInitGlobalModData）",
+        "name": "MDFX_SledgehammerGuard（安裝：復查用的 OnInitGlobalModData）",
         "class": "zombie.world.moddata.GlobalModData",
         "depends": [
             # GlobalModData.java:54，由 IsoWorld.init 呼叫（單人與伺服器都在所有 Lua 載完之後）
@@ -1434,7 +1434,7 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（安裝：單人進場時才載 server/）",
+        "name": "MDFX_SledgehammerGuard（安裝：單人進場時才載 server/）",
         "class": "zombie.gameStates.GameLoadingState",
         "depends": [
             # GameLoadingState.java:149。OnGameBoot 在主選單就觸發過，所以復查不能掛它
@@ -1443,19 +1443,26 @@ FIXES = [
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（依賴：物件的 component 數）",
+        "name": "MDFX_SledgehammerGuard（依賴：物件的 component 數）",
         "class": "zombie.entity.GameEntity",
         "depends": [
             r"public final int componentSize\(\);",
         ],
     },
     {
-        "name": "MDFX_SledgeRemnantGuard（前提：客戶端收到移除封包只移除那一個物件）",
+        "name": "MDFX_SledgehammerGuard（前提：客戶端收到移除封包只移除那一個物件）",
         "class": "zombie.network.packets.RemoveItemFromSquarePacket",
         "depends": [
             # processClient（RemoveItemFromSquarePacket.java:75-97）：RemoveTileObject(o, 車庫門或雙扇門才整組)
             r"public void processClient\(zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?"
             r"// Method zombie/iso/IsoGridSquare\.RemoveTileObject:\(Lzombie/iso/IsoObject;Z\)I",
+        ],
+    },
+    {
+        "name": "MDFX_SledgehammerGuard（依賴：拒絕行的名稱）",
+        "class": "zombie.characters.IsoPlayer",
+        "depends": [
+            r"public java\.lang\.String getUsername\(\);",
         ],
     },
 ]

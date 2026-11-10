@@ -214,7 +214,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Symptom[/b]: an object that covers several squares (a 2x2 boulder, a two-square bench and the like) is missing some of its pieces. You hit what is left with a sledgehammer: the cursor is green, the action finishes, the sledgehammer wears as usual, but the object stays and no message appears, however often you try. Happens in SP and MP; the usual case is a boulder that only half spawned when the map was generated.
 [*] [b]Cause[/b]: when the game removes an object that covers several squares, it first looks for every piece of the set around it; if any piece is missing it removes nothing, yet the sledgehammer action still counts as done.
 [*] [b]Fix[/b]: when the sledgehammer action finished and the game allowed it, but the object is still there, the game is asked once more the vanilla way; if the set still can't be found, only the piece you hit is removed. Hit the other pieces one by one. Complete large objects are still destroyed as a whole, as in vanilla; without a sledgehammer, on servers that only allow sledgehammers in safehouses, or when another mod doesn't let you destroy it, nothing changes.
-[*] [b]Log[/b]: the first time per start, the server's server-console.txt (console.txt in SP) gets one line: [MinidoracatFixes] MDFX_SledgeRemnantGuard vanilla left <tile> at <x>,<y>,<z> standing after a sledgehammer hit ….
+[*] [b]Log[/b]: the first time per start, the server's server-console.txt (console.txt in SP) gets one line: [MinidoracatFixes] MDFX_SledgehammerGuard vanilla left <tile> at <x>,<y>,<z> standing after a sledgehammer hit ….
 [*] [b]Scope[/b]: in MP it runs on the server and takes effect once the server updates the mod and restarts; in SP it takes effect once you update the mod.
 [*] [b]Retired[/b]: once vanilla lets you destroy large objects with missing pieces with a sledgehammer.
 [/list]
@@ -226,6 +226,15 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Log[/b]: each refusal adds one line to the server's server-console.txt: [MinidoracatFixes] MDFX_HealthCheatPermission denied …, with the name, SteamID, target and action, so admins can find cheaters (up to 20 per connection per start). The name comes from the client, so identify players by SteamID; the SteamID there is approximate (the server's Lua can't read the full number); the exact one is on the *_cmd.txt line in the server's Logs folder from the same second.
 [*] [b]Scope[/b]: MP servers only. Does nothing in SP.
 [*] [b]Retired[/b]: once vanilla fully validates the health cheat on the server and admins can still use it on others.
+[/list]
+=== 🧰 Multiplayer: sledgehammer destruction follows the vanilla server rules
+[h3]Stronger server-side validation: sledgehammer destruction is checked against the vanilla server rules[/h3]
+[list]
+[*] [b]Fix[/b]: before a sledgehammer destroys anything, MP servers check the vanilla rules once more: the character needs a usable sledgehammer within reach; on servers with "sledgehammer only in safehouses" on, the target must be in a safehouse the character may use (accounts with the build-cheat permission excepted). Otherwise the hit is refused and nothing is destroyed.
+[*] [b]Difference from vanilla[/b]: with the vanilla sledgehammer code the result is the same as vanilla. Some mods replace the sledgehammer destruction code entirely; the vanilla rules are checked then too.
+[*] [b]Log[/b]: each refusal adds one line to the server's server-console.txt: [MinidoracatFixes] MDFX_SledgehammerGuard refused a sledgehammer hit …, with the rule, target, position, name and SteamID (up to 20 per connection per start). The name comes from the client, so identify players by SteamID; the SteamID there is approximate (the server's Lua can't read the full number); the exact one is on the player's fully connected line in *_user.txt in the server's Logs folder.
+[*] [b]Scope[/b]: in MP it runs on the server and takes effect once the server updates the mod and restarts; in SP the result is the same as vanilla.
+[*] [b]Retired[/b]: once the common mods that replace sledgehammer destruction carry the vanilla rules.
 [/list]
 === ⚠️ Known limitations
 [list]
