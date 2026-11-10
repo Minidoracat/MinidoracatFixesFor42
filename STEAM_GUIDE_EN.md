@@ -198,15 +198,15 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Scope[/b]: only in each player's own game in MP. Players get it when the server updates the mod. Does nothing in SP.
 [*] [b]Retired[/b]: once vanilla puts sunken vehicles back itself, or the server stops accepting heights below the floor.
 [/list]
-=== 🧰 Multiplayer: a bag placed on the ground is still worn
-[h3]Multiplayer: after you place a worn bag or clothing item on the ground, it still shows on your character until you relog[/h3]
+=== 🧰 A bag placed on the ground is still worn
+[h3]After you place a worn bag or clothing item on the ground, it still shows on your character until you relog[/h3]
 [list]
-[*] [b]Symptom[/b]: in MP you right-click a bag (or clothing) you are wearing and choose Place Item: the bag is on the ground, but it is still drawn on your back and the hotbar slots it gave you stay, until you relog. Most likely with a mod that swaps your character's appearance (transmog-style) turned on. Drop and Unequip from the right-click menu are not affected.
-[*] [b]Cause[/b]: when you place an item, your own game decides at that moment whether to take it off first; the server only puts the item on the ground and never clears it from what you wear. If your game decides wrong at that moment (for example an appearance mod has just swapped your worn items for display copies), both the server and your game keep thinking you wear it.
-[*] [b]Fix[/b]: once a second the server checks what every player wears. If a worn item is already on the ground or inside another container on two checks in a row, the server takes it off and tells every player's game: within a second or two the bag on your back and its hotbar slots are gone. Normal wearing, taking off, swapping and dropping are unchanged.
-[*] [b]Log[/b]: each time, the server's server-console.txt gets one line: [MinidoracatFixes] MDFX_StaleWornGuard removed stale worn item … from player="<name>" … (up to 20 per start).
-[*] [b]Scope[/b]: MP servers only; takes effect once the server updates the mod and restarts. Does nothing in SP.
-[*] [b]Retired[/b]: once the vanilla server clears worn items itself when they leave your inventory, and stops re-creating worn items from the list your game sends.
+[*] [b]Symptom[/b]: you right-click a bag (or clothing) you are wearing and choose Place Item: the bag is on the ground, but it is still drawn on your back and the hotbar slots it gave you stay, until you relog (in SP, until you reload your save). Most likely with a mod that swaps your character's appearance (transmog-style) turned on; in SP it only happens with such a mod. Drop and Unequip from the right-click menu are not affected.
+[*] [b]Cause[/b]: when you place an item, your own game decides at that moment whether to take it off first; the placing step only puts the item on the ground and never clears it from what you wear. If your game decides wrong at that moment (for example an appearance mod has just swapped your worn items for display copies), the game (in MP, both the server and your game) keeps thinking you wear it.
+[*] [b]Fix[/b]: once a second, what each player wears is checked (in MP the server checks every player; in SP your own game does). If a worn item is already on the ground or inside another container on two checks in a row, it is taken off, and in MP every player's game is told: within a second or two the bag on your back and its hotbar slots are gone. Normal wearing, taking off, swapping and dropping are unchanged.
+[*] [b]Log[/b]: each time, the server's server-console.txt (console.txt in SP) gets one line: [MinidoracatFixes] MDFX_StaleWornGuard removed stale worn item … from player="<name>" … (up to 20 per start).
+[*] [b]Scope[/b]: in MP it runs on the server and takes effect once the server updates the mod and restarts; in SP it takes effect once you update the mod.
+[*] [b]Retired[/b]: once vanilla (in SP and on servers) clears worn items itself when they leave your inventory, and servers stop re-creating worn items from the list your game sends.
 [/list]
 === 🧰 Multiplayer: only admins can use the health cheat
 [h3]Stronger server-side validation: only admins can use the health cheat (an admin feature)[/h3]

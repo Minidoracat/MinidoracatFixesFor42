@@ -33,7 +33,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone
 [*] Multiplayer: your vehicle drops below the ground while driving: black screen, the car stays stuck underground after you get out, even after relogging
 [*] Windows from the four new Build 42 sets can't be put back on a north wall after you pick them up
-[*] Multiplayer: after you place a worn bag or clothing item on the ground, it still shows on your character and its hotbar slots stay until you relog
+[*] After you place a worn bag or clothing item on the ground, it still shows on your character and its hotbar slots stay until you relog (in single player, until you reload your save)
 [*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 [/list]
 📖 [b]Cause, handling, scope and removal notes for every fix:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840467]Fixes Mod Guide: Fix List & Details[/url]

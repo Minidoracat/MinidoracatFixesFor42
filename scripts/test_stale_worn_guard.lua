@@ -11,7 +11,8 @@
 --     物件每次檢查都換新也一樣；沒有先例的（繃帶模型）不動；別的玩家的先例不算
 --   * 死亡的角色不看；拿不到物品欄或穿戴清單的角色跳過；離線後不留紀錄
 --   * 可同時穿多件的部位不呼叫 removeWornItem；呼叫後還在的記一次、不再重試；兩次檢查至少隔 CHECK_MS；多件、多位玩家各自處理
---   * 每次介入記一行、有上限；自己出錯時不外洩、只印一次並停用；不是伺服器不安裝；引擎形狀不符不安裝
+--   * 每次介入記一行、有上限；自己出錯時不外洩、只印一次並停用；多人客戶端不安裝；引擎形狀不符不安裝
+--   * 單人：掛 OnTickEvenPaused（不掛 OnTick）、看本機玩家（空位跳過）、同一套判定
 -- --mutants：逐一抽掉每道防線，確認至少一項檢查轉紅。
 
 local SRC_PATH = "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/"
@@ -124,36 +125,50 @@ local function printed(needle)
     return n
 end
 
--- 過 ms 毫秒後跑一幀
+-- 過 ms 毫秒後跑一幀：先 OnTickEvenPaused 再 OnTick（IngameState.java:1346、:1653）
 local function frame(ms)
     W.now = W.now + (ms or 1000)
+    for _, fn in ipairs(W.paused) do fn() end
     for _, fn in ipairs(W.ticks) do fn() end
 end
 
+-- opts.mode："server"（預設）、"sp"（單人）、"client"（多人客戶端）
 local function newWorld(opts)
     opts = opts or {}
-    W = { ticks = {}, prints = {}, players = {}, process = {}, now = 50000, scans = 0, added = 0, server = opts.server ~= false }
+    local mode = opts.mode or "server"
+    W = { ticks = {}, paused = {}, prints = {}, players = {}, process = {}, events = {}, now = 50000, scans = 0, added = 0 }
     MDFX_StaleWornGuard = nil
     print = function(...)
         local parts = {}
         for i = 1, select("#", ...) do parts[i] = tostring((select(i, ...))) end
         W.prints[#W.prints + 1] = table.concat(parts, "\t")
     end
-    Events = { OnTick = { Add = function(fn) W.ticks[#W.ticks + 1] = fn end } }
-    isServer = function() return W.server end
+    Events = {
+        OnTick = { Add = function(fn) W.ticks[#W.ticks + 1] = fn end },
+        OnTickEvenPaused = { Add = function(fn) W.paused[#W.paused + 1] = fn end },
+    }
+    isServer = function() return mode == "server" end
+    isClient = function() return mode == "client" end
     getTimestampMs = function() return W.now end
+    -- 伺服器回線上玩家；單人回空清單（LuaManager.java:4474-4480）
     getOnlinePlayers = function()
         W.scans = W.scans + 1
         if W.failPlayers then error("boom") end
-        local list = W.players
+        local list = mode == "server" and W.players or {}
         return { size = function() return #list end, get = function(_, i) return list[i + 1] end }
     end
+    -- 本機玩家：W.slots 個位置，沒人的位置是 nil（LuaManager.java:3901-3903、:4184-4186）
+    getNumActivePlayers = function() return W.slots or #W.players end
+    getSpecificPlayer = function(i) return W.players[i + 1] end
+    triggerEvent = function(name, who) W.events[#W.events + 1] = { name = name, who = who } end
     local cell = { addToProcessItems = function(_, it) -- IsoCell.java:2294-2301
         W.added = W.added + 1
         W.process[it] = true
     end }
     getCell = function() return cell end
     if opts.noPlayersApi then getOnlinePlayers = nil end
+    if opts.noLocalApi then getSpecificPlayer = nil end
+    if opts.noPausedEvent then Events.OnTickEvenPaused = nil end
     if opts.noCell then getCell = nil end
 end
 
@@ -173,10 +188,10 @@ local function runSuite(src, quiet)
         assert(loadSource(src, "MDFX_StaleWornGuard"))()
     end
 
-    -- 1 不是伺服器（單人、多人客戶端）：不安裝
-    load({ server = false })
-    check("1 不是伺服器不掛 OnTick", #W.ticks == 0)
-    check("1 不是伺服器不印任何東西", #W.prints == 0)
+    -- 1 多人客戶端：不安裝（由伺服器處理）
+    load({ mode = "client" })
+    check("1 多人客戶端不掛任何事件", #W.ticks == 0 and #W.paused == 0)
+    check("1 多人客戶端不印任何東西", #W.prints == 0)
 
     -- 2 引擎形狀不符：不安裝、印一行
     load({ noPlayersApi = true })
@@ -185,9 +200,9 @@ local function runSuite(src, quiet)
     load({ noCell = true })
     check("2 缺 getCell 不掛 OnTick", #W.ticks == 0 and printed("NOT installed") == 1)
 
-    -- 3 伺服器：掛一個 OnTick；重複載入不再掛
+    -- 3 伺服器：掛一個 OnTick（不掛 OnTickEvenPaused）；重複載入不再掛
     load()
-    check("3 掛一個 OnTick", #W.ticks == 1)
+    check("3 掛一個 OnTick", #W.ticks == 1 and #W.paused == 0)
     assert(loadSource(src, "MDFX_StaleWornGuard"))()
     check("3 重複載入不再掛", #W.ticks == 1)
 
@@ -217,6 +232,7 @@ local function runSuite(src, quiet)
     check("5 地上那件仍在每幀更新清單", W.process[bag] == true and W.added == 1)
     frame() frame()
     check("5 之後不再動", #p.calls == 1 and #W.prints == 1)
+    check("5 伺服器不發 OnClothingUpdated（客戶端收到清單時自己發）", #W.events == 0)
 
     -- 6 在別的容器裡還穿著：同樣處理
     load()
@@ -411,14 +427,71 @@ local function runSuite(src, quiet)
     frame() frame() frame()
     check("18 之後不再執行（照原版）", W.scans == scans and #p.calls == 0 and printed("disabled") == 1)
 
+    -- 19 單人：掛 OnTickEvenPaused、不掛 OnTick；缺事件或本機玩家 API 不安裝
+    load({ mode = "sp" })
+    check("19 單人掛一個 OnTickEvenPaused、不掛 OnTick", #W.paused == 1 and #W.ticks == 0 and #W.prints == 0)
+    load({ mode = "sp", noPausedEvent = true })
+    check("19 單人缺 OnTickEvenPaused 不安裝", #W.paused == 0 and #W.ticks == 0 and printed("NOT installed") == 1)
+    load({ mode = "sp", noLocalApi = true })
+    check("19 單人缺 getSpecificPlayer 不安裝", #W.paused == 0 and #W.ticks == 0 and printed("NOT installed") == 1)
+
+    -- 20 單人：看本機玩家（空位跳過），同一套判定
+    load({ mode = "sp" })
+    p = player("solo")
+    local second = player("couch")
+    W.players = { p, nil, second }
+    W.slots = 4
+    keep = wear(p, nil, "Base.Hat_Beret")
+    bag = wear(p)
+    local bandage = wear(p, "phantom", "Base.Bandage_LeftHand")
+    local bag2 = wear(second, "other")
+    frame()
+    drop(p, bag)
+    bag.container = { name = "floor" } -- 單人：地上的物品在地面的容器裡（E2E swe2e-sp-mir-1110a 實測）
+    frame()
+    check("20 第一次看到不動", #p.calls == 0 and #second.calls == 1)
+    frame()
+    check("20 第二次拿掉地上那件、參數 false", #p.calls == 1 and p.calls[1].item == bag and p.calls[1].flag == false, #p.calls)
+    check("20 在物品欄的與沒有先例的另建物件不動", #p.worn.items == 2 and p.worn.items[1] == keep and p.worn.items[2] == bandage)
+    check("20 另一位本機玩家各自處理", #second.calls == 1 and second.calls[1].item == bag2)
+    check("20 拿掉的真物品仍在每幀更新清單", W.process[bag] == true and W.process[bag2] == true)
+    check("20 空位不讓守衛停用、不讀線上玩家清單", printed("disabled") == 0 and W.scans == 0)
+    check("20 計數與診斷行（地面容器裡的記成 on the ground）", MDFX_StaleWornGuard.removed == 2
+        and printed('(on the ground) from player="solo"') == 1 and printed('(in another container) from player="couch"') == 1,
+        table.concat(W.prints, " | "))
+    check("20 每次拿掉都對那位玩家發 OnClothingUpdated（快捷列靠它重算）", #W.events == 2
+        and W.events[1].name == "OnClothingUpdated" and W.events[1].who == second
+        and W.events[2].name == "OnClothingUpdated" and W.events[2].who == p)
+
+    -- 21 單人：沒拿掉的不發事件
+    load({ mode = "sp" })
+    p = player("solo")
+    bag = wear(p, "ground")
+    bag.failRemove = true
+    for _ = 1, 4 do frame() end
+    check("21 沒拿掉的不發 OnClothingUpdated", #p.calls == 1 and #W.events == 0 and MDFX_StaleWornGuard.stuck == 1)
+
     return checks, failures
 end
 
 -- ── 主程式 ───────────────────────────────────────────────────────
 local MUTANTS = {
     { name = "拿掉防重複載入", subs = { { "if MDFX_StaleWornGuard then return end", "" } } },
-    { name = "不是伺服器也安裝", subs = { { 'if type(isServer) ~= "function" or not isServer() then return end', "" } } },
-    { name = "形狀檢查不看 getOnlinePlayers", subs = { { " and getOnlinePlayers and getTimestampMs", " and getTimestampMs" } } },
+    { name = "多人客戶端也安裝", subs = { { " or isClient() then return end", " then return end" } } },
+    { name = "單人拿掉後不通知", subs = { { '    if not server then triggerEvent("OnClothingUpdated", player) end\n', "" } } },
+    { name = "伺服器也發事件", subs = { { 'if not server then triggerEvent("OnClothingUpdated", player) end', 'triggerEvent("OnClothingUpdated", player)' } } },
+    { name = "沒拿掉也通知", subs = { {
+        '    if worn:contains(item) then return giveUp(st, id, what) end\n    -- 單人',
+        '    if not server then triggerEvent("OnClothingUpdated", player) end\n    if worn:contains(item) then return giveUp(st, id, what) end\n    -- 單人' } } },
+    { name = "地上的物品先看容器（單人記成在別的容器）", subs = { {
+        '    if item:getWorldItem() then return "on the ground" end\n    if container then return "in another container" end\n',
+        '    if container then return "in another container" end\n    if item:getWorldItem() then return "on the ground" end\n' } } },
+    { name = "單人也掛 OnTick", subs = { { "    event = Events and Events.OnTickEvenPaused\n", "" } } },
+    { name = "單人用線上玩家清單", subs = { { "    listPlayers = localPlayers and function() return localPlayers end\n", "" } } },
+    { name = "單人缺本機玩家 API 照樣安裝", subs = { { "local localPlayers = triggerEvent and getNumActivePlayers and getSpecificPlayer and {", "local localPlayers = {" } } },
+    { name = "空位不跳過", subs = { { "        if player then\n", "        if true then\n" } } },
+    { name = "形狀檢查不看事件", subs = { { "if not (event and event.Add and listPlayers", "if not (listPlayers" } } },
+    { name = "形狀檢查不看玩家清單", subs = { { " and listPlayers and getTimestampMs", " and getTimestampMs" } } },
     { name = "形狀檢查不看 getCell", subs = { { " and getTimestampMs and getCell)", " and getTimestampMs)" } } },
     { name = "檢查間隔縮到 100 ms", subs = { { "local CHECK_MS = 1000", "local CHECK_MS = 100" } } },
     { name = "不排下一次檢查的時間", subs = { { "    nextAt = now + CHECK_MS\n", "" } } },

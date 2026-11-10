@@ -1292,6 +1292,25 @@ FIXES = [
             r"// Method zombie/network/GameServer\.getPlayers:",
         ],
     },
+    {
+        "name": "MDFX_StaleWornGuard（單人：OnTickEvenPaused 在 IsoWorld.update 與 OnTick 之前）",
+        "class": "zombie.gameStates.IngameState",
+        "depends": [
+            # IngameState.java:1346、:1535、:1653。單人掛 OnTickEvenPaused 是因為外觀 MOD 在 OnTick 才把穿戴清單換成複製品；
+            # 順序變了＝單人讀到的可能不是真清單，重跑 E2E stale-worn 的單人修正組
+            r"// String OnTickEvenPaused(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoWorld\.update:\(\)V"
+            r"(?:(?!\n  \S)[\s\S])*?// Method onTick:\(\)V",
+        ],
+    },
+    {
+        "name": "MDFX_StaleWornGuard（單人：本機玩家）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            # LuaManager.java:3901-3903、:4184-4186
+            r"public static int getNumActivePlayers\(\);",
+            r"public static zombie\.characters\.IsoPlayer getSpecificPlayer\(int\);",
+        ],
+    },
 ]
 
 

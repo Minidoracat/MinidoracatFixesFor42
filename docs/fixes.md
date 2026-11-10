@@ -2069,20 +2069,21 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
 
 ---
 
-## MDFX_StaleWornGuard — 多人遊戲把穿著的東西放到地上後，身上還畫著它、要重登才好
+## MDFX_StaleWornGuard — 把穿著的東西放到地上後，身上還畫著它、要重登（單人：重新讀檔）才好
 
 | 項目 | 內容 |
 |------|------|
 | 檔案 | `server/Fixes/MDFX_StaleWornGuard.lua` |
 | 影響版本 | Build 42.22.2 實測（原版 Lua 與反編譯快照 `42.22.2-20261109`）；玩家回報在 42.21.0 |
-| 端 | 多人遊戲的伺服器（`isServer()`；單人與客戶端不作用） |
-| 類型 | 原版伺服器**放下物品時不清穿戴**；事後由伺服器拿掉，不改放置的流程 |
+| 端 | 多人遊戲的伺服器與單人（載檔時 `isClient()` 就不安裝：多人客戶端不作用） |
+| 類型 | 原版**放下物品時不清穿戴**；事後拿掉，不改放置的流程 |
 | 狀態 | **現役**（`42.22.2-0.17.1` 之後的下一版起） |
 
 ### 症狀
 
 - 多人遊戲用右鍵「放置物品」把穿著的背包（或衣物）放到地上：物品離開物品欄、地上有，但背上照畫，背包給的快捷列欄位不消失，重新登入才好。
 - 玩家回報（Discord 影片，2026-11-10，42.21.0 正式服）：背包「脫不下來，需要重登解決」。原版 `Base.Bag_ALICEpack` 照同樣操作一樣會，不是物品 MOD 的問題。
+- 單人：開著外觀類 MOD 時同樣會發生，重新讀檔才好；不開時原版先脫下再放，不會發生（實機見「驗證」）。
 - 右鍵「扔掉」「解除裝備」不受影響。
 
 ### 根因（行號為 42.22.2 原版 Lua 與反編譯快照）
@@ -2103,10 +2104,16 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
 ### 修法
 
 - **掛點**：伺服器 `OnTick`，每 `CHECK_MS`（1000 ms）檢查一次；其餘 tick 只比一次時間（`getTimestampMs` 是系統時鐘，被往回調超過一個間隔時不等它追上）。
-- **記先例**：`getOnlinePlayers()` 每位活著的玩家，逐件看 WornItems；穿著、而且 `getContainer()` 就是自己主物品欄的物品，把編號記在這位玩家名下。
+- **單人**：同一支、同一套判定，看本機玩家（`getNumActivePlayers`／`getSpecificPlayer`，沒人的位置跳過），掛 `OnTickEvenPaused`、不掛 `OnTick`。
+  外觀 MOD 在 `OnTick` 把穿戴清單換成複製品、`OnPostRender` 才換回，`OnTick` 裡讀到、改到的可能是複製品；`OnTickEvenPaused`（`IngameState.java:1346`）在
+  `IsoWorld.update`（`:1535`）與 `OnTick`（`:1653`）之前，每幀一次更新接一次繪製（`GameWindow.java:667-691`），這時是真清單。單人沒有穿戴清單的封包，實際只會走「在地上／在別的容器」那一種。
+  拿掉成功後補發 Lua 的 `OnClothingUpdated`（照 `ISUnequipAction:complete` `:132`）：`setWornItem` 自己不發，快捷列與物品欄靠它重算（`ISHotbar.lua:837-845`）；多人由客戶端收到新清單時發（`SyncClothingPacket.java:227`），伺服器不補。
+  單人放到地上的物品，放下那一刻 `getContainer()` 是 nil，稍後變成地面的容器，`getWorldItem()` 一直有值（實機 `swe2e-sp-mir-1111a`：`DROP.complete` 當下 `container=nil worldItem=true`，8 秒後 `container=floor worldItem=true`；伺服器上一直是 nil）。
+  所以判定先看 `getWorldItem()`，兩種形狀的診斷行都寫 `on the ground`。
+- **記先例**：每位活著的玩家（伺服器 `getOnlinePlayers()`），逐件看 WornItems；穿著、而且 `getContainer()` 就是自己主物品欄的物品，把編號記在這位玩家名下。
   玩家離線就整份丟掉。
 - **判定**：下面兩種算殘留，**同一個編號連兩次檢查都成立**才處理（照編號記，不照物件：另建的物件每收到一次清單就換一件）：
-  - 伺服器自己知道它在別處：`getContainer()` 是別的容器（被撿走、被搬走），或 `getContainer()` 是 nil 而 `getWorldItem()` 不是 nil（在地上）。
+  - 它在別處，照這個順序看：`getWorldItem()` 不是 nil（在地上；這時 `getContainer()` 是 nil 或地面的容器），或 `getContainer()` 是別的容器（被撿走、被搬走）。
   - 不在任何容器、也不在地上（照清單另建的物件），而且這位玩家名下記過同一個編號。
 - **處理**：`player:removeWornItem(item, false)`。它走原版 `setWornItem`（`IsoGameCharacter.java:3460-3518`），伺服器把新的穿戴清單送給所有客戶端
   （`IsoPlayer.syncClothing`，`IsoPlayer.java:8956-8959`），客戶端照清單拿掉（`SyncClothingPacket.java:181-190`），快捷列跟著重算。
@@ -2118,7 +2125,7 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
   呼叫後那件還在穿戴清單的（Java 端出錯被 Kahlua 記錄後照常返回）一樣。兩種都記一行 `could not remove stale worn item …`（每次啟動只記第一件），這個編號之後不再處理，不讓伺服器每兩秒重送一次穿戴清單。
 - **不動的**：沒有先例的另建物件。繃帶與傷口模型由客戶端建立（`IsoGameCharacter.java:17421-17429`，只在非伺服器端），伺服器照清單另建，
   在伺服器上從來不在物品欄裡；客戶端自己建物品穿上的 MOD 也是這個形狀。死亡的角色不看。
-- **自保**：每次檢查整段 `pcall`；出錯就停用本補丁並印一次。缺 `OnTick`／`getOnlinePlayers`／`getTimestampMs`／`getCell` 印 `NOT installed`、不登記。
+- **自保**：每次檢查整段 `pcall`；出錯就停用本補丁並印一次。缺事件（伺服器 `OnTick`、單人 `OnTickEvenPaused`）、玩家清單（伺服器 `getOnlinePlayers`、單人 `getNumActivePlayers`／`getSpecificPlayer`）、`getTimestampMs` 或 `getCell` 印 `NOT installed`、不登記。
 - **診斷**：每次介入印一行 `MDFX_StaleWornGuard removed stale worn item <物品>#<編號> (on the ground|in another container|re-created from a client list) from player="<帳號>" at <x>,<y>,<z> (#n)`，
   每次啟動最多 20 行（之後照樣處理、不再記）。要能從伺服器 console 統計發生次數，所以不是一個 session 一次。
 
@@ -2126,7 +2133,7 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
 
 ### 與原版的差異
 
-- 伺服器知道已經在地上或別的容器裡、卻還穿著的物品（以及頂替它的另建物件），一到兩秒內從穿戴拿掉（原版留到重新登入）。使用者 2026-11-10 同意（Bags session 交接：「修法放家族 Fixes，做成伺服器端自動修復」）。
+- 已經在地上或別的容器裡、卻還穿著的物品（以及多人伺服器上頂替它的另建物件），一到兩秒內從穿戴拿掉（原版留到重新登入或讀檔）。使用者 2026-11-10 同意（Bags session 交接：「修法放家族 Fixes，做成伺服器端自動修復」），2026-11-11 同意單人也修（「單人也修」）。
 - 正常的穿、脫、換穿、扔掉、放置都不經過本補丁；繃帶與傷口模型不動。
 
 ### 已知限制
@@ -2136,27 +2143,29 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
 - 可以同時穿多件的部位（原版只有繃帶、傷口、殭屍傷痕三種）上的殘留拿不掉，記一行後不處理。
 - 別的 MOD 若讓穿著的物品留在主物品欄以外的容器超過兩次檢查，會被本補丁脫下。原版的穿上（物品要在物品欄裡才穿）、脫下、換穿、搬移、交易都在同一步處理完（讀碼：`ISWearClothing.lua:13`、`:118-121`、
   `ISUnequipAction.lua:112`、`ISClothingExtraAction.lua:121-138`、`ISTransferAction.lua:86-92`），沒有這種狀態；目前沒有已知這樣做的 MOD。
-- 單人遊戲不作用。單人實機（2026-11-11，42.22.2）：開著 Mirage 乾淨外觀時同樣會發生（`swe2e-sp-mir-1111a`：放置游標讀到 `isEquipped=false`、只排放下，8 秒後仍穿著、背包在地上），
-  不載 Mirage 時原版先脫下再放、不會發生（`swe2e-sp-render-1111a`）；重新讀檔就恢復（`swe2e-sp-reload-1111b`）。單人要修得另寫一份在玩家的遊戲裡執行的檢查，沒有做。
+- 單人遊戲裡，別的 MOD 若在 `OnTickEvenPaused` 之前就把穿戴清單換成複製品，本補丁看不到真清單、不會介入（Mirage Wardrobe 是在 `OnTick` 換，實機有效）。
+  某一幀繪製後外觀 MOD 沒把清單換回時（讀碼：睡覺畫面全黑時不觸發 `OnPostRender`，`IngameState.java:1195-1200`；Mirage 另在 `OnPreUIDraw`、`OnRenderTick` 與下一次 `OnTick` 開頭補換回），那一次檢查看到的是複製品：複製品不在容器也不在地上、沒有先例，不動，等之後看到真清單再處理。這個情況沒有實測。
 - 不處理客戶端為什麼判斷錯；外觀 MOD 與原版游標都不改。
 
 ### 驗證
 
-`lua scripts/test_stale_worn_guard.lua` — 57 項，全綠。假 Java 端照快照形狀模擬 WornItems、物品的容器與地上物件、`removeWornItem(item, forceDropTooHeavy)`（含把該部位第一件移出每幀更新清單、多件部位不移除）、
-`IsoCell.addToProcessItems`、線上玩家清單、伺服器照清單另建同編號物件。涵蓋：在自己物品欄的穿著不動；在地上、在別的容器的連兩次才拿掉、參數是 false、拿掉後仍在每幀更新清單；
+`lua scripts/test_stale_worn_guard.lua` — 70 項，全綠。假 Java 端照快照形狀模擬 WornItems、物品的容器與地上物件、`removeWornItem(item, forceDropTooHeavy)`（含把該部位第一件移出每幀更新清單、多件部位不移除）、
+`IsoCell.addToProcessItems`、線上玩家清單、本機玩家（含空位）、兩個事件的先後、伺服器照清單另建同編號物件。涵蓋：在自己物品欄的穿著不動；在地上、在別的容器的連兩次才拿掉、參數是 false、拿掉後仍在每幀更新清單；
 只成立一次或不連續的兩次不動；另建的物件有先例才拿掉（物件每次換新也一樣、被穿回會再拿一次、不登記每幀更新）、沒有先例或只有別人的先例不動；死亡角色不看；
 兩次檢查至少隔 1000 ms、系統時鐘往回調時不卡住；同一位玩家多件與多位玩家；拿不到穿戴清單或物品欄的角色跳過；多件部位不呼叫、同部位的物品都留在每幀更新清單；呼叫後還在的只試一次（物件每次換新也一樣）、真物品仍登記回每幀更新清單；兩種都只記一行、不算已處理；離線後不留先例；
-log 上限與上限提示；出錯後停用並只印一次；不是伺服器不安裝；缺 API 印 `NOT installed`；重複載入不疊。
+log 上限與上限提示；出錯後停用並只印一次；多人客戶端不安裝；缺 API 印 `NOT installed`；重複載入不疊。
+單人：掛 `OnTickEvenPaused`、不掛 `OnTick`（伺服器相反）；缺事件或本機玩家 API 不安裝；看本機玩家、空位跳過、不讀線上玩家清單；拿掉後對那位玩家發 `OnClothingUpdated`，沒拿掉的與伺服器不發。
 
-**mutation 驗證**（`--mutants`，40 個全部抓到）：判定的每個分支、先例的記錄（只記在物品欄裡的）／分玩家／離線清除、連兩次與可疑清單的換新、檢查間隔與時鐘往回、死亡與兩份清單的檢查、由後往前掃、
-`removeWornItem` 的呼叫與第二個參數、多件部位不呼叫、呼叫後的確認與不重試（照編號記）、登記回每幀更新清單（真物品要、另建的不要、要在確認之前）、計數、log 上限、`isServer` 閘門、形狀檢查、`pcall` 與停用各一個以上。
+**mutation 驗證**（`--mutants`，49 個全部抓到）：判定的每個分支與先後、先例的記錄（只記在物品欄裡的）／分玩家／離線清除、連兩次與可疑清單的換新、檢查間隔與時鐘往回、死亡與兩份清單的檢查、由後往前掃、
+`removeWornItem` 的呼叫與第二個參數、多件部位不呼叫、呼叫後的確認與不重試（照編號記）、登記回每幀更新清單（真物品要、另建的不要、要在確認之前）、計數、log 上限、多人客戶端的閘門、
+單人的事件／玩家清單／空位／`OnClothingUpdated`（單人要發、伺服器不發、沒拿掉不發）、形狀檢查、`pcall` 與停用各一個以上。
 
-`python scripts/check_vanilla_alignment.py` 登記 12 條：成因三條（`ISDropWorldItemAction:complete` 放下到移出物品欄之間沒有脫下、`ISPlace3DItemCursor:create` 用 `isEquipped` 決定排不排脫下、
+`python scripts/check_vanilla_alignment.py` 登記 14 條（單人兩條：`IngameState` 裡 `OnTickEvenPaused` 在 `IsoWorld.update` 與 `OnTick` 之前、`getNumActivePlayers`／`getSpecificPlayer`）：成因三條（`ISDropWorldItemAction:complete` 放下到移出物品欄之間沒有脫下、`ISPlace3DItemCursor:create` 用 `isEquipped` 決定排不排脫下、
 `SyncClothingPacket.process` 對背包每次都重穿、照清單穿回並另建沿用編號的物件）、依賴（`removeWornItem`→`setWornItem`→`syncClothing` 與移出每幀更新清單、`isDead`、伺服器 `syncClothing` 的 `sendToAll`、
 `WornItems.getItemByIndex`／`size`／`contains`／`getLocation`／`getBodyLocationGroup` 與 `setItem` 對多件部位不移除、`BodyLocationGroup.isMultiItem`、`InventoryItem.getContainer`／`getWorldItem`／`getID`、`IsoCell.addToProcessItems`、`getOnlinePlayers`）、前提兩條（`ItemContainer.Remove` 把 `container` 設成 null、
 `IsoGridSquare.AddWorldInventoryItem` 會 `setWorldItem`）；退場提示兩條：`ISDropWorldItemAction.lua` 出現 `removeWornItem`／`setWornItem`／`getWornItems():remove`，或 `ItemContainer.Remove` 裡出現 `removeWornItem`。
 
-實機（`fixes-e2e` skill 的 `stale-worn`，2026-11-10，42.22.2 專用伺服器＋一個客戶端，9950X3D；只用原版物品 `Base.Bag_ALICEpack`，外觀 MOD 是 Mirage Wardrobe 的乾淨外觀）：
+實機（`fixes-e2e` skill 的 `stale-worn`，2026-11-10～11，42.22.2，9950X3D；多人是專用伺服器＋一個客戶端；只用原版物品 `Base.Bag_ALICEpack`，外觀 MOD 是 Mirage Wardrobe 的乾淨外觀）。多人：
 
 - 原版對照 `swe2e-ctl-mir-1110b`（沒有本檔，開 Mirage）：`RESULT PASS steps=4 checks=1`。放置游標在繪製畫面時放下穿著的背包，伺服器 `DROP.complete` 之後那件仍穿著、已不在物品欄；
   8 秒後兩端都還穿著（伺服器穿著的就是地上那一件），背上照畫，快捷列 3→4→4 格。
@@ -2166,17 +2175,31 @@ log 上限與上限提示；出錯後停用並只印一次；不是伺服器不�
   開著 Mirage 站 30 秒並走動（伺服器的穿戴清單前後相同）。繃帶：伺服器上出現兩件照清單另建的 `Base.Bandage_LeftHand`，7 秒後還在，`removed`、`stuck` 不變；
   同一案在伺服器逐件讀 `isMultiItem`：繃帶部位 `true`，皮帶、上衣、褲子等七個一般部位 `false`。整輪 `stuck=0`，兩端沒有 `NOT installed`、`disabled after`、`could not remove`，伺服器開好之後沒有例外。
 - 修正組不載 Mirage，只跑次路徑 `swe2e-spam-nomir-1110e`：`RESULT PASS steps=5 checks=8`，1,795 ms 後拿掉，記 `(re-created from a client list)`。
-  不載 Mirage 的其餘各案是用前一版守衛跑的（`swe2e-fix-nomir-1110d`，38 個 CHECK 全過：繪製路徑的放置原版自己先脫下，守衛不介入；那一輪次路徑沒有被穿回，整輪判 INCONCLUSIVE）。
-  前一版和現行版只差多件部位先跳過、登記回每幀更新清單的順序。
-- 每次檢查的成本：伺服器連續呼叫 2 萬次，每次約 7 µs（1 位玩家、穿 7 件；每秒只跑一次；前一版量到約 5 µs）。多位玩家時的成本沒有量。
+  不載 Mirage 的其餘各案是用更早一版守衛跑的（`swe2e-fix-nomir-1110d`，38 個 CHECK 全過：繪製路徑的放置原版自己先脫下，守衛不介入；那一輪次路徑沒有被穿回，整輪判 INCONCLUSIVE）。
+- 加了單人之後的多人回歸（現行守衛）`swe2e-fix-mir-1111e`：`RESULT PASS steps=13 checks=42`。主路徑伺服器 1,496 ms、客戶端 1,513 ms 後不再穿著，次路徑 2,002／2,012 ms，
+  兩行診斷仍是 `(on the ground)` 與 `(re-created from a client list)`；多人客戶端沒有安裝本檔；`stuck=0`。
+- 每次檢查的成本：伺服器連續呼叫 2 萬次，每次約 6–7 µs（1 位玩家、穿 7–9 件；每秒只跑一次）。多位玩家時的成本沒有量。
 - 第一版守衛（只認「在別處」的真物品、可疑清單照物件記）在 `swe2e-spam-nomir-1110a` 沒接住次路徑：放下後伺服器的穿戴每個 tick 被換成新的另建物件，5 秒後兩端仍穿著、計數 0。
   現行寫法（照編號記、另建的物件看先例）是照這一輪改的。
 
+單人（2026-11-11，同一份情境的單人分支）：
+
+- 原版對照（本檔還只在伺服器安裝時）開 Mirage `swe2e-sp-mir-1111a`：放置游標讀到 `isEquipped=false`、只排放下，8 秒後仍穿著、背包在地上。
+  不載 Mirage `swe2e-sp-render-1111a`：原版先脫下再放，不會發生。重新讀檔 `swe2e-sp-reload-1111b`：讀檔後不再穿著，背包在地上。
+- 修正組開 Mirage `swe2e-spfix-mir-1111e`：`RESULT PASS steps=13 checks=47`。同樣的放置，放下完成後 1,408 ms 真正的穿戴清單不再有它，
+  `console.txt` 記 `removed stale worn item Base.Bag_ALICEpack#… (on the ground) … (#1)`；之後不做任何操作，3 秒後快捷列 2→1 格；看了 10 秒沒有被外觀 MOD 放回，乾淨外觀仍開著，背上不再畫。
+  放下後立刻暫停 3 秒的案：暫停中就拿掉（暫停後 1,269 ms），快捷列一樣 2→1。不該介入的案計數都不變：正常放置、扔掉、解除裝備、穿脫循環、腰包前後換穿、
+  開著 Mirage 站 30 秒並走動、繃帶（包紮 7 秒後模型還在）。整輪 `removed=2 stuck=0`，沒有 Lua 錯誤與例外。
+- 修正組不載 Mirage `swe2e-spfix-nomir-1111e`：`RESULT PASS steps=12 checks=35`。本檔有安裝；繪製路徑的放置原版自己先脫下，整輪 `removed=0`。
+- 沒有補發 `OnClothingUpdated` 的那一版 `swe2e-spfix-old-1111a`：守衛 1,863 ms 拿掉、真正的穿戴清單也沒有它，但 3 秒後快捷列仍是 2 格（2→2）。補發是照這一輪加的。
+- 每次檢查的成本：單人 2 萬次，每次約 1.7 µs（量的時候角色沒穿東西，偏低）。
+
 ### 可退場條件
 
-官方讓伺服器在物品離開物品欄時一併清掉穿戴（例如 `ISDropWorldItemAction:complete` 自己脫下，`check_vanilla_alignment.py` 有退場提示），
+官方讓遊戲在物品離開物品欄時一併清掉穿戴（例如 `ISDropWorldItemAction:complete` 自己脫下，單人與伺服器跑的是同一支；`check_vanilla_alignment.py` 有退場提示），
 而且 `SyncClothingPacket.process` 不再替物品欄裡沒有的編號另建穿戴物件（第三條成因轉 CHANGED）。
-第一條成因轉 CHANGED 或退場提示出現時，重跑 E2E `stale-worn` 的對照組（`--define mode=control`）與不載外觀 MOD 的 `spam` 案：放下後兩端都不再穿著，就移出本檔。
+第一條成因轉 CHANGED 或退場提示出現時，重跑 E2E `stale-worn` 的多人對照組（`--define mode=control`）、不載外觀 MOD 的 `spam` 案，與單人開 Mirage 的對照（拿掉本檔跑單人分支）：放下後都不再穿著，就移出本檔。
+官方只改伺服器（Java）而沒改那支 Lua 時，單人仍要本檔：不能只看多人那兩輪。
 
 ---
 
