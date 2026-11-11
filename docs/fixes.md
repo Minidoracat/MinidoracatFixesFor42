@@ -2321,6 +2321,102 @@ component 的內容（製作中的材料、液體）沒倒，單片移除會連�
 
 ---
 
+## MDFX_BasementVoidGuard — 樓梯旁的牆被敲掉後，從旁邊走進樓梯口時掉到地下室的牆外（走不回來、重登也一樣）
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_BasementVoidGuard.lua` |
+| 影響版本 | Build 42.22.2 實測（反編譯快照 `42.22.2-20261109`） |
+| 端 | 玩家的遊戲（多人客戶端與單人；專用伺服器不執行 `client/`） |
+| 類型 | 原版**讓角色掉到地下室牆外**（所在格與實際位置不同步）；事後放回，不改地圖、不擋大錘 |
+| 狀態 | **現役**（`42.22.2-0.18.0` 之後，尚未發布） |
+
+### 症狀
+
+- 有些房子通往地下室的樓梯頂，正好在上樓樓梯頂格的正下方。樓梯旁邊的牆被大錘敲掉之後，從隔壁房間直接走進樓梯頂格：角色往下掉到地下一層、摔傷（實測每次 3–9 點），
+  站在地下室的牆外。那裡的格子存在、沒有地板，牆從外面進不去，周圍沒有格子的地方走不過去；伺服器照存這個位置，重新登入還在原地。
+- 單人與多人都會發生。每幀位移超過 0.01 格才會：30 FPS 走路就會，60 FPS 偶爾，244 FPS 走路不會、衝刺會。
+- 玩家回報與現場分析在 `MinidoracatServerAnalyze` 的事件報告（2026-11-11）。
+
+### 根因（行號為 42.22.2 反編譯快照）
+
+- **地圖**：原版地圖在這類房子畫的地下室區指定了樓梯位置（例：羅斯伍德 8175,11673 那棟 `StairDirection=S, StairX=1, StairY=3`，`media/maps/Muldraugh, KY/objects.lua`），
+  不管世界種子選到哪個地下室，地下室樓梯頂都對到同一格（`Basements.java:154-229`、`:314-413`），正好在上樓樓梯頂格的正下方。原版靠樓梯兩側的牆擋住側面。
+- **引擎**（`IsoMovingObject.postupdate`）：牆不在時，從旁邊的房間走進樓梯頂格的那一幀：
+  1. `DoCollide()` 一開頭就把「所在格」換成下一步位置那一格（`IsoMovingObject.java:1504`），也就是樓梯頂格；沒有牆，不算碰撞，所在格就留在那一格。
+  2. 所在格有樓梯時 `getGlobalMovementMod()` 回 0.75（`:801`），每幀位移超過 0.01 格就乘上它（`:998-1002`）。原本剛好跨過格線的一步變短，人實際還留在原來那一格。
+  3. `doStairs()`（`:1006`）照「所在格」算高度：所在格是樓梯頂、高度小數不到 0.1、正下方也是樓梯頂時，改用下面那道樓梯（`:277-291`），高度變成略低於 0。
+  4. `findCurrentGridSquare()`（`:1008`）用實際位置與新高度重找所在格：原來那一格的正下方、地下一層，也就是地下室牆外的空格（`IsoChunk.java:2386-2415` 只在有物件的格子周圍補空格）。
+- 實測每幀軌跡（`fxbv-sp30-1111f` 的 `O-gap-north`，30 FPS）：`y=11675.936 z=0`（廚房）→ 下一幀 `y=11675.986 z=-0.053`、所在格 `8176,11675,-1`（沒有地板）。
+  一步 0.0667 格 × 0.75 ＝ 0.050，和第 2 步相符；之後 `PlayerFallingState`，約 0.6 秒後落到 `z=-1`。
+- 牆還在時不會發生（`DoCollide` 判成碰撞、所在格換回原來那一格）；從樓梯原本的入口上下樓也不會（實機 `I-storage`／`O-storage`）。
+
+### 修法
+
+- **掛點**：`OnPlayerUpdate`（`IsoPlayer.java:2291`），只看 `isLocalPlayer()` 的角色；坐在車上、開著穿牆（`isNoClip()`）、所在格沒載入時不動。
+- **判定**：所在格 `TreatAsSolidFloor()`（地板、樓梯、斜面）就記下位置（每位玩家一筆）。所在格在地面以下（`z < 0`），而且從正下方一路到這個 chunk 的最低層都沒有 `TreatAsSolidFloor()` 的格子，就是牆外。
+  地面以上的半空中、地下樓梯井上方（正下方有樓梯或地板）照原版，也不記位置。
+- **放回**：記下的位置和現在水平相差 `NEAR`（2）格以內，放回那個位置；否則（一進遊戲就在牆外、被傳送進來）放到正上方最近的可站格的正中央，再不行找地面層 `RADIUS`（2）格內、由近到遠。
+  可站＝`TreatAsSolidFloor()` 而且不是實心物件或家具（`isSolid()`／`isSolidTrans()`）。都找不到就不動，印一次。
+- **放回的做法**：設位置與上一幀位置（座標保留小數；原版 `teleportTo` 會截成整數）、清掉落（`setFallTime(0)`、`setLastFallSpeed(0)`、`setbFalling(false)`）、
+  `setCurrentSquareFromPosition()` 把所在格換成新位置那一格。最後一步不能省：`OnPlayerUpdate` 之後同一幀才跑掉落計算（`IsoGameCharacter.updateFalling`，`:9573-9616`），
+  它照所在格算離地高度，所在格還是牆外那一格就繼續往下掉（第一版沒有這一步，實機 `fxbv-fix-sp30-1111k` 一條路線放回 241 次、角色動彈不得）。
+- **自保**：整段 `pcall`；出錯就停用本補丁並印一次。缺 `OnPlayerUpdate`／`getCell`／`getTimestampMs` 印 `NOT installed`、不登記。
+- **診斷**：每次介入印一行 `MDFX_BasementVoidGuard player <編號> was below ground at <x>,<y>,<z> (square <格>) with no floor here or below; put back to …, the last position on a floor (#n)`
+  （已經在牆外的寫 `moved to …, the nearest floor above`）。連續 `EVENT_GAP_MS`（5 秒）內的放回算同一次；每次啟動最多 20 行（之後照樣放回、不再記）。
+
+### 與原版的差異
+
+- 掉到地下室牆外的角色被放回（原版留在牆外）；一進遊戲就已經在牆外的角色被送到正上方最近的地板。
+- 一直朝那個缺口走時，角色可能停在缺口邊緣進不去：同一個位置、同一步每次都被縮短，所以每次都被放回（實機 `O-gap-north` 按住 2 秒放回 25 次；原版是掉下去）。
+  放回前那一幀角色低約 0.05 格。從樓梯原本的入口上下樓不受影響。
+- 使用者 2026-11-11 同意（設計稿三個決定：放回上一個站得住的位置、已困住的也送上來、診斷每次一行上限 20）。
+
+### 已知限制
+
+- 不補牆、不擋大錘、不改地圖、不動伺服器；只在掉到牆外之後放回。沒裝本 MOD 的客戶端照原版。
+- 坐在車上、開著穿牆的玩家不處理；所在格還沒載入時不處理。
+- 正上方與地面層 2 格內都沒有可站的格子時不動（印一次）。
+
+### 驗證
+
+`lua scripts/test_basement_void_guard.lua` — 63 項，全綠。假 Java 端照快照形狀模擬格子（地板／實心／家具／chunk 最低層）、角色的位置、上一幀位置、所在格與掉落欄位。
+涵蓋：重現量到的那一幀放回上一幀位置、掉落取消、所在格換回；從地下室樓梯走到牆外放回樓梯上（含高度）；按住不放 300 幀只算一次；5 秒的界線；
+一進遊戲就在牆外送到正上方、地下二層先到上一層；正上方沒有地板／實心／家具／沒載入時找鄰格、取近的、3 格外不動並只印一次；記下的位置太遠（x、y 各自的界線）；
+不該動的（地面以上的半空中且不記位置、樓梯井上方、隔兩層才有地板、下面沒有格子、讀不到 chunk、所在格沒載入、車上、穿牆、別人的角色）；分割畫面各記各的；
+log 上限與上限提示；每幀成本（站在地板上每幀只問一次 `TreatAsSolidFloor`）；出錯後停用並只印一次；缺 API 印 `NOT installed`；重複載入不疊。
+
+**mutation 驗證**（`--mutants`，60 個全部抓到）：每個判定條件與界線、每個常數、放回的每一個 setter、換所在格與它的先後、落點的每個條件、事件合併、log 上限、`pcall` 與停用各一個以上。
+
+`python scripts/check_vanilla_alignment.py` 登記 30 條（Java 指紋）：成因三條（`DoCollide` 先換所在格；`postupdate` 的「乘 `getGlobalMovementMod`→`doStairs`→`findCurrentGridSquare`」順序；
+`doStairs` 改用正下方樓梯頂的分支）、係數一條（所在格有樓梯回 0.75）、前提（`updateFalling` 照所在格算；`OnPlayerUpdate` 在上層 `update` 之前；`setX`／`setY` 同時設下一步位置）與依賴的方法。
+
+實機（`fixes-e2e` skill 的 `basement-void`，2026-11-11，42.22.2，9950X3D；羅斯伍德 8176,11676 那棟，牆用原版大錘敲掉，走路用引擎的自動行走；修正組的 MOD 是未提交的工作樹、暫時 commit `8db0bbf5`）：
+
+- 原版重現（MOD 只有探針與空殼）：30 FPS 走路 23 條路線，單人四輪各 8 條停在牆外（`fxbv-sp30-1111f`、`-sp30run-1111f`、`-sp30both-1111g`、`-sp30shot-1111h`），多人 5 條（`fxbv-mp30-1111g`）；
+  牆還在 23 條 0 次；60 FPS 1 次（`fxbv-sp60-1111j`）；244 FPS 走路 104 條 0 次、衝刺 23 條 1 次（`fxbv-spsprint-1111f`）。
+- 對照組 `fxbv-ctl-sp30-1111m`（單人 30 FPS，加了判定的情境）：`RESULT PASS steps=56 checks=3`。牆還在 23 條 0 次、牆拆掉 23 條 8 次，生命 100 → 70.5；直接放進牆外空格的那一步停在 `z=-1`。
+- 修正組單人 `fxbv-fix-sp30-1111l`（30 FPS）：`RESULT PASS steps=56 checks=6`。47 條路線沒有一條停在牆外、生命 100 → 100；牆還在的 23 條（含儲藏室下樓到地下室再走回來）守衛 0 次介入；
+  牆拆掉後放回 178 次、算 8 次事件；直接放進牆外空格 (8180,11675,-1) 的角色被送到 (8180.5,11675.5,0)，恰好介入一次。
+- 修正組多人 `fxbv-fix-mp30-1111m`（管理員帳號，30 FPS）：`RESULT PASS steps=33 checks=5`，24 條路線 0 次停在牆外、放回 130 次、生命不變。
+- 修正組多人、一般帳號 `fxbv-fix-mpuser-1111n`（伺服器 `SpawnPoint` 設在屋旁、`AntiCheatSpeed=2` 照範本，30 FPS）：`RESULT PASS steps=33 checks=5`，放回 130 次，沒有被踢，`server-console.txt` 沒有 anticheat 訊息。
+  讀碼：AntiCheatSpeed 每 1 秒取樣一次水平位移、上限 20 格／秒（`NetworkCharacterAI.java:367-405`），本補丁一次最多移 2 格多。
+- 已經困在牆外才裝上本補丁 `fxbv-stuck-mp-1111p`（多人、一般帳號，兩個場次）：場次 1 的 MOD 樹拿掉本檔，角色放進牆外空格後停在 (8180.5,11675.5,-1)，關掉客戶端與伺服器；
+  把本檔放回、重開，場次 2 `RESULT PASS steps=1 checks=2`：伺服器記的登入位置是 (8180,11675,-1)，進遊戲第 1 幀就印 `moved to 8180.50,11675.50,0.00, the nearest floor above (#1)`，角色在正上方的客廳地板上，恰好介入一次。
+- 牆拆掉之後連上樓樓梯也敲掉（大錘一下拆掉整道三格；單人 30 FPS）：對照組 `fxbv-ctl-stairs-1111q` 23 條路線 0 次停在牆外、生命不變（樓梯頂格沒有樓梯，上面第 2、3 步不成立，人直接落到地下室樓梯上）；
+  修正組 `fxbv-fix-stairs-1111q` `RESULT PASS steps=36 checks=4`，23 條路線守衛 0 次介入。
+- 第一版（暫時 commit `1a0e933d`，放回時沒有換所在格）`fxbv-fix-sp30-1111k`：`O-gap-north` 一條路線放回 241 次、角色停在 `z=-0.003` 動彈不得、結束時仍算在牆外；加上 `setCurrentSquareFromPosition()` 後才是上面的結果。
+- 前後對照圖（同一條路線 `O-gap-north` 結束時；左原版在牆外、右修正後在地下室樓梯上）：`temp/fixes-basement-void-1111/bv-fix-pair.jpg`（本機，不進 git）。
+
+### 可退場條件
+
+官方讓這種位置進不去（例如 `doStairs` 不在位移被縮短的那一幀照下一步那一格算高度），或自己把掉到牆外的角色放回。
+`check_vanilla_alignment.py` 的三條成因或係數任一轉 CHANGED 時，重跑 E2E `basement-void` 的對照組（`--define mode=control`、30 FPS、`--src` 指向沒有本檔的 MOD 樹）：
+牆拆掉的 23 條路線 `BV SUMMARY … open=0`，就移出本檔。
+
+---
+
+
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 
 | 項目 | 內容 |

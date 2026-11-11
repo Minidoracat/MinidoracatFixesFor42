@@ -8,7 +8,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [h2]📦 Requirements[/h2]
 [list]
 [*] Supported version: Build 42.20.4+
-[*] Singleplayer and multiplayer; in MP the server enables it. The reload, battery-charger and window fixes run on the server and in each player's game, the death-sync fix only in multiplayer (on the server and in each player's game), the mod-settings fix only in each player's game (settings wiped by Apply in a main menu without this mod come back from a backup the next time you load in), the hen-house and vehicle-below-ground fixes only in each player's game in multiplayer, the join-errors fix in each player's game; all others run server-side only
+[*] Singleplayer and multiplayer; in MP the server enables it. The reload, battery-charger and window fixes run on the server and in each player's game, the death-sync fix only in multiplayer (on the server and in each player's game), the mod-settings fix only in each player's game (settings wiped by Apply in a main menu without this mod come back from a backup the next time you load in), the hen-house and vehicle-below-ground fixes only in each player's game in multiplayer, the join-errors and outside-the-basement fixes in each player's game; all others run server-side only
 [*] [b]Add/remove mid-save:[/b] safe to add; before removing it, read the guide: some trampled/harvested crops moved out of the save can no longer be handled with the farming menu
 [/list]
 
@@ -35,6 +35,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Windows from the four new Build 42 sets can't be put back on a north wall after you pick them up
 [*] After you place a worn bag or clothing item on the ground, it still shows on your character and its hotbar slots stay until you relog (in single player, until you reload your save)
 [*] Large objects with missing pieces (for example a boulder that only half spawned) can't be destroyed with a sledgehammer
+[*] In a house where the wall beside a staircase was knocked down, stepping onto the stairs from the side drops you outside the basement walls: no way back, even after relogging
 [*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 [*] Stronger server-side validation: in multiplayer, sledgehammer destruction follows the vanilla server rules (you need a sledgehammer; on servers that limit it to safehouses, you must be in one)
 [/list]

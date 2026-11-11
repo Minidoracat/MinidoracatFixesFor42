@@ -11,7 +11,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Requires[/b]: Build 42.20.4+.
 [*] [b]Install[/b]: subscribe and enable; no settings, sandbox options or keys. In MP the server enables it.
 [*] [b]Vanilla bugs only[/b]: no balance changes, items or UI.
-[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, one that has the server handle multiplayer deaths it missed, one that puts a vehicle back above the ground after it dropped below it, one that lets a window vanilla misjudged go back on its wall, one that has the server clear a worn item it left behind after you placed it on the ground, and one that strengthens the server's validation of the health cheat.
+[*] [b]Acts only where vanilla would error[/b]: plus two farming fixes against duplicate traffic and save overflow, one that stops vanilla from losing mod settings, one that skips vanilla's needless per-frame recalculation for battery chargers, one that has the server handle multiplayer deaths it missed, one that puts a vehicle back above the ground after it dropped below it, one that puts a character back where it stood after it dropped outside the basement walls, one that lets a window vanilla misjudged go back on its wall, one that has the server clear a worn item it left behind after you placed it on the ground, and one that strengthens the server's validation of the health cheat.
 [*] [b]Rechecked after game updates[/b]: fixes are removed once officially fixed.
 [/list]
 === 🧰 Animals: butchering, petting, milking, watering, leashing
@@ -218,6 +218,17 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Scope[/b]: in MP it runs on the server and takes effect once the server updates the mod and restarts; in SP it takes effect once you update the mod.
 [*] [b]Retired[/b]: once vanilla lets you destroy large objects with missing pieces with a sledgehammer.
 [/list]
+=== 🧰 Dropped outside the basement walls
+[h3]With the wall beside a staircase knocked down, stepping onto the stairs from the side drops you outside the basement walls[/h3]
+[list]
+[*] [b]Symptom[/b]: in some houses the basement stairs sit right below the stairs going up. After the wall beside the staircase is knocked down with a sledgehammer, walking onto the top of the stairs from the next room makes the character drop, take a little fall damage, and end up outside the basement walls. There is no floor there, the walls can't be entered from outside, so there is no way back; relogging leaves you in the same spot. Happens in SP and MP, mostly at low frame rates (around 30 FPS) or when sprinting.
+[*] [b]Cause[/b]: when a character steps onto a square with stairs, the game shortens that step a little. A step that would just cross onto the stairs is shortened so the character has not actually crossed yet, but the game already takes the height from the stairs. In these houses the square below the top of the stairs is the top of the basement stairs, so the height comes out below ground, and the character is treated as standing right below where it was: outside the basement walls.
+[*] [b]Fix[/b]: every frame your game checks your character. If it is below ground with no floor or stairs under it or anywhere below, it is put back where it stood a moment ago and the fall is cancelled, with no damage. A character that is already outside the walls when you load in is moved to the nearest floor above.
+[*] [b]Difference from vanilla[/b]: if you keep walking into that gap, the character may stop at its edge instead of getting in (vanilla drops you). Using the stairs from their normal entrance is unaffected.
+[*] [b]Log[/b]: each time, the player's console.txt gets one line: [MinidoracatFixes] MDFX_BasementVoidGuard player … was below ground at … put back to … (put-backs within 5 seconds count as one; up to 20 lines per start).
+[*] [b]Scope[/b]: runs in each player's own game, in SP and MP. In MP players get it when the server updates the mod. It doesn't rebuild walls or change the map.
+[*] [b]Retired[/b]: once vanilla stops dropping characters outside the basement walls this way.
+[/list]
 === 🧰 Multiplayer: only admins can use the health cheat
 [h3]Stronger server-side validation: only admins can use the health cheat (an admin feature)[/h3]
 [list]
@@ -271,7 +282,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [h3]Is a fix working?[/h3]
 [list]
 [*] [b]Check the log[/b]: server-console.txt on servers, console.txt in SP shows [MinidoracatFixes] lines.
-[*] [b]When a problem is caught[/b]: one line per fix per start. The watering and animal-action fixes log one per action and the death-sync fix one per death it handles or late message it skips, the health-cheat fix one per refusal, the placed-bag fix one per item it takes off (in the server's server-console.txt), up to 20 each (per connection for the health cheat); the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the vehicle-below-ground fix one line per vehicle it puts back there too (up to 20), the battery-charger fix in both the server's and the player's.
+[*] [b]When a problem is caught[/b]: one line per fix per start. The watering and animal-action fixes log one per action and the death-sync fix one per death it handles or late message it skips, the health-cheat fix one per refusal, the placed-bag fix one per item it takes off (in the server's server-console.txt), up to 20 each (per connection for the health cheat); the mod-settings, hen-house and join-errors fixes log in the player's own console.txt, the vehicle-below-ground and outside-the-basement fixes one line per put-back there too (up to 20 each), the battery-charger fix in both the server's and the player's.
 [*] [b]Report these two[/b]: "NOT installed" = a game update changed vanilla, fix paused; "NOT masking it" = unknown error.
 [/list]
 [h3]Does load order matter?[/h3]

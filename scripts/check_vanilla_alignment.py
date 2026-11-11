@@ -1140,6 +1140,101 @@ FIXES = [
         ],
     },
     {
+        "name": "MDFX_BasementVoidGuard（成因：所在格先換成下一步那一格，位移縮短後 doStairs 仍照它算高度）",
+        "class": "zombie.iso.IsoMovingObject",
+        "crash": [
+            # DoCollide（IsoMovingObject.java:1504）一開頭就把所在格換成下一步位置那一格
+            r"private boolean DoCollide\(int\);(?:(?!\n  \S)[\s\S])*?// Method getNextX:\(\)F\s+\d+: aload_0\s+\d+: invokevirtual #\d+\s+"
+            r"// Method getNextY:\(\)F\s+\d+: invokevirtual #\d+\s+// Method setCurrentSquareFromPosition:\(FF\)V",
+            # postupdate（:996-1008）：位移乘 getGlobalMovementMod（每幀超過 0.01 格才乘）→ setX／setY → doStairs → findCurrentGridSquare。
+            # 轉紅＝官方改了這段的順序或條件，重跑 E2E basement-void 對照組
+            r"public void postupdate\(\);(?:(?!\n  \S)[\s\S])*?// Method DoCollide:\(I\)Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method getGlobalMovementMod:\(\)F(?:(?!\n  \S)[\s\S])*?// float 0\.01f(?:(?!\n  \S)[\s\S])*?// Method setY:\(F\)F"
+            r"(?:(?!\n  \S)(?!// Method findCurrentGridSquare:)[\s\S])*?// Method doStairs:\(\)V"
+            r"(?:(?!\n  \S)[\s\S])*?// Method findCurrentGridSquare:\(\)Lzombie/iso/IsoGridSquare;",
+            # doStairs（:277-281）：所在格是樓梯頂、高度小數不到 0.1、正下方也是樓梯頂 → 改照下面那道樓梯算高度
+            r"public void doStairs\(\);(?:(?!\n  \S)[\s\S])*?// float 0\.1f(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/iso/IsoGridSquare\.z:I\s+\d+: iconst_1\s+\d+: isub\s+\d+: invokevirtual #\d+\s+"
+            r"// Method zombie/iso/IsoCell\.getGridSquare:\(III\)Lzombie/iso/IsoGridSquare;\s+\d+: astore_2"
+            r"(?:(?!\n  \S)[\s\S])*?IsoObjectType\.stairsTW(?:(?!\n  \S)[\s\S])*?\d+: aload_2\s+\d+: astore_1",
+        ],
+        "formula": [
+            # getGlobalMovementMod（:801）：所在格有樓梯時回 0.75。跨格那一步因此變短、人留在原來那一格
+            r"public float getGlobalMovementMod\(boolean\);(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoGridSquare\.HasStairs:\(\)Z\s+"
+            r"\d+: ifeq\s+\d+\s+\d+: ldc(?:_w)?\s+#\d+\s+// float 0\.75f\s+\d+: freturn",
+        ],
+        "depends": [
+            # setX／setY 同時設下一步位置（:495-498）：守衛放回後同一幀的 postupdate 不會再把人移回去
+            r"public float setX\(float\);(?:(?!\n  \S)[\s\S])*?// Method setNextX:\(F\)F",
+            r"public float setY\(float\);(?:(?!\n  \S)[\s\S])*?// Method setNextY:\(F\)F",
+            r"public float setZ\(float\);",
+            r"public float setLastX\(float\);",
+            r"public float setLastY\(float\);",
+            r"public float setLastZ\(float\);",
+            r"public zombie\.iso\.IsoGridSquare getCurrentSquare\(\);",
+            r"public void setCurrentSquareFromPosition\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_BasementVoidGuard（前提：掉落計算照所在格；依賴：掉落欄位的 setter）",
+        "class": "zombie.characters.IsoGameCharacter",
+        "depends": [
+            # updateFalling（IsoGameCharacter.java:9573-9616）用 getHeightAboveFloor，後者看所在格的 TreatAsSolidFloor：
+            # 守衛放回時要把所在格一起換掉，否則同一幀照牆外那一格繼續往下掉（實機 fxbv-fix-sp30-1111k）
+            r"private void updateFalling\(\);(?:(?!\n  \S)[\s\S])*?// Method getHeightAboveFloor:\(\)F",
+            r"public float getHeightAboveFloor\(\);(?:(?!\n  \S)[\s\S])*?// Field current:Lzombie/iso/IsoGridSquare;"
+            r"(?:(?!\n  \S)[\s\S])*?// Method zombie/iso/IsoGridSquare\.TreatAsSolidFloor:\(\)Z",
+            r"public void setFallTime\(float\);",
+            r"public void setLastFallSpeed\(float\);",
+            r"public void setbFalling\(boolean\);",
+            r"public zombie\.vehicles\.BaseVehicle getVehicle\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_BasementVoidGuard（前提：OnPlayerUpdate 在同一幀的掉落計算之前；依賴：IsoPlayer）",
+        "class": "zombie.characters.IsoPlayer",
+        "depends": [
+            # updateInternal1（IsoPlayer.java:2064-2085）：updateInternal2（裡面觸發 OnPlayerUpdate，:2291）之後才呼叫上層的 update（掉落計算在裡面）
+            r"private void updateInternal1\(\);(?:(?!\n  \S)[\s\S])*?// Method updateInternal2:\(\)Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/characters/IsoLivingCharacter\.update:\(\)V",
+            r"private boolean updateInternal2\(\);(?:(?!\n  \S)[\s\S])*?// String OnPlayerUpdate",
+            r"public boolean isLocalPlayer\(\);",
+            r"public boolean isNoClip\(\);",
+            r"public final int getPlayerNum\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_BasementVoidGuard（依賴：IsoGridSquare）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            r"public boolean TreatAsSolidFloor\(\);",
+            r"public boolean isSolid\(\);",
+            r"public boolean isSolidTrans\(\);",
+            r"public zombie\.iso\.IsoChunk getChunk\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_BasementVoidGuard（依賴：IsoChunk.getMinLevel）",
+        "class": "zombie.iso.IsoChunk",
+        "depends": [
+            r"public int getMinLevel\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_BasementVoidGuard（依賴：IsoCell.getGridSquare）",
+        "class": "zombie.iso.IsoCell",
+        "depends": [
+            r"public zombie\.iso\.IsoGridSquare getGridSquare\(int, int, int\);",
+        ],
+    },
+    {
+        "name": "MDFX_BasementVoidGuard（依賴：getTimestampMs）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            r"public static long getTimestampMs\(\);",
+        ],
+    },
+    {
         "name": "MDFX_WindowFaceGuard",
         "file": "media/lua/shared/Moveables/ISMoveableSpriteProps.lua",
         "crash": [
