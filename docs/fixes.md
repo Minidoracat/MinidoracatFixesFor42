@@ -2416,6 +2416,134 @@ log 上限與上限提示；每幀成本（站在地板上每幀只問一次 `Tr
 
 ---
 
+## MDFX_ConsumedContainerGuard — 配方把裝著東西的袋子當材料用掉時，袋裡的東西一起消失
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_ConsumedContainerGuard.lua` |
+| 影響版本 | Build 42.22.2 實測（原版腳本、原版 Lua 與反編譯快照 `42.22.2-20261109`）；官方論壇 2024-12-28 有 42.0.2 單人、不載 MOD 的回報（集雨桶吃掉垃圾袋裡的東西） |
+| 端 | 多人伺服器與單人（放 `server/`，沒有 `isServer()` 閘門；多人客戶端不安裝：兩個完成端的消耗都在伺服器跑） |
+| 類型 | 原版**靜默弄丟物品**：只在原版完成之後，把被用掉的容器物品裡剩下的東西放回它原本所在的地方 |
+| 狀態 | **現役**（未發布） |
+
+### 症狀
+
+- 有些配方會把還裝著東西的袋子當材料用掉，袋裡的東西跟著消失，沒有任何訊息。單人與多人都一樣。
+- 蓋集雨桶（垃圾袋 4）：裝著東西的垃圾袋被選成材料，袋裡不是材料的東西、多帶的木板與釘子都消失。拆解麻袋：麻袋裡的東西、放在麻袋裡的剪刀（配方的工具）都消失。
+- 多人伺服器的副作用：袋子在角色身上、袋裡的東西也是這次配方的材料或工具時，`server-console.txt` 印 `Unable to resolve container location`
+  （`Packet "ItemStats" send failed`），每個連線一份。伺服器 2026-11-12 一次建造印了 180 份；2026-09 到 2026-10 另有 6 輪是手工製作印的。
+  這串訊息不是每次都有：同一種擺法兩輪是 1 份與 3 份，袋子在地上或材料另外帶的擺法是 0 份，東西照樣消失。
+
+### 根因（行號為 42.22.2 原版腳本、原版 Lua 與反編譯快照）
+
+- 配方的輸入行要有 `IsEmpty` 旗標，引擎才擋掉裝著東西的容器物品（`InputScript.doesItemPassIsOrNotEmptyAndFullTests`，`InputScript.java:1040` 一帶）。
+- 原版腳本裡會用掉容器物品、又沒有 `IsEmpty` 的輸入行共 8 行：`RainCollector` 與 `RainCollectorRound` 的 `item 4 tags[base:garbagebag]`
+  （`generated/entities/outdoors/entity_raincollector.txt:43`、`:98`；別的垃圾袋配方 11 行都有 `IsEmpty`）、`ScrapSack`（`recipes_tailoring.txt:815`）、`ScrapSackLarge`、
+  `CutHeadSack`、`MakeHollowBook`、`Scrap_Smaller_Gold_Object`、`Scrap_Smaller_Silver_Object`（鑰匙圈）。
+- 完成端用掉材料時（`CraftRecipeData.processDestroyAndUsedItems`，`CraftRecipeData.java:517-573`）對容器物品呼叫 `ItemUser.RemoveItem`（`ItemUser.java:123-180`）：
+  只把那件容器物品從它所在的容器或地上移除，它裡面的東西沒有處理，留在已經不在任何地方的袋子裡。
+- 例外是同一個函式稍後的 `GameServer.sendItemStats`：對每件用掉或留著的物品送同步，物品所在的袋子已被移除時 `ContainerID.set` 解析不到位置；
+  `INetworkPacket.sendToAll` 對每個連線各接一次、各印一份。印幾份跟物品的處理順序有關。
+
+### 修法
+
+包裝兩個完成端：建造的 `ISBuildIsoEntity.create`（`server/BuildingObjects/ISBuildIsoEntity.lua:510-602`，`:554` 選定材料、`:580` 用掉）
+與手工製作的 `ISHandcraftAction.performRecipe`（`shared/Entity/TimedActions/ISHandcraftAction.lua:225-254`，`:227`、`:238`）。
+
+1. 原函式之前：記下每一件裝著東西的容器物品，以及它在哪個容器、或在地上的哪一格哪個位置（「在不在地上」的判準同 `ItemUser.RemoveItem`：世界物件還在格子上才算）。
+   看兩個地方：這次配方的容器清單（`logic:getContainers()`；配方只會用到這些容器的直接物品，`CraftRecipeManager.java:274-282`），
+   與角色所在格加周圍一圈的地上物品。後者是因為原版在完成時會重新收集這個範圍的地上物品當材料（`BaseCraftingLogic.updateFloorContainer`，`:792-816`，
+   由 `HandcraftLogic.performCurrentRecipe` `:139-146` 與 `BuildLogic.performCurrentRecipe` `:238-245` 呼叫），動作開始後才放到地上的袋子不在原本的清單裡。
+   清單裡已經不在任何地方的過期項目（動作開始後被別的途徑移除）不記：原版重建清單時不會用到它，不是這次用掉的。
+2. 原函式照原樣呼叫，回傳值照原樣回傳。原函式的錯原樣外洩，那時不做第 3 步。
+3. 原函式之後：記下的容器物品現在既不在任何容器、也不在地上（＝被用掉了），就把它裡面剩下的東西放回它原本所在的地方。
+   原本在地上：先從袋子拿掉，再用 `AddWorldInventoryItem` 放回同一格同一個位置（伺服器會送給客戶端）；放不成（Java 端出錯、Lua 拿到 nil）而且物品還沒落地就塞回袋裡，算沒搬走；已經落地的留在地上。
+   原本在容器裡：`AddItem` 放回那個容器（它會先把物品從舊容器拿掉，不會多出一份），再 `sendAddItemToContainer`；放回的地方在車上（車的容器，或車上背包的內部：看最外層容器 `getOutermostContainer`）就照原版 `ItemUser.java:116-118` 的做法重算那個車容器的內容量與車重
+   （原版移除車上背包裡的物品時不重算；這裡要算，因為客戶端收到重送的封包時會重算，伺服器不算兩端就不一樣）。
+   原本所在的容器自己也被這次配方用掉（袋中袋）時，改放角色的主背包。
+   原本所在的容器送不到客戶端時（車上或箱子裡的背包的內部：`GameServer.sendAddItemToContainer` 與 `sendRemoveItemFromContainer` 都只送玩家身上的容器、
+   有世界物件的容器、地上袋子的內部，`GameServer.java:2427-2443`、`:2487-2503`；這種位置連原版移除袋子的封包也沒送到，客戶端還看得到已經用掉的袋子）：
+   照樣放回原處，再往外找到第一件「所在容器送得到」的容器物品（例：後車廂裡的那個背包），對它所在的容器先送移除、再送加入。
+   客戶端收到加入封包時是照伺服器現在的內容建一件新的（`AddInventoryItemToContainerPacket.java:77-112`；容器裡還有同編號的就不加，所以要先移除），兩端就一致了。
+4. 放完讀回袋子裡還剩幾件（Java 端拋例外時 Lua 收不到錯誤）；還有剩就印一次，診斷行的件數只算搬走的。
+
+不改配方腳本、不替輸入行補 `IsEmpty`：`InputScript` 的旗標是 private、沒有可從 Lua 呼叫的寫入方法；覆寫配方腳本要整份複製，會蓋掉官方之後對那些配方的修改，也管不到 MOD 的配方。
+袋子照樣被用掉、配方照樣完成；被配方用掉的材料不會回來（它們已經被原版從袋子移除，不在袋裡）。
+自己的部分各自 `pcall`（記錄一段、每個袋子的放回各一段）：出錯印一次，原版的結果照舊，其他袋子照樣處理。
+
+安裝：放 `server/`，載入時包一次；`OnInitGlobalModData` 再檢查一次，之後被別的檔整支替換時重新包上（單人進場時才載 `server/`，`OnGameBoot` 早就觸發過）。
+兩個完成端各自檢查形狀，一個變了不影響另一個。
+
+### 和原版的差異（使用者 2026-11-12 同意）
+
+- 配方用掉裝著東西的容器物品時，裡面剩下的東西留下來，放在那件容器物品原本所在的地方（原版：全部消失）。
+- 和配方是哪一個無關，MOD 加的配方也一樣。配方若是故意連內容一起銷毀，內容也會被留下來（沒看過這種原版配方）。
+- 放回主背包不檢查負重，背包可能因此超重。原版把製作產物交給角色時會檢查，放不下就丟在腳邊（`Actions.addOrDropItem`，`shared/ActionManager.lua:4-23`）；這裡照裁定放回原處、不檢查。
+- 袋中袋（袋子裝在另一個也被這次配方用掉的袋子裡）時，內層的東西進角色主背包；外層原本在地上的話，外層自己的東西留在那一格。
+- 車上背包裡的袋子被用掉時，多人遊戲的客戶端會看到那個背包被移除又放回（內容照伺服器的現況）。原版在這個位置不送任何封包，客戶端會一直看到已經用掉的袋子，直到重新載入那一區。
+- 原版右鍵選單的製作（`OnNewCraft`）對不能在地上做的配方會先把材料搬進主背包（`ISInventoryPaneContextMenu.lua:3424-3430`），那條路徑上袋子一定在主背包被用掉、東西留在主背包。
+  袋子在原位（手上、背包、地上、車上）被用掉的是建造與製作視窗。
+- 沒有改的：多人伺服器那串 `Unable to resolve container location` 照樣會印（使用者 2026-11-12 裁定先留著；它不影響結果）。
+  機台自動製作（`CraftLogic`）由 Java 直接完成，不在範圍。空的容器物品、沒被用掉的容器物品完全照原版。
+
+### 已知限制
+
+- **車上背包裡的袋子：整件重送會換掉客戶端的那個背包物件**。實機（`fxbag-probe-vehicle-1112r`，探針版情境）：做動作的玩家事先選著書包那一頁，完成後不動，
+  拾取頁自己重建了分頁：書包那一頁指到新的背包、看得到放回去的東西，選中的頁跳回後車廂。
+  沒有實機驗的（讀程式推測）：旁邊另一位玩家正開著那個背包時，他的那一頁要等他走一步或轉身才更新；排了隊還沒開始、對象是那個背包裡物品的動作
+  （製作視窗一次排好幾個、搬移）拿的是舊背包，可能送不出去、要重排。伺服器上的資料不受影響。驗法：兩個客戶端的 E2E。
+  原版在這個位置對其他玩家本來就不同步（增減的封包都不送）。
+- **袋中袋的外層在送不到客戶端的位置、而且外層自己沒有剩東西**：內層的東西進主背包，外層不重送，客戶端還看得到已經用掉的外層（和原版一樣）。
+  原版拾取頁只把車上部件裡第一層的袋子列成容器（`ISInventoryPage.lua:1764-1777`），這個擺法只有會列巢狀容器的 MOD 介面碰得到。
+- 機台自動製作不在範圍；已經消失的東西補不回來。
+
+### Log
+
+- `[MinidoracatFixes] MDFX_ConsumedContainerGuard recipe="<配方>" used up <容器物品類型> that still held <n> item(s); put them back in the container it was in. Logged once per recipe. …`
+  ——每種配方第一次介入印一行（原本在地上的寫 `on its square`，袋中袋改放主背包的寫 `in the player's main inventory`），每次開機最多 20 種配方，之後印一行
+  `kept the contents for more than 20 recipes; not logging further recipes this session.`。多人在 `server-console.txt`，單人在 `console.txt`。
+- `[MinidoracatFixes] MDFX_ConsumedContainerGuard could not keep what a used-up container held; vanilla result kept: …`——自己那段出錯，
+  或放回之後袋子裡還有剩（`<n> item(s) are still inside a used-up <類型>`），一次。沒有人用掉袋子卻看到這一行＝用到的引擎方法變了，回頭對版。
+- `[MinidoracatFixes] MDFX_ConsumedContainerGuard NOT installed: vanilla ISBuildIsoEntity shape changed; …`（或 `ISHandcraftAction`、`engine API shape changed`）——包裝目標或引擎函式不在，回頭對版。
+
+### 驗證
+
+離線：`lua scripts/test_consumed_container_guard.lua`（容器、容器物品、地上的世界物件、格子、車的部件與 `ItemUser.RemoveItem` 用 Lua 模擬，74 項）；`--mutants` 74 個突變都要被抓到。
+
+實機（42.22.2，9950X3D，`fixes-e2e` 的 `bag-material` 情境；伺服器發材料並照擺法放好，客戶端走原版建造游標或原版手工製作動作；
+袋裡另放一把不是材料的螺絲起子）。修正組是定版前的暫時 commit `e5e85dd3`（守衛檔與定版相同），`mode=fix`：
+
+| 擺法 | 原版對照（沒有本檔，多人） | 修正組（多人） |
+|------|------|------|
+| 圓形集雨桶，袋子是空的 | `fxbag-control-1112a`：螺絲起子還在，例外 0 | `fxbag-fix-control-1112s`：同原版，沒有診斷行 |
+| 圓形集雨桶，袋子拿在副手、材料在袋裡 | `fxbag-hand-1112a`、`-1112b`：螺絲起子消失，例外 1 與 3 | `fxbag-fix-hand-1112s`：螺絲起子在主背包（例外 15，原版副作用） |
+| 圓形集雨桶，袋子在腳邊地上、材料在袋裡 | `fxbag-floor-1112a`：螺絲起子消失，例外 0 | `fxbag-fix-floor-1112s`：螺絲起子在同一格地上，恰一把 |
+| 圓形集雨桶，袋子在背包、材料另外帶 | `fxbag-inv-1112a`：螺絲起子與袋裡的木板 6、釘子 5 消失，例外 0 | `fxbag-fix-inv-1112s`：12 件都在主背包 |
+| 拆解麻袋，麻袋拿在副手、剪刀也在袋裡 | `fxbag-craft-1112c`：螺絲起子與剪刀消失，例外 0 | `fxbag-fix-craft-1112s`：兩件都在主背包（例外 3，原版副作用） |
+| 拆解麻袋，麻袋在背包、剪刀另外帶 | `fxbag-craftinv-1112c`：螺絲起子消失，例外 0 | `fxbag-fix-craftinv-1112s`：螺絲起子在主背包 |
+| 拆解麻袋，麻袋在車子後車廂的書包裡 | `fxbag-ctl-vehicle-1112j`：伺服器上螺絲起子消失；客戶端的書包裡還看得到已經用掉的麻袋 | `fxbag-fix-vehicle-1112s`：螺絲起子回到那個書包，客戶端也看得到；麻袋兩端都不見；主背包沒有多一把；客戶端沒有 `Dupe item ID` |
+
+修正組七輪都是 `RESULT PASS`（建造案各 6 個 CHECK、手工案 7 個、車子案 5 個）：袋子本身兩端都用掉、留下的東西伺服器與客戶端位置和數量一致、
+用掉的材料沒有多出來、站位周圍地上沒有多出或少掉東西；每輪診斷行恰一行（空袋那輪沒有），沒有 `NOT installed` 與失敗行。對照組的堆疊只有原版的 Lua 幀。
+例外的堆疊都在原函式裡的 `CraftRecipeData.processDestroyAndUsedItems`（守衛的放回在它回來之後才跑）；份數每輪不同，見下面「例外份數」。
+
+單人（`--sp`，同一個暫時 commit）：`fxbag-spfix-hand-1112s`、`-floor-`、`-craft-` 三輪 `RESULT PASS`（6、6、7 個 CHECK），診斷行印在玩家的 `console.txt`。
+
+例外份數（袋子拿在副手、材料在袋裡那個擺法，每輪 `server-console.txt` 的 `Unable to resolve container location` 行數）：沒有本檔 8 輪是 1、3、2、0、5、7、15、7
+（`fxbag-hand-1112a`、`-1112b`、`fxbag-ctl-hand-1112m1`–`m3`、`-1112q1`–`q3`）；有本檔 7 輪是 14、9、7、5、0、14、15（`fxbag-fix-hand-1112d`、`-1112g`、`-1112k`、`-1112m1`–`m3`、`-1112s`）；
+本檔只留包裝層、不記錄也不放回的變體 3 輪是 6、6、9（`fxbag-pass-hand-1112n1`–`n3`）；本檔照樣載入但什麼都不包的變體 3 輪是 14、6、9（`fxbag-load-hand-1112q1`–`q3`）。
+四組範圍重疊，沒有本檔也跑出 15 份：份數隨輪次變，和守衛做的事無關，不能拿來估受害次數。
+
+沒有實機驗的：方形集雨桶與其餘 5 個配方、袋子在箱子裡或車子座位上、袋中袋、動作途中才放到地上的袋子、放回失敗、建造用掉車上背包裡的袋子，只有離線測試或讀腳本。
+
+### 可退場條件
+
+官方讓配方用掉容器物品時處理它的內容（清空、掉出來，或漏掉的輸入行都補上 `IsEmpty`、引擎一律擋）。到時第 3 步看到的都是空袋，本補丁自動不介入（診斷行不再出現）。
+`check_vanilla_alignment.py` 的兩條成因（集雨桶、拆解麻袋的輸入行）轉 CHANGED 或 `ItemUser.RemoveItem` 的退場提示出現時，
+用沒有本檔的 MOD 樹重跑 E2E `bag-material` 的六案（`--define mode=control`）：袋裡的螺絲起子都還在，就移出本檔。只補了部分配方時留著：MOD 的配方仍可能漏。
+
+---
+
 
 ## MDFX_CleanUIConfigLoad — CleanUI 缺失的 `CleanUIConfig.loadConfig`
 

@@ -36,6 +36,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] After you place a worn bag or clothing item on the ground, it still shows on your character and its hotbar slots stay until you relog (in single player, until you reload your save)
 [*] Large objects with missing pieces (for example a boulder that only half spawned) can't be destroyed with a sledgehammer
 [*] In a house where the wall beside a staircase was knocked down, stepping onto the stairs from the side drops you outside the basement walls: no way back, even after relogging
+[*] A recipe that uses up a bag still holding items (for example garbage bags when building a rain collector barrel, or ripping a sack with Rip Sack) makes the items inside disappear
 [*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 [*] Stronger server-side validation: in multiplayer, sledgehammer destruction follows the vanilla server rules (you need a sledgehammer; on servers that limit it to safehouses, you must be in one)
 [/list]

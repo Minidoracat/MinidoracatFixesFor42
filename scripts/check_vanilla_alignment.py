@@ -1560,6 +1560,317 @@ FIXES = [
             r"public java\.lang\.String getUsername\(\);",
         ],
     },
+    # ── MDFX_ConsumedContainerGuard：配方把裝著東西的容器物品當材料用掉，裡面的東西跟著消失 ─────────────
+    {
+        "name": "MDFX_ConsumedContainerGuard（成因：集雨桶的垃圾袋那一行沒有 IsEmpty）",
+        "file": "media/scripts/generated/entities/outdoors/entity_raincollector.txt",
+        "crash": [
+            # :43、:98。行變了＝官方動了這個配方，重跑 E2E bag-material 對照組
+            r"item 4 tags\[base:garbagebag\],",
+        ],
+        "exithint": [
+            r"item 4 tags\[base:garbagebag\][^\n,]*IsEmpty",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（成因：拆麻袋那一行沒有 IsEmpty）",
+        "file": "media/scripts/generated/recipes/recipes_tailoring.txt",
+        "crash": [
+            # ScrapSack（:815）
+            r"item 1 tags\[base:burlapbag\],",
+        ],
+        "exithint": [
+            r"item 1 tags\[base:burlapbag\][^\n,]*IsEmpty",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（包裝目標：建造完成端）",
+        "file": "media/lua/server/BuildingObjects/ISBuildIsoEntity.lua",
+        "depends": [
+            r"function\s+ISBuildIsoEntity:create\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*north\s*,\s*sprite\s*\)",
+            # 守衛從 self.buildPanelLogic 拿容器清單（:899-901）、從 self.craftRecipe 拿配方名、放回主背包用 self.character
+            r"o\.buildPanelLogic\s*=\s*BuildLogic\.new\(character, nil, nil\);\s*o\.buildPanelLogic:setContainers\(o\.containers\)",
+            r"o\.craftRecipe = objectInfo:getRecipe\(\)",
+            # 用掉材料的兩步都在 create 裡（:554、:580）：守衛包住整個 create 才看得到前後
+            r"consumed = self\.buildPanelLogic:performCurrentRecipe\(\)",
+            r"self\.buildPanelLogic:getRecipeDataInProgress\(\):processDestroyAndUsedItems\(self\.character\)",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（包裝目標：手工製作完成端）",
+        "file": "media/lua/shared/Entity/TimedActions/ISHandcraftAction.lua",
+        "depends": [
+            r"function\s+ISHandcraftAction:performRecipe\s*\(\s*\)",
+            r"self\.logic:setContainers\(self\.containers\)",
+            r"o\.craftRecipe = craftRecipe",
+            # :227、:238
+            r"if self\.logic:performCurrentRecipe\(\) then",
+            r"self\.logic:getRecipeData\(\):processDestroyAndUsedItems\(self\.character\)",
+            # 多人客戶端不跑 performRecipe（:195-197、:214-217）：守衛因此只裝在伺服器與單人
+            r"if not isClient\(\) then\s*self:performRecipe\(\)",
+            r"if isServer\(\) then[^\n]*\n[^\n]*\n\s*self:performRecipe\(\)",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（成因：IsEmpty 旗標才擋裝著東西的容器）",
+        "class": "zombie.scripting.entity.components.crafting.InputScript",
+        "depends": [
+            # InputScript.java:1040 一帶
+            r"public boolean doesItemPassIsOrNotEmptyAndFullTests\(zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/entity/components/crafting/InputFlag\.IsEmpty:",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（成因：用掉材料走 ItemUser.UseItem）",
+        "class": "zombie.entity.components.crafting.recipe.CraftRecipeData",
+        "depends": [
+            # CraftRecipeData.java:517-573
+            r"public void processDestroyAndUsedItems\(zombie\.characters\.IsoGameCharacter\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemUser\.UseItem:",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（成因：移除容器物品時不處理內容；「在不在地上」的判準）",
+        "class": "zombie.inventory.ItemUser",
+        "depends": [
+            # ItemUser.java:123-180：地上的看 getWorldObjectIndex、整格移除；容器裡的 sendRemoveItemFromContainer。守衛的 worldItemOf／gone 照這個判準
+            r"public static void RemoveItem\(zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/objects/IsoWorldInventoryObject\.getWorldObjectIndex:\(\)I(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoGridSquare\.transmitRemoveItemFromSquare:(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/network/GameServer\.sendRemoveItemFromContainer:",
+        ],
+        "exithint": [
+            # RemoveItem 開始碰容器物品的內容＝官方可能修了
+            r"public static void RemoveItem\(zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?zombie/inventory/types/InventoryContainer",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：配方只用容器清單裡各容器的直接物品）",
+        "class": "zombie.entity.components.crafting.recipe.CraftRecipeManager",
+        "depends": [
+            # CraftRecipeManager.java:274-282。開始往容器物品裡面找的話，守衛記錄時也要往裡找
+            r"getAllItemsFromContainers\(java\.util\.ArrayList<zombie\.inventory\.ItemContainer>, java\.util\.ArrayList<zombie\.inventory\.InventoryItem>\);"
+            r"\s+Code:(?:(?!\n  \S)[\s\S])*?// Method zombie/inventory/ItemContainer\.getItems:\(\)Ljava/util/ArrayList;\s+\d+: invokestatic\s+#\d+\s+"
+            r"// Method zombie/util/list/PZArrayUtil\.addAll:",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：這次配方的容器清單）",
+        "class": "zombie.entity.components.crafting.BaseCraftingLogic",
+        "depends": [
+            r"public java\.util\.ArrayList<zombie\.inventory\.ItemContainer> getContainers\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：容器的清單與搬移；AddItem 先從舊容器拿掉）",
+        "class": "zombie.inventory.ItemContainer",
+        "depends": [
+            r"public java\.util\.ArrayList<zombie\.inventory\.InventoryItem> getItems\(\);",
+            r"public boolean isEmpty\(\);",
+            r"public zombie\.inventory\.InventoryItem getContainingItem\(\);",
+            r"public void Remove\(zombie\.inventory\.InventoryItem\);",
+            # ItemContainer.java:515-539：不先拿掉的話放回會多出一份
+            r"public zombie\.inventory\.InventoryItem AddItem\(zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method Remove:\(Lzombie/inventory/InventoryItem;\)V",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：容器物品的內容）",
+        "class": "zombie.inventory.types.InventoryContainer",
+        "depends": [
+            r"public zombie\.inventory\.ItemContainer getInventory\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：物品在哪個容器、在不在地上、類型）",
+        "class": "zombie.inventory.InventoryItem",
+        "depends": [
+            r"public zombie\.inventory\.ItemContainer getContainer\(\);",
+            r"public zombie\.iso\.objects\.IsoWorldInventoryObject getWorldItem\(\);",
+            r"public java\.lang\.String getFullType\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：地上物品在格子裡的位置）",
+        "class": "zombie.iso.objects.IsoWorldInventoryObject",
+        "depends": [
+            r"public float getOffX\(\);",
+            r"public float getOffY\(\);",
+            r"public float getOffZ\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：世界物件還在不在格子上、在哪一格）",
+        "class": "zombie.iso.IsoObject",
+        "depends": [
+            r"public int getWorldObjectIndex\(\);",
+            r"public zombie\.iso\.IsoGridSquare getSquare\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：把物品放到地上，四個參數的版本會送給客戶端）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            # IsoGridSquare.java:6050-6052：固定 transmit=true
+            r"public zombie\.inventory\.InventoryItem AddWorldInventoryItem\(zombie\.inventory\.InventoryItem, float, float, float\);\s+Code:"
+            r"(?:(?!\n  \S)[\s\S])*?\d+: iconst_1\s+\d+: invokevirtual #\d+\s+"
+            r"// Method AddWorldInventoryItem:\(Lzombie/inventory/InventoryItem;FFFZ\)Lzombie/inventory/InventoryItem;",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：instanceof、把放回容器的物品送給客戶端）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            r"public static boolean instof\(java\.lang\.Object, java\.lang\.String\);",
+            # LuaManager.java:12356-12360：單人不送
+            r"public static void sendAddItemToContainer\(zombie\.inventory\.ItemContainer, zombie\.inventory\.InventoryItem\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：診斷行的配方名）",
+        "class": "zombie.scripting.entity.components.crafting.CraftRecipe",
+        "depends": [
+            r"public java\.lang\.String getName\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：角色的主背包）",
+        "class": "zombie.characters.IsoGameCharacter",
+        "depends": [
+            r"public zombie\.inventory\.ItemContainer getInventory\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：完成時重新收集角色所在格加周圍一圈的地上物品）",
+        "class": "zombie.entity.components.crafting.BaseCraftingLogic",
+        "depends": [
+            # BaseCraftingLogic.java:792-816。守衛記錄時照同一個範圍看地上；範圍或做法變了要跟著改
+            r"public boolean updateFloorContainer\(java\.util\.ArrayList<zombie\.inventory\.ItemContainer>\);(?:(?!\n  \S)[\s\S])*?"
+            r"\d+: iconst_1\s+\d+: isub(?:(?!\n  \S)[\s\S])*?\d+: iconst_1\s+\d+: iadd(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoCell\.getGridSquare:\(III\)Lzombie/iso/IsoGridSquare;(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/IsoGridSquare\.getWorldObjects:(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/iso/objects/IsoWorldInventoryObject\.getItem:",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：手工製作完成時重新收集地上物品）",
+        "class": "zombie.entity.components.crafting.recipe.HandcraftLogic",
+        "depends": [
+            # HandcraftLogic.java:139-146
+            r"public boolean performCurrentRecipe\(\);(?:(?!\n  \S)[\s\S])*?// Method updateFloorContainer:\(Ljava/util/ArrayList;\)Z",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：建造完成時重新收集地上物品）",
+        "class": "zombie.entity.components.build.BuildLogic",
+        "depends": [
+            # BuildLogic.java:238-245
+            r"public boolean performCurrentRecipe\(\);(?:(?!\n  \S)[\s\S])*?// Method updateFloorContainer:\(\)V",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：伺服器只在三種容器送得到客戶端）",
+        "class": "zombie.network.GameServer",
+        "depends": [
+            # GameServer.java:2427-2443：玩家身上、有世界物件的容器、地上袋子的內部。守衛的 reachable 照這三個分支：
+            # 少了一個這條會轉紅，要跟著改；多了一個這條抓不到（javac 只在最後放一個 return），後果只是多一次無害的重送
+            r"public static void sendAddItemToContainer\(zombie\.inventory\.ItemContainer, zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.getCharacter:\(\)Lzombie/characters/IsoGameCharacter;\s+\d+: instanceof\s+#\d+\s+"
+            r"// class zombie/characters/IsoPlayer(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.getParent:\(\)Lzombie/iso/IsoObject;(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/inventory/ItemContainer\.inventoryContainer:(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/types/InventoryContainer\.getWorldItem:(?:(?!\n  \S)[\s\S])*?\d+: return\s*\n",
+            # GameServer.java:2487-2503：移除也是同樣三個分支。所以送不到的位置連原版移除袋子的封包都沒送到，守衛才要把外層那件容器物品整件重送
+            r"public static void sendRemoveItemFromContainer\(zombie\.inventory\.ItemContainer, zombie\.inventory\.InventoryItem\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.getCharacter:\(\)Lzombie/characters/IsoGameCharacter;\s+\d+: instanceof\s+#\d+\s+"
+            r"// class zombie/characters/IsoPlayer(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.getParent:\(\)Lzombie/iso/IsoObject;(?:(?!\n  \S)[\s\S])*?"
+            r"// Field zombie/inventory/ItemContainer\.inventoryContainer:(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/types/InventoryContainer\.getWorldItem:(?:(?!\n  \S)[\s\S])*?\d+: return\s*\n",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：客戶端收到加入封包時，容器裡沒有同編號的才加）",
+        "class": "zombie.network.packets.AddInventoryItemToContainerPacket",
+        "depends": [
+            # AddInventoryItemToContainerPacket.java:86-112：所以整件重送要先送移除、再送加入
+            r"public void processClient\(zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.containsID:\(I\)Z(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.addItem:",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（前提：客戶端收到移除封包時，照編號從那個容器拿掉）",
+        "class": "zombie.network.packets.RemoveInventoryItemFromContainerPacket",
+        "depends": [
+            # RemoveInventoryItemFromContainerPacket.java:83-96：整件重送的前半。兩種封包同一個 ordering channel（@PacketSetting ordering=1、
+            # reliability=3，兩個檔的檔頭），所以先移除再加入的順序到客戶端不變；這一點沒有指紋，由 E2E bag-material 的 vehicle 案覆蓋
+            r"public void processClient\(zombie\.core\.raknet\.UdpConnection\);(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/network/fields/ContainerID\.getContainer:(?:(?!\n  \S)[\s\S])*?"
+            r"// Method zombie/inventory/ItemContainer\.removeItemWithID:",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：容器連在誰身上、是不是車上的容器）",
+        "class": "zombie.inventory.ItemContainer",
+        "depends": [
+            r"public zombie\.characters\.IsoGameCharacter getCharacter\(\);",
+            r"public zombie\.iso\.IsoObject getParent\(\);",
+            r"public zombie\.vehicles\.VehiclePart getVehiclePart\(\);",
+            r"public float getCapacityWeight\(\);",
+            # 車上背包的內部：重算的是最外層那個車容器
+            r"public zombie\.inventory\.ItemContainer getOutermostContainer\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：車上的容器重算內容量）",
+        "class": "zombie.vehicles.VehiclePart",
+        "depends": [
+            # ItemUser.java:116-118 的做法
+            r"public void setContainerContentAmount\(float\);",
+            r"public zombie\.inventory\.ItemContainer getItemContainer\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：角色所在格）",
+        "class": "zombie.iso.IsoMovingObject",
+        "depends": [
+            r"public zombie\.iso\.IsoGridSquare getSquare\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：照座標取格子、格子上的地上物品）",
+        "class": "zombie.iso.IsoCell",
+        "depends": [
+            r"public zombie\.iso\.IsoGridSquare getGridSquare\(int, int, int\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：格子的座標與地上物品清單）",
+        "class": "zombie.iso.IsoGridSquare",
+        "depends": [
+            r"public int getX\(\);",
+            r"public int getY\(\);",
+            r"public int getZ\(\);",
+            r"public java\.util\.ArrayList<zombie\.iso\.objects\.IsoWorldInventoryObject> getWorldObjects\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：地上物品是哪一件）",
+        "class": "zombie.iso.objects.IsoWorldInventoryObject",
+        "depends": [
+            r"public zombie\.inventory\.InventoryItem getItem\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_ConsumedContainerGuard（依賴：getCell）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            r"public static zombie\.iso\.IsoCell getCell\(\);",
+            # LuaManager.java:12401-12412：伺服器才送
+            r"public static void sendRemoveItemFromContainer\(zombie\.inventory\.ItemContainer, zombie\.inventory\.InventoryItem\);",
+        ],
+    },
 ]
 
 
