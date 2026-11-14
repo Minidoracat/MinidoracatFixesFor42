@@ -9,6 +9,7 @@
 --   * 停放高度照原版生成車輛的算法，至少 0.1
 --   * 已經在地面上的車（例如客戶端修補包同一幀先處理過）不重複介入
 --   * 每次介入記一行、有上限；自己出錯時不外洩、只印一次並停用；引擎形狀不符時不安裝
+--   * 物理停掉的車（原生 teleportVehicle 不生效）先啟用物理再放回，診斷行記啟用前的狀態
 -- --mutants：逐一抽掉每道防線，確認至少一項檢查轉紅。
 
 local SRC_PATH = "MOD/MinidoracatFixesFor42/Contents/mods/MinidoracatFixesFor42/"
@@ -84,7 +85,11 @@ function Veh:getY() return self.y end
 function Veh:getZ() return self.z end
 function Veh:getId() return self.id end
 function Veh:getScriptName() return self.name end
-function Veh:getAuthorizationDescription() return "auth=" .. self.auth end
+function Veh:getAuthorizationDescription() return "auth=" .. self.auth .. (self.idle and " static=true" or "") end
+function Veh:setPhysicsActive(active) -- :4170
+    self.log[#self.log + 1] = { "setPhysicsActive", active }
+    self.idle = not active
+end
 function Veh:getUpVectorDot() return self.t.up end
 function Veh:getWorldTransform(out)   -- :4078
     W.calls.getWorldTransform = W.calls.getWorldTransform + 1
@@ -92,8 +97,9 @@ function Veh:getWorldTransform(out)   -- :4078
     return out
 end
 function Veh:getForwardVector(out) return out:set(self.t.fwd._x, self.t.fwd._y, self.t.fwd._z) end
-function Veh:setAngles(ax, ay, az)    -- :4114：只改旋轉，原點不變
+function Veh:setAngles(ax, ay, az)    -- :4114：只改旋轉，原點不變；物理停掉時原生 teleportVehicle 不生效，下一幀姿勢被讀回
     self.log[#self.log + 1] = { "setAngles", ax, ay, az }
+    if self.idle then return end
     if ax == 0 and az == 0 then
         local r = math.rad(ay)
         self.t.fwd:set(math.sin(r), 0, math.cos(r))
@@ -102,14 +108,15 @@ function Veh:setAngles(ax, ay, az)    -- :4114：只改旋轉，原點不變
 end
 function Veh:setWorldTransform(t)     -- :4083
     self.log[#self.log + 1] = { "setWorldTransform" }
+    if self.idle then return end
     copyXf(t, self.t)
 end
 
 local nextId = 1
--- opts：auth、y（物理高度）、z（樓層，預設 0）、up、yaw（弧度）、fwd（{x,y,z}，蓋過 yaw）、script（false＝沒有）
+-- opts：auth、y（物理高度）、z（樓層，預設 0）、up、yaw（弧度）、fwd（{x,y,z}，蓋過 yaw）、script（false＝沒有）、idle（物理停掉）
 local function vehicle(opts)
     local v = setmetatable({ id = nextId, name = opts.name or "Base.M911", auth = opts.auth or "Local",
-        x = opts.x or 10.7, y = opts.wy or 20.9, z = opts.z or 0, t = xf(), log = {} }, Veh)
+        x = opts.x or 10.7, y = opts.wy or 20.9, z = opts.z or 0, t = xf(), log = {}, idle = opts.idle }, Veh)
     nextId = nextId + 1
     if opts.script ~= false then v.script = opts.script or m911() end
     local yaw = opts.yaw or 0
@@ -306,9 +313,9 @@ local function runSuite(src, quiet)
         v.t.fwd._x .. "," .. v.t.fwd._z)
     check("6 放回停放高度、水平位置不變", near(v.t.origin._y, REST) and v.t.origin._x == 310.7 and v.t.origin._z == 120.9,
         v.t.origin._y)
-    local a = v.log[1]
-    check("6 先 setAngles(0, 車頭角度, 0) 再放車", #v.log == 2 and a[1] == "setAngles" and a[2] == 0 and a[4] == 0
-        and near(a[3], math.deg(1.1)) and v.log[2][1] == "setWorldTransform")
+    check("6 先啟用物理、setAngles(0, 車頭角度, 0)，再放車", #v.log == 3 and v.log[1][1] == "setPhysicsActive" and v.log[1][2] == true
+        and v.log[2][1] == "setAngles" and v.log[2][2] == 0 and v.log[2][4] == 0
+        and near(v.log[2][3], math.deg(1.1)) and v.log[3][1] == "setWorldTransform")
     check("6 計數 lifted 1、righted 1", MDFX_VehicleSinkGuard.lifted == 1 and MDFX_VehicleSinkGuard.righted == 1)
     check("6 訊息寫明扶正", printed("physics height -32.000 is below the floor of level 0; flipped (up -1.000), "
         .. "set upright keeping its heading, lifted to 0.600 (#1).") == 1, table.concat(W.prints, " | "))
@@ -389,6 +396,15 @@ local function runSuite(src, quiet)
     frame()
     check("11 之後不再執行（照原版）", W.calls.getCell == calls and teleports(v) == 0 and printed("disabled") == 1)
 
+    section("12 物理停掉的車")
+    v = one({ y = -0.599, idle = true })
+    check("12 放回高度 0.6、只放一次", near(v.t.origin._y, REST) and teleports(v) == 1, v.t.origin._y)
+    check("12 診斷行記啟用物理之前的狀態", printed("(auth=Local static=true): physics height -0.599") == 1, table.concat(W.prints, " | "))
+    frame()
+    check("12 下一幀不再介入", MDFX_VehicleSinkGuard.lifted == 1)
+    v = one({ y = -32, up = -1, yaw = 1.1, idle = true })
+    check("12 翻覆的也扶正、放回", v.t.up == 1 and near(v.t.origin._y, REST), v.t.up .. "," .. v.t.origin._y)
+
     return checks, failures
 end
 
@@ -432,6 +448,8 @@ local MUTANTS = {
     { name = "幀末不清清單", subs = { { "    list:clear()\n", "" } } },
     { name = "拿掉 pcall", subs = { { "local ok, err = pcall(tick)", "local ok, err = true, tick()" } } },
     { name = "出錯後不停用", subs = { { "        disabled = true\n", "" } } },
+    { name = "放車前不啟用物理", subs = { { "    v:setPhysicsActive(true) -- 物理停掉的車 teleportVehicle 不生效（見檔頭）\n", "" } } },
+    { name = "診斷行記啟用物理之後的狀態", subs = { { "v:getX(), v:getY(), auth,", "v:getX(), v:getY(), tostring(v:getAuthorizationDescription())," } } },
 }
 
 local function applySubs(src, subs)

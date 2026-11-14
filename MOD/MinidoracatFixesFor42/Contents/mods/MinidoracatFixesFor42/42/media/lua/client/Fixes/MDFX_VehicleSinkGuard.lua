@@ -22,6 +22,8 @@ BaseVehicle.MINIMUM_DOT_UPRIGHT）要低於地板一層以上才處理，放回�
 重心偏移－車身高÷2)，至少 MIN_REST。Lua 讀不到輪半徑（VehicleScript.Wheel.radius 是
 沒有 getter 的欄位），改用 WHEEL_RADIUS（該欄位的預設值，比多數車的輪子大）：車放在
 略高於停放高度的地方，自己落回地面。本機下一則車輛物理封包就把地面上的高度送給伺服器。
+有駕駛而靜止滿 1 秒的車，原版會停掉它的物理（CarController.checkShouldBeActive），原生
+teleportVehicle 對這種車不生效、下一幀讀回的還是地板下的姿勢；所以放回前先 setPhysicsActive(true)。
 
 判定條件和 MinidoracatJavaPatchFor42 的客戶端修補 W65 相同，放回高度只差上面那一點。
 裝了那個修補包的玩家，W65 在車的 update 裡先處理，本補丁在同一幀稍後看到的高度已經
@@ -100,6 +102,8 @@ local function target(v)
 end
 
 local function place(v, to, y, level, up)
+    local auth = tostring(v:getAuthorizationDescription()) -- 診斷行記啟用物理之前的狀態
+    v:setPhysicsActive(true) -- 物理停掉的車 teleportVehicle 不生效（見檔頭）
     local flipped = up < MIN_UPRIGHT
     if flipped then
         -- 扶正並保留車頭方向：前向量的水平分量決定繞 Y 軸的角度
@@ -113,7 +117,7 @@ local function place(v, to, y, level, up)
     G.lifted = G.lifted + 1
     if G.lifted <= LOG_LIMIT then
         say(string.format("vehicle %s %s at %.2f,%.2f (%s): physics height %.3f is below the floor of level %d; %slifted to %.3f (#%d%s).",
-            tostring(v:getId()), tostring(v:getScriptName()), v:getX(), v:getY(), tostring(v:getAuthorizationDescription()),
+            tostring(v:getId()), tostring(v:getScriptName()), v:getX(), v:getY(), auth,
             y, level, flipped and string.format("flipped (up %.3f), set upright keeping its heading, ", up) or "",
             to, G.lifted, G.lifted == LOG_LIMIT and ", further events are not logged" or ""))
     end

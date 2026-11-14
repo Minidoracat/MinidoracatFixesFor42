@@ -1131,6 +1131,13 @@ FIXES = [
         ],
     },
     {
+        "name": "MDFX_VehicleSinkGuard（依賴：放回前先打開物理）",
+        "class": "zombie.vehicles.BaseVehicle",
+        "depends": [
+            r"public void setPhysicsActive\(boolean\);",
+        ],
+    },
+    {
         "name": "MDFX_VehicleSinkGuard（前提：OnTick 在所有車的 update 之後）",
         "class": "zombie.gameStates.IngameState",
         "depends": [

@@ -1937,6 +1937,11 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
   （`floor(getZ()) × 2.44949`）低 0.25 以上，而且那一格 `hasFloor()`。翻覆的車（`getUpVectorDot() < 0.8`，原版 `MINIMUM_DOT_UPRIGHT`）要低於地板一層以上才處理。
 - **放回**：翻覆的先用原版 `setAngles(0, 車頭角度, 0)` 扶正（車頭角度由前向量的水平分量算出，方向不變）；再把原點的高度改成放回高度，
   用原版 `setWorldTransform` 寫回（客戶端走原生 `teleportVehicle`，速度一併歸零）。水平位置不動。本機下一則車輛物理封包就把地面上的高度送給伺服器。
+- **放回前先 `setPhysicsActive(true)`**（2026-11-15 起）：有駕駛而靜止滿 1 秒的車，原版會把它的物理停掉（`CarController.checkShouldBeActive` 的 `atRestTimer`）；
+  停掉的車在原生端被設成 kinematic（`PZVehicle::setStatic`，42.21 native 反編譯），`teleportVehicle` 設的姿勢留不住、之後讀回的還是地板下的值
+  （推測是 Bullet 每次步進從 motion state 取 kinematic 物體的姿勢；實機現象相符，沒有讀到那段原生碼）。
+  不先打開的話，這種車（例：已經陷在地下、玩家坐上去發動）要等原版自己重新打開物理後才放得回去，中間每幀各介入、各記一行（實機 2～3 次）。
+  診斷行的授權描述取打開物理之前的值（`static=true active=false` 表示那台車當時物理是停掉的）。
 - **放回高度**：樓層地板＋原版 `CarController` 生成車輛的算法 `−min(模型偏移＋第一個輪子偏移－輪半徑, 重心偏移－車身高÷2)`，至少 0.1。
 - **自保**：每幀整段 `pcall`；出錯就停用本補丁並印一次。缺 `Transform`／`Vector3f`／`ArrayList`／`OnTick` 等印 `NOT installed`、不登記。
 - **診斷**：每次放回印一行 `MDFX_VehicleSinkGuard vehicle <編號> <車型> at <x>,<y> (<授權描述>): physics height … is below the floor of level …; [flipped (up …), set upright keeping its heading, ]lifted to … (#n)`，
@@ -1964,16 +1969,16 @@ Java 端照形狀模擬（`IsoCell` 清單尾端 add、Set 去重、延後移除
 
 ### 驗證
 
-`lua scripts/test_vehicle_sink_guard.lua` — 66 項，全綠。假 Java 端照快照形狀模擬車輛（物理原點、授權、朝上程度、前向量）、`setAngles`、`setWorldTransform`、
+`lua scripts/test_vehicle_sink_guard.lua` — 70 項，全綠。假 Java 端照快照形狀模擬車輛（物理原點、授權、朝上程度、前向量）、`setAngles`、`setWorldTransform`、
 車輛腳本與 `Set` 形狀的車輛清單。涵蓋：淺於門檻不動、剛過門檻放回、樓上的車以該層地板為準、翻覆而不到一層不動、翻覆又超過一層扶正並保留車頭方向、
 沒有地板或格子沒載入不動、非本機模擬不動、單人與伺服器不動、沒有輪子的車與模型偏移缺值的放回高度、同一幀已被放回的車不再動（W65 並存）、
-log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT installed`、重複載入不疊。
+log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT installed`、重複載入不疊、物理停掉的車（假引擎裡放車不生效）先打開物理再放回。
 
-**mutation 驗證**（`--mutants`，35 個全部抓到）：每個判定條件、每個常數、放回高度公式的每一項、扶正角度、授權過濾、`isClient` 閘門、log 上限、`pcall` 與停用各一個以上。
+**mutation 驗證**（`--mutants`，37 個全部抓到）：每個判定條件、每個常數、放回高度公式的每一項、扶正角度、授權過濾、`isClient` 閘門、log 上限、`pcall` 與停用、放回前打開物理各一個以上。
 
-`python scripts/check_vanilla_alignment.py` 登記 10 條（Java 指紋）：成因兩條（`BaseVehicle.update` 恰一個 `setWorldTransform`、沒有夾高度；
+`python scripts/check_vanilla_alignment.py` 登記 11 條（Java 指紋）：成因兩條（`BaseVehicle.update` 恰一個 `setWorldTransform`、沒有夾高度；
 `VehiclePhysicsPacket.processServer` 沒有夾樓層）、放回高度公式的來源（`CarController` 建構子）、依賴（`VehicleScript`、`Wheel`、`Transform.getOrigin`、
-`IsoGridSquare.hasFloor`、`IsoCell.getVehicles` 回 `Set`、`LuaManager$Exposer` 曝露 `Transform`／`Vector3f`）、前提（`OnTick` 在 `IsoWorld.update` 之後）；
+`IsoGridSquare.hasFloor`、`IsoCell.getVehicles` 回 `Set`、`LuaManager$Exposer` 曝露 `Transform`／`Vector3f`、`BaseVehicle.setPhysicsActive`）、前提（`OnTick` 在 `IsoWorld.update` 之後）；
 退場提示：`Wheel` 出現 `getRadius`。
 
 實機（`fixes-e2e` skill 的 `vehicle-sink`，2026-11-10，42.22.2 專用伺服器＋一個客戶端，原版伺服器、沒有任何 Java 修補）：
@@ -1987,6 +1992,10 @@ log 上限與上限提示、出錯後停用並只印一次、缺 API 印 `NOT in
   `[MinidoracatPatches] installed=client-fixes-standard version=v3.8`）：`RESULT PASS steps=11 checks=15`。設到 −20、四輪朝天的車下一拍回到 0.383、扶正、車頭仍 30°，
   正的車設到地板下 0.6 也下一拍放回；整輪本補丁的計數都是 0（由 W65 處理），沒有重複介入。
 - 坐上駕駛座但不發動引擎的車（`fxvs-park-1110a`）：`isLocalPhysicSim()` 30 秒都是 false，不是本機模擬，本補丁不看它（這一輪因此停在情境的前置步驟，沒有做下沉）。
+- 2026-11-15 物理停掉的車（42.22.2，9950X3D；情境加了 `static-sink`，並在每個設姿勢的步驟前先讓物理保持啟用）：
+  已發布的 `42.22.2-0.20.0`（`c3baf74`）`fxvs-red3-vehicle-sink-1115-010659-d3c0b5` `RESULT FAIL checks=22 failed=2`：物理停掉、在地板下 0.6 的車，守衛放車後物理還是停的，
+  下一幀又介入一次（共 2 次；整套回歸 `lst-fix-vehicle-sink-1114-144706-7eba4e` 同一種狀態是 3 次）。車最後都回到地面。
+  加了「放回前先打開物理」之後 `fxvs-green3-vehicle-sink-1115-010701-a0460d` `RESULT PASS steps=16 checks=22`：同一種狀態恰好介入一次、放車當下物理已打開、2 秒後高度 0.320。
 
 ### 可退場條件
 
