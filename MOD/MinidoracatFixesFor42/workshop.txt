@@ -40,6 +40,7 @@ description=[*] After you place a worn bag or clothing item on the ground, it st
 description=[*] Large objects with missing pieces (for example a boulder that only half spawned) can't be destroyed with a sledgehammer
 description=[*] In a house where the wall beside a staircase was knocked down, stepping onto the stairs from the side drops you outside the basement walls: no way back, even after relogging
 description=[*] A recipe that uses up a bag still holding items (for example garbage bags when building a rain collector barrel, or ripping a sack with Rip Sack) makes the items inside disappear
+description=[*] On multiplayer servers with very long days (12 hours or longer, real-time days included), everyone sleeping at once gets woken by cold within minutes: hypothermia shows up even indoors at a normal temperature, and nobody sleeps the night through
 description=[*] Stronger server-side validation: in multiplayer only admins can use the health cheat (an admin feature)
 description=[*] Stronger server-side validation: in multiplayer, sledgehammer destruction follows the vanilla server rules (you need a sledgehammer; on servers that limit it to safehouses, you must be in one)
 description=[/list]
