@@ -34,6 +34,9 @@ import sys
 
 DEFAULT_PZ_HOME = r"D:/SteamLibrary/steamapps/common/ProjectZomboid"
 
+# 停在同一個方法區塊內的任意內容（javap -c 的方法之間隔一個空行、方法宣告縮兩格）
+N = r"(?:(?!\n  \S)[\s\S])*?"
+
 # 每條修復的指紋。pattern 都是對「整檔內容」的 regex search。
 FIXES = [
     {
@@ -1876,6 +1879,144 @@ FIXES = [
             r"public static zombie\.iso\.IsoCell getCell\(\);",
             # LuaManager.java:12401-12412：伺服器才送
             r"public static void sendRemoveItemFromContainer\(zombie\.inventory\.ItemContainer, zombie\.inventory\.InventoryItem\);",
+        ],
+    },
+    # ── MDFX_SleepThermoGuard ──（N＝停在同一個方法區塊內的任意內容）
+    {
+        "name": "MDFX_SleepThermoGuard（缺陷：體溫模擬的步長＝GameTime 倍率 × 常數 × 模擬倍率，沒有上限）",
+        "class": "zombie.characters.BodyDamage.Thermoregulator",
+        "crash": [
+            # getSimulationMultiplier(Multiplier)：取倍率之後到 freturn 之間沒有 invokestatic（min／clamp）也沒有比較
+            r"private float getSimulationMultiplier\(zombie\.characters\.BodyDamage\.Thermoregulator\$Multiplier\);" + N
+            + r"// Method zombie/GameTime\.getMultiplier:\(\)F(?:(?!\n  \S)(?!invokestatic)(?!fcmp)[\s\S])*?"
+            r"fload_2\s+\d+: getstatic\s+#\d+\s+// Field simulationMultiplier:F\s+\d+: fmul\s+\d+: freturn",
+            # updateHeatDeltas 開頭：coreHeatDelta = totalHeat × 步長，直接乘
+            r"private void updateHeatDeltas\(\);\s+Code:\s+\d+: aload_0\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field totalHeat:F"
+            r"\s+\d+: aload_0\s+\d+: getstatic\s+#\d+\s+// Field zombie/characters/BodyDamage/Thermoregulator\$Multiplier\.BodyHeat:[^\n]*"
+            r"\s+\d+: invokevirtual\s+#\d+\s+// Method getSimulationMultiplier:\(Lzombie/characters/BodyDamage/Thermoregulator\$Multiplier;\)F"
+            r"\s+\d+: fmul\s+\d+: putfield\s+#\d+\s+// Field coreHeatDelta:F",
+        ],
+        "formula": [
+            # BodyHeat 的係數：TRIGGER 與 STEP_MAX 是對這個係數實測出來的
+            r"private float getSimulationMultiplier\(zombie\.characters\.BodyDamage\.Thermoregulator\$Multiplier\);" + N
+            + r"\s3: (\d+)\n" + N + r"\n\s+\1: fload_2\s+\d+: ldc(?:_w)?\s+#\d+\s+// float 2\.5E-4f\s+\d+: fmul",
+        ],
+        "depends": [
+            r"public static void setSimulationMultiplier\(float\);",
+            r"public float getSimulationMultiplier\(\);",
+            # update() 的九個步驟：補步＝整個再跑一次，多出不經 GameTime 倍率的步驟就要重看
+            r"public void update\(\);" + N + r"// Method updateSetPoint:\(\)V\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateCoreRateOfChange:\(\)V"
+            r"\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateMetabolicRate:\(\)V\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateClothing:\(\)V"
+            r"\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateNodesHeatDelta:\(\)V\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateHeatDeltas:\(\)V"
+            r"\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateNodes:\(\)V\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method updateBodyMultipliers:\(\)V"
+            r"\s+\d+: aload_0\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field airAndWindTemp:F\s+\d+: invokevirtual\s+#\d+\s+// Method updateThermalDamage:\(F\)V\s+\d+: return",
+            # 補步時靠縮小 GameTime 倍率讓這兩個計時不前進：體溫變化箭頭（滿 100 取樣）
+            r"private void updateCoreRateOfChange\(\);" + N + r"// Field rateOfChangeCounter:F\s+\d+: getstatic\s+#\d+\s+// Field zombie/GameTime\.instance:Lzombie/GameTime;"
+            r"\s+\d+: invokevirtual\s+#\d+\s+// Method zombie/GameTime\.getMultiplier:\(\)F\s+\d+: fadd" + N + r"// float 100\.0f\s+\d+: fcmpl",
+            # 凍傷與燒傷（滿 1 遊戲秒算一次）
+            r"private void updateThermalDamage\(float\);" + N + r"// Field damageCounter:F\s+\d+: getstatic\s+#\d+\s+// Field zombie/GameTime\.instance:Lzombie/GameTime;"
+            r"\s+\d+: invokevirtual\s+#\d+\s+// Method zombie/GameTime\.getGameWorldSecondsSinceLastUpdate:\(\)F\s+\d+: fadd\s+\d+: putfield\s+#\d+\s+// Field damageCounter:F"
+            r"\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field damageCounter:F\s+\d+: fconst_1\s+\d+: fcmpl",
+        ],
+        "exithint": [
+            # 體溫模擬自己開始看快轉旗標
+            r"// Field zombie/network/GameServer\.fastForward:Z",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（缺陷：快轉倍率隨一天的長度放大；依賴：暫換 GameTime 倍率）",
+        "class": "zombie.GameTime",
+        "crash": [
+            # getMultiplier()：快轉時 (float)FastForwardMultiplier ÷ getDeltaMinutesPerDay()。守衛估下一 tick 的倍率用同一條式子
+            r"public float getMultiplier\(\);" + N + r"// Field zombie/network/GameServer\.fastForward:Z\s+\d+: ifeq\s+\d+\s+\d+: getstatic\s+#\d+\s+// Field zombie/network/ServerOptions\.instance:[^\n]*"
+            r"\s+\d+: getfield\s+#\d+\s+// Field zombie/network/ServerOptions\.fastForwardMultiplier:[^\n]*\s+\d+: invokevirtual\s+#\d+\s+// Method zombie/network/ServerOptions\$DoubleServerOption\.getValue:\(\)D"
+            r"\s+\d+: d2f\s+\d+: aload_0\s+\d+: invokevirtual\s+#\d+\s+// Method getDeltaMinutesPerDay:\(\)F\s+\d+: fdiv",
+        ],
+        "formula": [
+            r"public float getDeltaMinutesPerDay\(\);\s+Code:\s+\d+: ldc\s+#\d+\s+// float 30\.0f\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field minutesPerDay:F\s+\d+: fdiv",
+        ],
+        "depends": [
+            # getMultiplier() 乘上 multiplier 欄位：補步時縮小的就是它
+            r"public float getMultiplier\(\);" + N + r"fload_1\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field multiplier:F\s+\d+: fmul",
+            # 讀回原值（OnTick 時 perObjectMultiplier 是 1，見下面那一筆）與寫回
+            r"public float getTrueMultiplier\(\);\s+Code:\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field multiplier:F\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field perObjectMultiplier:F\s+\d+: fmul\s+\d+: freturn",
+            r"public void setMultiplier\(float\);\s+Code:\s+\d+: aload_0\s+\d+: fload_1\s+\d+: putfield\s+#\d+\s+// Field multiplier:F\s+\d+: return",
+            # 凍傷計時用的遊戲秒數也是從 getMultiplier() 來的
+            r"public float getGameWorldSecondsSinceLastUpdate\(\);" + N + r"// Method getTimeDelta:\(\)F",
+            r"public float getTimeDelta\(\);" + N + r"// Method getMultiplier:\(\)F",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（前提：玩家更新 → OnTick → 決定快轉 → 更新 fpsMultiplier）",
+        "class": "zombie.network.GameServer",
+        "depends": [
+            r"// Method zombie/gameStates/IngameState\.update:" + N + r"// Method zombie/characters/IsoPlayer\.isAlive:\(\)Z" + N
+            + r"// Method zombie/characters/IsoPlayer\.isAsleep:\(\)Z" + N + r"// Field zombie/network/ServerOptions\.sleepAllowed:" + N
+            + r"// Method setFastForward:\(Z\)V" + N + r"// Field zombie/GameTime\.fpsMultiplier:F",
+            r"public static java\.util\.ArrayList<zombie\.characters\.IsoPlayer> getPlayers\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（前提：OnTick 在玩家更新之後）",
+        "class": "zombie.gameStates.IngameState",
+        "depends": [
+            r"updateInternal\(\);" + N + r"// Method zombie/iso/IsoWorld\.update:\(\)V" + N + r"// Method onTick:\(\)V",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（前提：原版每 tick 對活著、不是無敵的玩家呼叫一次 Thermoregulator.update）",
+        "class": "zombie.characters.BodyDamage.BodyDamage",
+        "depends": [
+            r"public void Update\(\);" + N + r"// Field zombie/network/GameClient\.client:Z" + N
+            + r"// Method zombie/characters/IsoGameCharacter\.isGodMod:\(\)Z" + N + r"// Method zombie/characters/BodyDamage/Thermoregulator\.update:\(\)V",
+            r"public zombie\.characters\.BodyDamage\.Thermoregulator getThermoregulator\(\);",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（前提：OnTick 時 perObjectMultiplier 已設回 1）",
+        "class": "zombie.MovingObjectUpdateSchedulerUpdateBucket",
+        "depends": [
+            r"public void update\(int\);" + N + r"fconst_1\s+\d+: putfield\s+#\d+\s+// Field zombie/GameTime\.perObjectMultiplier:F\s+\d+: return",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（前提：伺服器上每個物件每 tick 都完整更新）",
+        "class": "zombie.MovingObjectUpdateScheduler",
+        "depends": [
+            r"getUpdateSchedulerSimulationLevelForObject\(zombie\.iso\.IsoMovingObject, float\);\s+Code:\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field isEnabled:Z"
+            r"\s+\d+: ifeq\s+\d+\s+\d+: getstatic\s+#\d+\s+// Field zombie/network/GameServer\.server:Z\s+\d+: ifeq\s+\d+"
+            r"\s+\d+: getstatic\s+#\d+\s+// Field zombie/UpdateSchedulerSimulationLevel\.FULL:[^\n]*\s+\d+: areturn",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（後果：失溫或中暑到 3 級叫醒睡著的玩家）",
+        "class": "zombie.characters.IsoPlayer",
+        "crash": [
+            r"private void updateTemperatureCheck\(\);" + N + r"// Field zombie/scripting/objects/MoodleType\.HYPOTHERMIA:[^\n]*" + N
+            + r"iconst_3\s+\d+: if_icmplt" + N + r"// Method isAsleep:\(\)Z" + N + r"// Method forceAwake:\(\)V",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（依賴：Thermoregulator 曝露給 Lua）",
+        "class": "zombie.Lua.LuaManager$Exposer",
+        "depends": [
+            r"// class zombie/characters/BodyDamage/Thermoregulator\s+\d+: invokevirtual #\d+\s+// Method setExposed:",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（依賴：伺服器的 getOnlinePlayers 走 GameServer.getPlayers）",
+        "class": "zombie.Lua.LuaManager$GlobalObject",
+        "depends": [
+            r"public static java\.util\.ArrayList<zombie\.characters\.IsoPlayer> getOnlinePlayers\(\);" + N
+            + r"// Method zombie/network/GameServer\.getPlayers:\(\)Ljava/util/ArrayList;",
+        ],
+    },
+    {
+        "name": "MDFX_SleepThermoGuard（依賴：讀伺服器選項）",
+        "class": "zombie.network.ServerOptions",
+        "depends": [
+            r"public java\.lang\.Boolean getBoolean\(java\.lang\.String\);",
+            r"public java\.lang\.Double getDouble\(java\.lang\.String\);",
         ],
     },
 ]
