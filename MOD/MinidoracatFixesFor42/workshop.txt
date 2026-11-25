@@ -32,6 +32,7 @@ description=[*] Leashing, tying to a tree, loading into a trailer or hand-feedin
 description=[*] Mod settings reset to defaults after a restart, or all vanish at once
 description=[*] Multiplayer: kicked back to the main menu when walking, driving or teleporting away from a hen house
 description=[*] Multiplayer: a burst of crop-related errors right after joining a server
+description=[*] Multiplayer: a vehicle parked on or beside crops makes players' games keep telling the server the crops were trampled, slowing the server down (Server is too busy)
 description=[*] Idle car battery chargers near a generator make the server and players recompute power use every frame, slowing things down
 description=[*] Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone
 description=[*] Multiplayer: your vehicle drops below the ground while driving: black screen, the car stays stuck underground after you get out, even after relogging

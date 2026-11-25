@@ -1,5 +1,30 @@
 # Changelog
 
+## [42.22.2-0.22.0] - 2026-11-26
+
+### 修正
+
+- **多人遊戲：車停在農地或作物旁時伺服器變卡（Server is too busy）**：現在車停在踩爛的作物上，伺服器不會再因此變卡。
+  伺服器更新後就生效，玩家不用另外做什麼；單人遊戲不受影響。
+    - 以前只要附近有玩家，車在踩爛的作物上停多久就卡多久，把車開走才恢復。
+    - 一個正式伺服器實測，伺服器約五分之一的時間花在這件事上，其中大部分是另一個 MOD 對每次通知做的權限檢查。
+    - 作物照樣會被車踩爛，車也照樣可以停在田上。
+    - 玩家會注意到的差別：已經踩爛的作物不再每個畫面重播踩爛的音效；澆水澆到一半作物被車踩爛、車還壓在上面時，水量不再被清空。
+    - 2026-11-26 在 42.22.2 多人伺服器實機驗過：車停在踩爛的作物上 10 秒，伺服器收到的重複通知從約 2500 次變成 0 次。
+
+  > 原因：玩家的遊戲每個畫面都檢查車底下有沒有作物，有就通知伺服器「這株被踩爛了」，只有它自己記的那一份寫著已經踩爛才不通知；
+  > 伺服器把作物狀態寄回來時，原版沒有更新那一份，所以每個畫面、每一格都再通知一次。這是原版的問題，不裝任何 MOD 也一樣。
+  >
+  > 技術要點：`MDFX_FarmingDestroyResync`（玩家端）送出前先看伺服器寄來的作物狀態，已踩爛就不送；`MDFX_FarmingDestroyResyncServer`（伺服器端）
+  > 在 `SFarmingSystem:OnClientCommand` 對已踩爛的作物直接返回，並把作物資料重寄給附近玩家（同一株約每秒一次）。還沒更新的玩家照送、伺服器照收，省掉後面的處理。
+  > 給其他 MOD 作者與管理員：打到已踩爛作物的重複 `destroy` 不再交給包在 `SFarmingSystemCommands.destroy` 外面的 MOD，
+  > 例如安全屋 MOD 不會再為這種指令記錄拒絕或發通知；其他農作指令、還沒踩爛的作物都照原版。管理員用除錯選單改的作物數值也不再被重複的 `destroy` 清掉。
+  > 記錄檔每次開機各記一行：玩家的 console.txt 是
+  > `[MinidoracatFixes] MDFX_FarmingDestroyResync crop at <x>,<y>,<z> is already destroyed on the server; did not send destroy again. Further skips not logged this session.`，
+  > 伺服器的 server-console.txt 是 `… is already destroyed; ignored a destroy command from a client (crop data is re-sent to nearby players about once a second). …`。
+  > 實機數字（玩家 60 FPS、車下 4 格、停 10 秒）：不裝任何 MOD 的原版伺服器收到 2504 次、全部處理；裝了本修正 0 次。
+  > 沒有處理的：玩家的遊戲裡留著伺服器已經沒有的作物紀錄時照樣會送（只在測試時刻意造出來的情況看到，平常會不會發生沒查到）。
+
 ## [42.22.2-0.21.0] - 2026-11-23
 
 ### 修正
