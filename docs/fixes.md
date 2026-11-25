@@ -1556,6 +1556,145 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 
 ---
 
+## MDFX_FarmingDestroyResync — 車停在作物上時，多人客戶端每幀送一次農作 destroy 指令，伺服器忙不過來
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `client/Fixes/MDFX_FarmingDestroyResync.lua`（源頭）＋ `server/Fixes/MDFX_FarmingDestroyResyncServer.lua`（伺服器早退） |
+| 影響版本 | Build 42.22.2（原版 Lua 與反編譯快照 `42.22.2-20261109`） |
+| 端 | 多人：客戶端那支擋送出、伺服器那支（`isServer()` 閘門）擋分派；單人走伺服器端的 `SFarmingSystem.destroyPlant`，兩支都不經過 |
+| 類型 | 原版**同步缺口**造成的重複指令：客戶端全域物件不跟伺服器的作物狀態；客戶端送之前先抄一次伺服器狀態，伺服器對已踩爛的作物不再分派 |
+| 狀態 | **現役**（尚未發版） |
+
+### 症狀（正式服唯讀調查，2026-11-25）
+
+- 伺服器 Lua 取樣：有一位玩家在自己的基地（農地＋多台車與拖車）時，主執行緒 22.6% 在處理客戶端的農作 `destroy` 指令，其中 16.7% 是
+  別的 MOD（安全屋）對每個農作指令做的權限判定；他不在時是 0%。同一段 10 分鐘有 9 次 `Server is too busy`，對照時段 0 次。
+- 指令一直送、停不下來：車停著不動也照送。
+
+### 根因（行號為 42.22.2 原版 Lua 與反編譯快照）
+
+1. **觸發**：多人客戶端每次車輛更新都檢查車身周圍 2×2 格的作物（`BaseVehicle.java:3578-3588` → `IsoGridSquare.checkForIntersectingCrops`
+   `:9923-9927` → `destroyFarmingPlant:11289-11292`）；殭屍走過作物也會（`IsoZombie.java:3412-3416`）。
+2. **只看客戶端全域物件**：`GlobalObject.destroyThisObject`（`GlobalObject.java:85-98`）只在這一格的全域物件 modData `state` 不是
+   `"destroyed"` 時，播 `RemovePlant` 音效並呼叫 `CFarmingSystem.destroyPlant`（`CFarmingSystem.lua:176-183`）送 `destroy`。
+3. **客戶端全域物件不跟伺服器**：
+   - 農作系統沒設 objectSyncKeys（原版只有餵食槽設，`SFeedingTroughSystem.lua:22`），登入清單（`SGlobalObjects.java:103-135`）與
+     新增／更新封包（`SGlobalObjectNetwork.java:91-129`）只帶座標，客戶端物件的 `state` 一開始是 nil。
+   - 伺服器改作物時送的是地圖物件的 modData（`SPlantGlobalObject.lua:771-777` 的 `transmitModData`），客戶端寫進地圖物件，不寫全域物件。
+     全域物件只有 Lua 呼叫 `getLuaObjectAt` 時才從地圖物件抄一次（`CGlobalObjectSystem.lua:84-92` → `CGlobalObject.lua:46-51`
+     `updateFromIsoObject`），也就是玩家看作物資訊、開農作選單、做農作動作的時候。
+4. **結果**：伺服器上早就踩爛的作物，客戶端每次車輛更新都再送一次；伺服器每次都跑 `farmingCommands.lua:118-125` → `destroyThis`
+   （`SPlantGlobalObject.lua:695-705`）→ `deadPlant`，值都沒變，再送一次地圖物件的 modData。
+5. **和 `MDFX_FarmingSyncDedupe` 無關**：去重只決定伺服器要不要送地圖物件的 modData；原版每次都送，客戶端全域物件照樣收不到，
+   原版一樣停不下來。
+
+### 修法
+
+- 包裝 `CFarmingSystem.destroyPlant`：送之前用原版的 `CFarmingSystem.instance:getLuaObjectOnSquare(square)` 取這一格的作物；它會先從
+  地圖物件抄 modData，抄到的就是伺服器最後送到這個客戶端的狀態。`state` 是 `"destroyed"` 就不送，其餘照原函式送。
+- 抄這一次也讓全域物件的 `state` 變成 `"destroyed"`，Java 之後在 `destroyThisObject` 開頭就返回，不再呼叫 Lua、不再播音效。
+- 只包原版自己的 `destroyPlant`（`getFilenameOfClosure` 指向原版 `CFarmingSystem.lua`、路徑不含 `/mods/`）；別的 MOD 換掉的就不碰，
+  印 `NOT installed`（送包類 wrapper 不包別人的版本）。
+- 檔案載入時就包；marker 存 wrapper 本身，`Core.ResetLua` 重建類別表後重新安裝。查詢自己出錯時印一次、照原函式送；形狀不符印 `NOT installed`。
+- 診斷每次開機只印第一次（帶座標）；不送的次數記在全域 `MDFX_FarmingDestroyResync.skipped`。
+- **伺服器那一半**（`MDFX_FarmingDestroyResyncServer.lua`，走 `MDFX_Guard.onServer`）：包原版 `SFarmingSystem:OnClientCommand`（`SFarmingSystem.lua:83-85`）。
+  指令是 `destroy`、args 是表、x/y/z 都是數字、`getLuaObjectAt` 取到的作物 `state` 是 `"destroyed"`、地圖物件（有的話）的 modData `state`
+  也是 `"destroyed"` 時直接返回，不分派。兩份不一致時照原函式分派，讓原版 `saveData` 把權威狀態寫回地圖物件再送出。理由有二：
+  - 還沒裝新版的客戶端照樣洪流；而且早退排在別的 MOD 包在 `SFarmingSystemCommands` 各指令外的檢查（例如安全屋權限）之前，
+    那些檢查本來每包都要跑（正式服取樣那 22.6% 裡有 16.7% 是權限判定）。只有伺服器這一支時，客戶端照送、伺服器照收，省下的是收到之後的分派與檢查。
+  - 返回前補送一次地圖物件的 modData（`transmitModData` 送給附近所有連線，`GameServer.java:2952-2955`），同一株每個 1 秒視窗最多一次
+    （`getTimestampMs`；視窗一到整張表清掉，鍵用伺服器的作物物件，客戶端的小數座標被 Java 截成同一格也繞不過）。客戶端在 chunk 下載途中收到的
+    modData 會被丟掉（`ObjectModDataPacket.java:53-56`），`MDFX_FarmingSyncDedupe` 之後又不會再送同樣的內容，地圖物件可能停在舊狀態。原版每次
+    destroy 都會送這一包，補送讓客戶端照樣收斂，只是頻率從每幀降到每秒。
+  - 只包原版函式（`getFilenameOfClosure` 指向原版 `SFarmingSystem.lua`、路徑不含 `/mods/`）；查詢出錯印一次、照原函式分派。
+    不檢查 `SFarmingSystemCommands.destroy` 的身分：別的 MOD 開服時就會包它，早退本來就要排在它們前面。
+    同一張類別表裝過就不再檢查：之後被別的 MOD 串接包住時，`OnGameBoot` 復查不誤報 `NOT installed`。
+  - 不分派的次數記在 `MDFX_FarmingDestroyResync.serverSkipped`，補送次數記在 `.resent`。診斷只印第一次，之後不組字串。
+
+### 與原版的差異
+
+- 少送的都是打到伺服器上已經 destroyed 的作物的指令（車與殭屍兩條路徑都是；地圖物件的 `state` 只由伺服器改）。伺服器對這種指令只是把
+  `deadPlant` 歸零的欄位再歸零一次（`check_vanilla_alignment.py` 有這個前提的指紋）。
+- 看得出來的差別（**待使用者同意**）：
+  1. 澆水動作進行中作物被踩爛、車還壓著時，水量不再被下一包 destroy 歸零（原版選單只對播了種的作物提供澆水，`ISWaterPlantAction:isValid`
+     只看水量）；管理員用農作除錯指令（`Commands.cheat`）改的數值也一樣。施肥對已踩爛的作物原版本來就不做事（`fertilize` 先判 `isAlive()`）。
+     踩爛的作物 `checkPlant2` 一開頭就返回（`SFarmingSystem.lua:264-265`），作物資訊也只對活作物顯示水量。
+  2. 已踩爛的作物不再每幀播 `RemovePlant` 音效（Java 在呼叫 Lua 之前就播）。活作物在伺服器狀態回來前照舊每幀播，抄到狀態那次再播一次，
+     重新登入後每格再一次。
+  3. 打到已踩爛作物的重複 `destroy`，伺服器端原版與別的 MOD 對它的處理都不再執行；例如沒有 FARM 權限的玩家把車停在別人安全屋裡已踩爛的
+     作物上，安全屋原本每分鐘寫一行拒絕彙總（每包計數）、每個 tick 推送一次拒絕通知，之後都不會有。客戶端那支根本不送，伺服器那支在分派前返回，
+     兩支各自都會造成這個差別。
+- 不需同意、但要知道的：高 FPS 的玩家車壓作物時，原本每秒嘗試超過 300 次，客戶端自己的 GlobalObjects 限流會把澆水、收成等指令一起擋掉
+  （`PacketsCache.java:76-111`，被取消的也算）；修後已踩爛的作物不再佔用額度（推測：讀碼；244 FPS 的早期對照輪連一包都送不出去，修後沒在 244 FPS 量過）。
+- 不擋的：`"destroy"`（地圖內建的枯作物）、dead、rotten、harvested 這些伺服器還沒改成 destroyed 的作物照原版每幀送，等伺服器的狀態到了才停；
+  客戶端沒有地圖物件（只剩全域物件）時照原版送（伺服器那一半照樣擋）。
+- 已知限制：全域物件記住 `"destroyed"` 之後，同一株若被別的 MOD 或改過的客戶端送的 `kill` 指令改成 dead（原版沒有介面會送，原版也沒有別的路徑
+  把 destroyed 改回去），Java 不再呼叫 Lua，車壓著也不換成踩爛的樣子；原版玩家滑過作物提示或開農作選單後也一樣。
+
+### 驗證
+
+`lua scripts/test_farming_destroy_resync.lua` — 57 項，全綠。
+
+- 客戶端：照載本機原版 `ISBaseObject.lua`、`CGlobalObjectSystem.lua`、`CGlobalObject.lua`、`CPlantGlobalObject.lua`、`CFarmingSystem.lua`；
+  Java 端照形狀模擬（全域物件只有座標、`destroyThisObject` 只看 `rawget(state)`、伺服器狀態只寫進地圖物件）。對照組（不載補丁）100 幀送 100 次、
+  播 100 次音效；修正組 100 幀 0 次、音效只剩第一幀、全域物件 `state` 抄成 destroyed；活作物照送，伺服器狀態到了才停；destroy／dead／rotten／
+  harvested、沒有地圖物件、沒有全域物件、square nil 照原版；查詢出錯照原版送並印一次；instance 還沒建時交給原函式；只印一次、每次都計數；
+  形狀不符、沒有 `getFilenameOfClosure`、別的 MOD 的版本（含同路徑同檔名覆寫）不安裝；重複載入不疊、ResetLua 後重新安裝。
+- 伺服器：照載本機原版 `SFarmingSystem:OnClientCommand` 與真的 `MDFX_Guard.lua`；Java `receiveClientCommand` 照 `rawget`＋metatable 取函式，
+  `getLuaObjectAt` 照 Java 把座標截成整數。對照組 100 包全部分派、外層檢查 100 次；修正組 0 次分派、外層 0 次，同一毫秒只補送一次、滿 1 秒再補送、
+  另一株同一毫秒也補送、小數座標不多補送、系統時鐘往回調後從回調那一刻算新視窗；活作物（地圖物件停在 destroyed 也算）、地圖物件還不是 destroyed、別的指令、座標不是數字、args 不是表、
+  沒有作物、查詢出錯照原版分派；沒有地圖物件照樣不分派、不補送；不是 dedicated server、形狀不符、別的 MOD 的版本（含同路徑同檔名覆寫）不安裝；
+  OnGameBoot 復查不疊、被別的 MOD 串接包住也不誤報、被寫回原版就重新包；ResetLua 後重新安裝。
+
+**mutation 驗證**（`--mutants`，36 個全部抓到）：客戶端 15 個（整個不載入、不檢查 destroyed、擋了仍呼叫原函式、任何 state 都擋、讀全域物件
+不先抄地圖物件、查詢不包 pcall、不判 instance nil、拆掉形狀檢查、拆掉 `getFilenameOfClosure` 型別檢查、拆掉來源檢查、拆掉 `/mods/` 子條件、
+拆掉 marker 檢查、不寫 marker、診斷不節流、不計數）；伺服器 21 個（不載入、不檢查 destroyed、擋了仍分派、不看指令名、判斷不包 pcall、不驗座標型別、
+不驗 args 型別、不補送、補送不節流、補送鍵不分株、補送鍵用客戶端座標、視窗到了不清表、時鐘回撥不清表、不判地圖物件 nil、不核對地圖物件 state、拆掉形狀檢查、
+拆掉來源檢查、拆掉 `/mods/` 子條件、拆掉已安裝檢查、被寫回原版不重包、不計數）。
+
+`python scripts/check_vanilla_alignment.py` 登記 11 條：爆點（`destroyPlant` 本體，有 exithint）、`getLuaObjectAt`／`getLuaObjectOnSquare` 先抄地圖物件、
+`updateFromIsoObject` 抄 modData、成因兩條（`SFarmingSystem.lua` 沒有 `setObjectSyncKeys`；Java `destroyThisObject` 只看全域物件的 state）；
+伺服器六條（`OnClientCommand` 直接分派、`Commands.destroy` 不看狀態（有 exithint）、`SGlobalObjectSystem:getLuaObjectAt` 回 Lua 表、
+`SGlobalObject:getIsoObject` 取地圖物件、零差異前提 `destroyThis`／`deadPlant` 只歸零欄位、Java `receiveClientCommand` 每包用 `rawget` 取 `OnClientCommand`）。
+
+**實機 E2E**（`fixes-e2e` 的 `farming-destroy`，9950X3D，2026-11-25～26，除了刻意拿掉補送的反證輪都 PASS）：伺服器在 3×3 作物正中生一台車，客戶端鎖 60 FPS，
+每個窗口 10 秒數伺服器收到（recv）與分派（dispatched）的 destroy。revisit 是離開到卸載再回來，窗口開始時把客戶端全域物件的 state 清成 nil（模擬重登）。
+`-1125` 的 srv／fix 兩輪跑的是 review 前的伺服器那支（補送用客戶端座標當鍵）；`-1126` 是修正後的版本。
+
+| 輪次 | 樹 | park recv／dispatched | revisit recv／dispatched | 補送（park／revisit） | 對已踩爛作物直接呼叫 20 次 recv／dispatched |
+|---|---|---|---|---|---|
+| `fxfd-ctl-nd-1125c` | 原版（拿掉去重與本修復） | 2500／2500 | 2444／2444 | 0／0 | 20／20 |
+| `fxfd-ctl-dd-1125c` | 去重在、沒有本修復 | 2484／2484 | 2512／2512 | 0／0 | 20／20 |
+| `fxfd-ctl-dd-1126a` | 同上（另記 settle） | 2512／2512 | 2468／2468 | 0／0 | 20／20 |
+| `fxfd-deny-1126a` | 同上，伺服器拒絕玩家送的 destroy | 2464／0（拒絕） | 2464／0（拒絕） | 0／0 | 跳過 |
+| `fxfd-srv-1125b` | 只有伺服器那支 | 2464／0 | 2492／0 | 40／44 | 20／0 |
+| `fxfd-srv-1126a` | 只有伺服器那支（修正後） | 2480／0 | 2488／0 | 40／40 | 20／0 |
+| `fxfd-fix-1125b` | 兩支都在 | 0／0 | 0／0 | 0／0 | 0／0 |
+| `fxfd-stale-1126a` | 兩支都在；revisit 另把客戶端地圖物件改回 seeded | 0／0 | 8／0 | 0／4 | 0／0 |
+| `fxfd-stale-1126b` | 同上（第 2 輪 review 後；revisit 之後多一個 10 秒 quiet 窗口） | 0／0 | 8／0（quiet 0／0） | 0／4（quiet 0） | 0／0 |
+| `fxfd-notx-1126a` | 同上，但伺服器那支拿掉實際補送（反證，預期 FAIL） | 0／0 | 2448／0（quiet 2464／0） | 0／44（quiet 40，只有計數、沒送） | 0／0 |
+
+- 去重開或關洪流都一樣（每秒約 250 包）：與 `MDFX_FarmingSyncDedupe` 無關。
+- 伺服器自己也會踩爛車下的作物：每輪 settle（車生出來到 park 之前）`serverOwn=4`，連伺服器拒絕所有玩家 destroy 的 deny 輪也一樣（`SFarmingSystem.destroyPlant`
+  傳 player nil）。所以別的 MOD 拒絕玩家的 destroy 時，車下的作物照樣被伺服器踩爛，之後的洪流全是打到已踩爛作物的指令，兩支都擋得到。
+  park／revisit 窗口的 `serverOwn` 都是 0，是因為那時作物早就踩爛（Java 在 `GlobalObject.java:87-89` 就返回），不能拿來判斷伺服器會不會踩。
+- 兩支都在時，對活作物直接呼叫一次照送、伺服器照踩爛；revisit 的 Java 呼叫只有 4 次（每格第一次，抄到 destroyed 就停）。
+- 客戶端地圖物件停在舊狀態時（stale 輪）：4 格共送 8 包、伺服器 0 次分派、補送 4 次，客戶端地圖物件回到 destroyed；緊接的 10 秒 quiet 窗口 0 包，
+  客戶端全域物件也抄到 destroyed。拿掉補送的反證輪（`fxfd-notx-1126a`）revisit 2448 包、quiet 2464 包，地圖物件與全域物件都停在舊狀態，
+  stale 與 quiet 的 10 項檢查全部轉紅：收斂靠的就是補送。
+- 兩邊的診斷各只印一行，沒有錯誤堆疊。
+- 量的時候客戶端要鎖 60 FPS：E2E 客戶端預設 244 FPS 時每秒嘗試約 980 次，超過客戶端 GlobalObjects 每秒 300 包的限流（被取消的也算），
+  結果一包都送不出去（`PacketsCache.isLimitExceeded`）。正式服玩家多半 60 FPS，一台車最多 4 格×60＝每秒 240 包，全送得出去。
+
+### 可退場條件
+
+官方讓客戶端全域物件跟著伺服器的作物狀態走（農作系統設 objectSyncKeys，或 `destroyThisObject` 改看地圖物件），或客戶端 `destroyPlant` 送之前
+自己看狀態（`check_vanilla_alignment.py` 的 exithint），且伺服器 `Commands.destroy` 不再處理已踩爛的作物（exithint）。只修客戶端時，
+還沒更新的客戶端照樣洪流，伺服器那一半要留到確認沒有舊客戶端。
+
+---
+
 ## MDFX_ChargerIdleGuard — 沒在充電的汽車電池充電器讓附近發電機每幀重算用電清單
 
 | 項目 | 內容 |

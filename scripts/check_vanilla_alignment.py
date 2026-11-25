@@ -819,6 +819,118 @@ FIXES = [
             r"// Method zombie/globalObjects/SGlobalObjects\.saveInitialStateForClient:",
         ],
     },
+    # ── MDFX_FarmingDestroyResync：車停在作物上時客戶端不停送 destroy ─────────────
+    {
+        "name": "MDFX_FarmingDestroyResync（爆點：CFarmingSystem.destroyPlant 不看作物狀態就送）",
+        "file": "media/lua/client/Farming/CFarmingSystem.lua",
+        "crash": [
+            # :176-183
+            r"CFarmingSystem\.destroyPlant = function\(square\)\s*if not square then return end"
+            r"(?:(?!\nend)[\s\S])*?CFarmingSystem\.instance:sendCommand\(getSpecificPlayer\(0\), 'destroy', args\)\s*end",
+        ],
+        "depends": [
+            r'CFarmingSystem = CGlobalObjectSystem:derive\("CFarmingSystem"\)',
+        ],
+        "exithint": [
+            # 官方若在送之前看作物狀態，函式本體會出現 state 或 getLuaObject
+            r"CFarmingSystem\.destroyPlant = function\(square\)(?:(?!\nend)[\s\S])*?(?:\.state|getLuaObject)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（依賴：getLuaObjectOnSquare 先從地圖物件抄 modData）",
+        "file": "media/lua/client/Map/CGlobalObjectSystem.lua",
+        "depends": [
+            # :84-97
+            r"function CGlobalObjectSystem:getLuaObjectAt\(x, y, z\)(?:(?!\nend)[\s\S])*?luaObject:updateFromIsoObject\(\)",
+            r"function CGlobalObjectSystem:getLuaObjectOnSquare\(square\)(?:(?!\nend)[\s\S])*?return self:getLuaObjectAt\(",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（依賴：updateFromIsoObject 把地圖物件的 modData 抄進全域物件）",
+        "file": "media/lua/client/Map/CGlobalObject.lua",
+        "depends": [
+            # :38-51
+            r"function CGlobalObject:fromModData\(modData\)\s*for k,v in pairs\(modData\) do\s*self\[k\] = v",
+            r"function CGlobalObject:updateFromIsoObject\(\)(?:(?!\nend)[\s\S])*?self:fromModData\(isoObject:getModData\(\)\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（成因：農作系統沒設 objectSyncKeys，客戶端全域物件只有座標）",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "crash": [
+            # 整檔沒有 setObjectSyncKeys（只有餵食槽設，SFeedingTroughSystem.lua:22）；這條轉紅＝官方開始同步 state，評估退場
+            r"\A(?![\s\S]*setObjectSyncKeys)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（成因：Java 只看客戶端全域物件的 state）",
+        "class": "zombie.globalObjects.GlobalObject",
+        "crash": [
+            # GlobalObject.java:85-98：rawget("state") 等於 "destroyed" 才返回，否則播音效、呼叫 CFarmingSystem.destroyPlant
+            r"public void destroyThisObject\(\);" + N + r"// Method getModData:\(\)Lse/krka/kahlua/vm/KahluaTable;\s+"
+            r"\d+: ldc\s+#\d+\s+// String state" + N + r"// String destroyed" + N + r"\d+: return" + N
+            + r"// String RemovePlant" + N + r"// String CFarmingSystem\.destroyPlant",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（伺服器依賴：OnClientCommand 直接分派到 SFarmingSystemCommands）",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "depends": [
+            # :83-85：伺服器早退包在這裡，排在別的 MOD 包在 SFarmingSystemCommands 各指令外的檢查之前
+            r"function SFarmingSystem:OnClientCommand\(command, playerObj, args\)\s*SFarmingSystemCommands\[command\]\(playerObj, args\)\s*end",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（伺服器爆點：Commands.destroy 對已 destroyed 的作物照樣 destroyThis）",
+        "file": "media/lua/server/Farming/farmingCommands.lua",
+        "crash": [
+            # :118-125
+            r"function Commands\.destroy\(player, args\)\s*local plant = getPlantAt\(args\.x, args\.y, args\.z\)\s*if plant then\s*plant:destroyThis\(\)",
+        ],
+        "exithint": [
+            r"function Commands\.destroy\(player, args\)(?:(?!\nend)[\s\S])*?\.state",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（伺服器依賴：getLuaObjectAt 回全域物件的 Lua 表）",
+        "file": "media/lua/server/Map/SGlobalObjectSystem.lua",
+        "depends": [
+            # :123-126
+            r"function SGlobalObjectSystem:getLuaObjectAt\(x, y, z\)\s*local globalObject = self\.system:getObjectAt\(x, y, z\)\s*"
+            r"return globalObject and globalObject:getModData\(\) or nil",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（零差異前提：對已 destroyed 的作物，destroyThis／deadPlant 只把欄位再歸零一次）",
+        "file": "media/lua/server/Farming/SPlantGlobalObject.lua",
+        "crash": [
+            # :695-705、:748-766；轉紅＝官方加了副作用，伺服器早退可能開始吞行為，回頭重審
+            r"function SPlantGlobalObject:destroyThis\(\)\s*if self\.state == \"plow\" then\s*self:removeObject\(\)\s*return\s*end\s*"
+            r"self\.state = \"destroyed\"\s*self:setSpriteName\(farming_vegetableconf\.getSpriteName\(self\)\)\s*"
+            r"self:setObjectName\(farming_vegetableconf\.getObjectName\(self\)\)\s*self:deadPlant\(\)\s*end",
+            r"function SPlantGlobalObject:deadPlant\(\)\s*if self:getSquare\(\) and self:hasVisibleFlies\(\) then self:getSquare\(\):setHasFlies\(false\) end\s*"
+            r"self\.nextGrowing = 0\s*self\.waterLvl = 0\s*(?:--[^\n]*\s*)*self\.mildewLvl = 0\s*self\.aphidLvl = 0\s*self\.fliesLvl = 0\s*"
+            r"self\.slugsLvl = 0\s*self\.hasWeeds = false\s*self\.naturalLight = 1\s*self\.health = 0\s*self\.hasSeeds = false\s*"
+            r"self\.hasVegetable = false\s*self\.cursed = false\s*self\.compost = false\s*self\.bonusYield = false\s*self:saveData\(\)\s*end",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（伺服器依賴：getIsoObject 取地圖物件，補送用）",
+        "file": "media/lua/server/Map/SGlobalObject.lua",
+        "depends": [
+            # :30-32
+            r"function SGlobalObject:getIsoObject\(\)\s*return self\.luaSystem:getIsoObjectAt\(self\.x, self\.y, self\.z\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingDestroyResync（伺服器依賴：Java 每包用 rawget 取 OnClientCommand，類別上的包裝經 metatable 生效）",
+        "class": "zombie.globalObjects.SGlobalObjectSystem",
+        "depends": [
+            # SGlobalObjectSystem.java:111-117
+            r"public void receiveClientCommand\(java\.lang\.String, zombie\.characters\.IsoPlayer, se\.krka\.kahlua\.vm\.KahluaTable\);"
+            r"(?:(?!\n  \S)[\s\S])*?// String OnClientCommand(?:(?!\n  \S)[\s\S])*?rawget",
+        ],
+    },
     # ── MDFX_ChargerIdleGuard：沒在充電的充電器每幀 updateGenerator ─────────────
     {
         "name": "MDFX_ChargerIdleGuard（成因：setActivated 不比對狀態）",

@@ -29,6 +29,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Mod settings reset to defaults after a restart, or all vanish at once
 [*] Multiplayer: kicked back to the main menu when walking, driving or teleporting away from a hen house
 [*] Multiplayer: a burst of crop-related errors right after joining a server
+[*] Multiplayer: a vehicle parked on or beside crops makes players' games keep telling the server the crops were trampled, slowing the server down (Server is too busy)
 [*] Idle car battery chargers near a generator make the server and players recompute power use every frame, slowing things down
 [*] Multiplayer: after being dragged down by zombies, the screen stays black, respawning doesn't work and the body is gone
 [*] Multiplayer: your vehicle drops below the ground while driving: black screen, the car stays stuck underground after you get out, even after relogging
