@@ -1665,6 +1665,7 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 | 輪次 | 樹 | park recv／dispatched | revisit recv／dispatched | 補送（park／revisit） | 對已踩爛作物直接呼叫 20 次 recv／dispatched |
 |---|---|---|---|---|---|
 | `fxfd-ctl-nd-1125c` | 原版（拿掉去重與本修復） | 2500／2500 | 2444／2444 | 0／0 | 20／20 |
+| `fxfd-van-1126a` | 不載任何 MOD 的 Lua（`--src` 換成只有 `mod.info` 的空殼，伺服器只載它與 E2E 探針） | 2504／2504 | 2460／2460（quiet 2500／2500） | 0／0 | 20／20 |
 | `fxfd-ctl-dd-1125c` | 去重在、沒有本修復 | 2484／2484 | 2512／2512 | 0／0 | 20／20 |
 | `fxfd-ctl-dd-1126a` | 同上（另記 settle） | 2512／2512 | 2468／2468 | 0／0 | 20／20 |
 | `fxfd-deny-1126a` | 同上，伺服器拒絕玩家送的 destroy | 2464／0（拒絕） | 2464／0（拒絕） | 0／0 | 跳過 |
@@ -1674,8 +1675,11 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
 | `fxfd-stale-1126a` | 兩支都在；revisit 另把客戶端地圖物件改回 seeded | 0／0 | 8／0 | 0／4 | 0／0 |
 | `fxfd-stale-1126b` | 同上（第 2 輪 review 後；revisit 之後多一個 10 秒 quiet 窗口） | 0／0 | 8／0（quiet 0／0） | 0／4（quiet 0） | 0／0 |
 | `fxfd-notx-1126a` | 同上，但伺服器那支拿掉實際補送（反證，預期 FAIL） | 0／0 | 2448／0（quiet 2464／0） | 0／44（quiet 40，只有計數、沒送） | 0／0 |
+| `fxfd-plow-1126a` | 兩支都在；只翻土不播種，revisit 前在客戶端補建 4 個孤兒全域物件（伺服器上沒有作物） | 0／0（伺服器與客戶端都已移除） | 2456／2456（quiet 2512／2512） | 0／0 | 跳過 |
+| `fxfd-edge-1126a` | 兩支都在；revisit 前把車下 4 格已踩爛的客戶端地圖物件只在本機拿掉 | 0／0 | 2452／0（quiet 2500／0） | 0／44（quiet 40） | 0／0 |
 
-- 去重開或關洪流都一樣（每秒約 250 包）：與 `MDFX_FarmingSyncDedupe` 無關。
+- 去重開或關洪流都一樣（每秒約 250 包）：與 `MDFX_FarmingSyncDedupe` 無關。不載任何 MOD 的 Lua（`fxfd-van-1126a`）也一樣：原版自己就停不下來。
+  E2E 伺服器範本的 `Mods=` 是空的（2026-11-26 查；plow／edge／van 三輪的伺服器 log 只有 Fixes 與 E2E 探針兩個 `loading` 行，更早的輪次用同一份範本、log 已清）。
 - 伺服器自己也會踩爛車下的作物：每輪 settle（車生出來到 park 之前）`serverOwn=4`，連伺服器拒絕所有玩家 destroy 的 deny 輪也一樣（`SFarmingSystem.destroyPlant`
   傳 player nil）。所以別的 MOD 拒絕玩家的 destroy 時，車下的作物照樣被伺服器踩爛，之後的洪流全是打到已踩爛作物的指令，兩支都擋得到。
   park／revisit 窗口的 `serverOwn` 都是 0，是因為那時作物早就踩爛（Java 在 `GlobalObject.java:87-89` 就返回），不能拿來判斷伺服器會不會踩。
@@ -1684,6 +1688,11 @@ null 檢查，有 exithint）、兩個成因（`NetworkPlayerAI.parse` 的 `acon
   客戶端全域物件也抄到 destroyed。拿掉補送的反證輪（`fxfd-notx-1126a`）revisit 2448 包、quiet 2464 包，地圖物件與全域物件都停在舊狀態，
   stale 與 quiet 的 10 項檢查全部轉紅：收斂靠的就是補送。
 - 兩邊的診斷各只印一行，沒有錯誤堆疊。
+- 翻過土、沒播種的田被車壓（plow 輪）：原版對 plow 直接移除，客戶端的全域物件與地圖物件也跟著不見，不會洪流。客戶端留著伺服器已刪的孤兒全域物件時
+  （情境硬造）照洪流、兩支都擋不到；客戶端只剩全域物件、沒有地圖物件時（edge 輪）客戶端照送、伺服器 0 次分派，補送寫不進客戶端，停不下來。
+  兩種怎麼自然產生都沒查到（見知識庫 `open-issues.md` 4b、4c）。
+- 改過的客戶端用 `sendClientCommand` 送 module `"SFarmingSystem"` 的 destroy（edge 輪 21 包）：原版 `SGlobalObjectSystem.lua:249-257` 的事件入口用到不存在的
+  全域 `Commands`，每包在 `:251` 報錯、不分派，活作物也沒被踩爛；繞不過伺服器那支。
 - 量的時候客戶端要鎖 60 FPS：E2E 客戶端預設 244 FPS 時每秒嘗試約 980 次，超過客戶端 GlobalObjects 每秒 300 包的限流（被取消的也算），
   結果一包都送不出去（`PacketsCache.isLimitExceeded`）。正式服玩家多半 60 FPS，一台車最多 4 格×60＝每秒 240 包，全送得出去。
 
