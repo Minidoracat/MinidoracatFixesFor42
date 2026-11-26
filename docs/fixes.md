@@ -535,8 +535,11 @@ exithint）。
 3. **sprite 比物件本身**。`setSpriteFromName` 不更新 `spriteName` 欄位
    （`IsoObject.java:1979-1982`、`getSpriteName` 的 `:2235-2237`），用名稱比會漏掉 sprite 變化。
 4. **比內容不比 table identity**。照 `KahluaTableImpl.save`（`:210-231`、`:379-401`）實際會上線的
-   型別（鍵 string／number，值 string／number／boolean）組成帶長度的字串、排序後比較，跟走訪
-   順序無關、分得出 `"1"` 與 `1`。遇到巢狀 table 或比對本身拋錯就當「看不出來」，照原版送。
+   型別（鍵 string／number，值 string／number／boolean）做一份平坦拷貝，逐鍵比值、比鍵數，跟走訪
+   順序無關、分得出 `"1"` 與 `1`；數字照原值比，`tostring` 精度以下的差與 0／-0 都算變（往多送的方向）。
+   遇到巢狀 table、拷貝或比較本身拋錯就當「看不出來」，照原版送。2026-11-26 前是排序後組成字串再比，
+   正式服一萬株作物時這段佔掉每 10 遊戲分鐘 `checkPlant` 約四成，改成逐鍵比（見
+   `MDFX_FarmingCheckPlantOnce` 的「效能」）。
 
 不做陷阱與營火：陷阱（`STrapGlobalObject.lua:30-98`）載入時同款三包，但數量遠少於作物、
 modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊戲分鐘 `fuelAmt` 都在變
@@ -549,8 +552,8 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 
 ### 殘留風險
 
-- **基準表**按座標存上次送出的 modData 指紋（一格一條幾百字元的字串），本 session 不清；
-  上限是本 session 走過 `saveData`（且當時 iso object 在記憶體裡）的作物格數；地圖內建枯作物還是
+- **基準表**按座標存上次送出的 modData 平坦拷貝（一格一份），格數到 20000 就整張清掉重來（清掉只讓那些格下一次
+  照原版送一次）；格數是本 session 走過 `saveData`（且當時 iso object 在記憶體裡）的作物格數；地圖內建枯作物還是
   `destroy` 狀態時每 10 遊戲分鐘都會走、會佔一格，踩爛成 `destroyed` 之後就不再走定期那條。
 - **被踩爛的地圖枯作物仍會送 SPRITE**。`typeOfSeed = "none"` 的作物被踩時 `destroyThis` 取不到
   sprite，原版 `setSpriteName(nil)` 把 luaObject 的 `spriteName` 變成 nil；之後每次載入，引擎照
@@ -566,12 +569,15 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 
 ### 驗證
 
-`lua scripts/test_farming_sync_dedupe.lua` — 58 項，全綠。涵蓋：`isServer()` 為假時零介入（連原函式的
+`lua scripts/test_farming_sync_dedupe.lua` — 75 項，全綠。涵蓋：`isServer()` 為假時零介入（連原函式的
 全域表都不動）、安裝只換三個 method 不加成員、載入時沒變零封包而原版同狀態固定三包（對照組）、
 名稱／sprite 物件／modData 各自變化只補送那一項且順序同原版、`stateFromIsoObject` 零封包、
 `saveData` 無基準照送／沒變不送不呼叫原函式、`setSpriteName`／`setObjectName` 之後的
-`saveData` 必須送、iso modData 被外部改寫（客戶端轉送、MOD 直寫額外鍵）必須送、指紋與走訪順序
-無關、分得出 `"1"` 與 `1`、不上線的值變動不算變、巢狀 table 與比對失敗照原版送、基準按座標分開、
+`saveData` 必須送、iso modData 被外部改寫（客戶端轉送、MOD 直寫額外鍵、少一個鍵）必須送、比對與走訪
+順序無關、分得出 `"1"` 與 `1`、只改數字鍵的值與布林值 false→true 都送（送過後不再送）、
+`tostring` 精度以下的差與 0／-0 算變（-0 送過後不再送）、不上線的鍵與值變動不算變、
+巢狀 table、拷貝失敗、逐鍵比較失敗（存與載兩條路）都照原版送、看不出來那次之後基準作廢（巢狀 table 消失時照送）、
+基準按座標分開、基準超過 20000 格整張清掉後照原版送一次、清掉後計數歸零（不會每個新格都清一次）、
 原函式拋錯原樣外洩、別的 MOD 覆寫的 method 不碰（含 Windows 反斜線路徑的原版判斷）、形狀不符不裝、
 本檔重跑與 `OnGameBoot` 不疊、後載 MOD 換掉後不接回去、診斷一 session 一次。
 
@@ -579,16 +585,20 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 
 | 突變 | 轉紅 |
 |------|------|
-| `saveData` 只比寫入前後（交接提案的判準） | 8 項（播種、`setObjectName` 後、額外鍵、無基準首送全部漏掉） |
+| `saveData` 只比寫入前後（交接提案的判準；2026-11-26 改逐鍵比後重測） | 13 項（播種、`setObjectName` 後、額外鍵、無基準首送全部漏掉） |
 | `saveData` 只比上次送出、不比寫入前 | 1 項（客戶端轉送後不蓋回） |
 | 不送的路徑不做 `toModData` | 2 項 |
 | 拿掉 `setfenv`（原函式照送三包） | 7 項 |
 | 載入時不比名稱／不比 modData | 各 2 項 |
 | sprite 改比 `getSpriteName` | 2 項 |
-| 指紋不排序／巢狀 table 當成不上線／不分字串與數字 | 1／2／1 項 |
-| 指紋拿掉 `pcall` | 3 項（例外外洩） |
+| 逐鍵比較：任一份 nil 當相同／不比鍵數／不分 0 與 -0／不包 `pcall`（2026-11-26） | 3／7／1／3 項 |
+| 平坦拷貝：巢狀 table 不回 nil／不過濾值型別／不過濾鍵型別／不收數字鍵／不收布林值（2026-11-26） | 2／1／1／1／1 項 |
+| 載入時改比 table identity（2026-11-26） | 6 項 |
+| 拷貝拿掉 `pcall` | 3 項（例外外洩） |
 | 來源判斷永真／不看 `/mods/`／不正規化反斜線 | 4／3／1 項 |
 | 拿掉 `installed` 冪等 | 1 項（復查把自己的 wrapper 當成別人的） |
+| 基準表到上限不清／新格不計數／清掉後計數不歸零（2026-11-26） | 各 1 項 |
+| 看不出來時不作廢這格的基準（2026-11-26） | 1 項（巢狀 table 消失後漏送） |
 | （`MDFX_Guard`）拆掉 `isServer()` 閘門／診斷節流 | 3／4 項 |
 
 **實機**（`fixes-e2e` 的 `farming-sync`，no-Steam 專用伺服器＋MP 客戶端，同一份情境跑兩輪：
@@ -615,6 +625,129 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 遊戲更新後跑 `python scripts/check_vanilla_alignment.py`：`:43-56`、`:58-87` 的本體（`isServer()`
 只用在結尾三包、之後直接結束）、`:771-777` 整個 `saveData` 本體、`MOFarming.lua` 的載入註冊、
 `SFarmingSystem.lua` 的定期觸發，任一改變都會 CHANGED，要人工重核。
+
+---
+
+## MDFX_FarmingCheckPlantOnce — 農作每 10 遊戲分鐘的全表檢查，每株作物向引擎多取一次物件
+
+| 項目 | 內容 |
+|------|------|
+| 檔案 | `server/Fixes/MDFX_FarmingCheckPlantOnce.lua` |
+| 影響版本 | Build 42.22.2 實測（原版 `server/Farming/SFarmingSystem.lua`、`server/Map/SGlobalObjectSystem.lua`） |
+| 端 | dedicated server＋單人（`isClient()` 早退；`checkPlant` 只在伺服器端跑） |
+| 類型 | 原版**每 10 遊戲分鐘的多餘取物件**（效能，不拋錯）：只換原版檔的 `checkPlant`，每輪取一次 |
+| 狀態 | **現役**（未發布） |
+
+### 症狀（正式服唯讀量測）
+
+作物上萬株（GOS 約 1.1 萬株，其中約四分之三是已踩爛的 `destroyed`）的伺服器，每 10 遊戲分鐘（約 28 秒）
+主執行緒連續被 `EveryTenMinutes` 佔住：JFR 抓到的這個事件全部超過 70 ms，中位數約 170 ms、最長約 200 ms
+（整個事件，不全是農作；Lua 取樣裡農作佔這個事件全部 Lua 的約八成）。
+Lua 取樣裡這段的大頭是兩部分：`MDFX_FarmingSyncDedupe` 的指紋比對（約佔四成）與 `getLuaObjectByIndex` 跨到 Java 的取物件。
+沒有錯誤訊息，玩家看到的是每隔一陣子卡一下。
+
+### 根因（行號為 42.22.2 原版 Lua）
+
+`SFarmingSystem:checkPlant`（`SFarmingSystem.lua:236-251`，`:127` 的 `EveryTenMinutes` 呼叫）把全部作物走兩次：
+正向跑 `checkPlant2`、反向跑 `plowFadeCheck`。兩個迴圈的每一輪都呼叫兩次 `self:getLuaObjectByIndex(i)`
+（`:240-241`、`:246-247`）：先判空、再取值，中間沒有別的程式，結果一定相同。`getLuaObjectByIndex`
+（`SGlobalObjectSystem.lua:44-46`）每次都是 `self.system:getObjectByIndex(index-1):getModData()`，跨到 Java。
+所以每株作物（含 `destroyed`，`checkPlant2` 開頭才 return，`:264-290`）每 10 遊戲分鐘取 4 次，2 次是多的。
+
+另一半成本在 `MDFX_FarmingSyncDedupe`：已載入的作物最後都走 `saveData`，舊版每次把 modData 排序後組成字串比對兩次。
+那一半改在 `MDFX_FarmingSyncDedupe` 本身（修法第 4 點，逐鍵比較）。
+
+### 修法
+
+三項都成立才換成每輪只取一次的照抄版，否則不碰、印一行 `NOT installed`：
+
+- 現任 `checkPlant` 來自原版 `SFarmingSystem.lua`（`getFilenameOfClosure`，路徑不含 `/mods/`，反斜線先正規化）。
+- 試跑：用假的 `self`（3 株、第 2 株是空值）實際跑一次現任 `checkPlant`，呼叫序列要和原版 `:236-251` 一模一樣
+  （正向、反向、每輪取兩次、取到空值中止、參數個數）。同檔的別支函式、官方改過的新本體都對不上，不會被照抄版蓋掉。
+  假 `self` 與假作物被讀到別的 method 或欄位就記下來、回一個吞掉一切呼叫的代理，被寫新欄位也記下來，讓改過的本體以「序列不符」收尾而不拋錯
+  （`pcall` 接住的錯照樣進引擎錯誤清單、算在本 MOD 頭上）；超過 64 筆就中止，防新本體停不下來。
+- `self` 實際分派到的 `getLuaObjectByIndex` 來自原版 `SGlobalObjectSystem.lua`（Java 取值，同一格兩次結果必定相同，
+  少取一次才不會改變行為）。執行時這支 getter 被別的 MOD 換掉，就整輪改跑原版 `checkPlant`。
+
+照抄版其餘同原版：
+
+1. 迴圈次數照原版在開頭取一次 `getLuaObjectCount()`。
+2. 正向走完 `checkPlant2`，再反向走 `plowFadeCheck`；兩個迴圈不合併（`checkPlant2` 可能改變物件數，反向迴圈的次數要在它之後取）。
+3. 取到空值就中止那個迴圈；反向走時 `plowFadeCheck` 移除物件不影響還沒走到的。
+4. 一律經 `self:` 呼叫 `getLuaObjectByIndex`／`checkPlant2`／`plowFadeCheck`，別的 MOD 包的這幾個 method 照樣生效。
+
+安裝在載檔時做一次：marker 存我們的函式，`Core.ResetLua` 重建 `SFarmingSystem` 時 marker 消失、本檔重跑重新安裝；
+後載 MOD 包我們照常、換掉我們就不接回去。
+
+### 與原版的差異
+
+無。每株作物被檢查的順序、次數、時間點與原版相同；原函式內的錯誤（`checkPlant2`、`plowFadeCheck`、取物件越界時對 nil 取 modData）照樣外洩。
+不做（服主 2026-11-26 沒同意，會改行為或存檔）：把檢查分攤到多幀、`MDFX_FarmingGosPrune` 降頻、批次刪已踩爛的作物。
+
+### 驗證
+
+`lua scripts/test_farming_check_plant_once.lua` — 51 項，全綠。照載本機遊戲原版 `SFarmingSystem.lua` 的
+`checkPlant` 本體與 `SGlobalObjectSystem.lua` 的 `getLuaObjectByIndex`，底下接假的 Java system（越界回 nil）當對照：
+正常、第 4 格空值（兩個迴圈各自中止）、反向時移除正在檢查的那株、正向時新增一株（次數照開頭）、
+正向時少一株（越界）、`checkPlant2` 拋錯、空表七種情況，逐一比 `checkPlant2`／`plowFadeCheck`
+的呼叫順序與拋錯是否和原版相同、取物件不比原版多（正常時剛好一半）；也驗了安裝後才包的 `checkPlant2`、`plowFadeCheck` 照樣被呼叫、
+安裝後 getter 被換成兩次結果不同的版本時整輪照原版（換在類別上或只換在 instance 上都是）、getter 不是原版不裝、
+同檔別支函式與官方改過的本體試跑對不上不裝、新本體呼叫未知 method 與讀欄位時試跑不拋錯（修正檔裡沒有失敗的 `pcall`）、
+新本體寫作物或 `self` 的欄位不裝、新本體多傳參數不裝、新本體停不下來時試跑在上限中止、
+`ResetLua` 重建類別後重新安裝、別的 MOD 覆寫不碰（含 Windows 反斜線路徑、查來源拋錯）、形狀不符不裝、
+重跑不疊、`isClient()` 不裝、`installed` 只印一次。
+
+實機（9950X3D，2026-11-26）：`farming-sync`（`--define mode=fix`）以 0.22.0 與這次的版本各跑一輪，都 PASS（33 個 CHECK），
+載入／重載／定期三段的送包數逐項相同（載入 0 包、重載只有 3 包被踩爛枯作物的 SPRITE、定期 63 次 `saveData` 0 包），
+7 種作物變化客戶端都即時一致；兩端沒有 Lua 例外。
+最終版（工作樹快照 `bc34584`，2026-11-27）再跑一輪 `farming-sync`（同上三段計數逐項相同、33 個 CHECK）與一輪 `farming-tenmin-perf`：
+伺服器有 `installed`、沒有 `NOT installed`，`checkPlant` 來自本修正檔，`self` 分派到的 `getLuaObjectByIndex` 就是原版
+`SGlobalObjectSystem` 那支，所以照抄路徑在遊戲裡確實有走到（不會每輪交回原版）；兩端沒有 Lua 例外。
+
+**mutation 驗證**（`lua scripts/test_farming_check_plant_once.lua --mutants`，27 個全部抓到）：
+
+| 突變 | 轉紅 |
+|------|------|
+| 不載入修正 | 18 項 |
+| 正向／反向照原版取兩次 | 各 1 項（取物件次數） |
+| 正向／反向遇空值不中止 | 各 1 項 |
+| 反向改成正向 | 7 項 |
+| 反向沿用正向開頭的次數 | 1 項 |
+| 正向每輪重算次數 | 3 項 |
+| 正向也做 `plowFadeCheck`（合併迴圈）／`plowFadeCheck` 不經 `self:` | 10／1 項 |
+| 執行時不查 getter／改看類別上的 getter（不看 `self` 分派到的）／不查 getter 來源 | 2／1／1 項 |
+| 不試跑／試跑不比呼叫序列／假表沒有代理／不記寫入／不記多出來的參數／沒有筆數上限 | 7／6／1／2／1／1 項 |
+| 來源判斷永真／不看 `/mods/`／不正規化反斜線／查來源不包 `pcall` | 5／3／1／2 項 |
+| 拆掉 marker 檢查／不寫 marker | 1／3 項 |
+| 拆掉形狀檢查／拆掉 `isClient()` 閘門 | 2／1 項 |
+
+### 效能（9950X3D 實機，2026-11-26）
+
+情境 `farming-tenmin-perf`（家族 e2e 庫）在專用伺服器造出接近正式服規模的農作表：約 12,000 株，其中 8,500 株是沒載入的
+`destroyed`，玩家身邊載入 637 株（翻土、播種、枯死）。伺服器 `OnTick` 裡手動觸發，各 30 次，用 GameProfiler 錄
+`checkPlant` 本身與整個 `EveryTenMinutes`（7 個 callback）。A＝0.22.0（原版 `checkPlant`＋舊版指紋比對），
+B＝本修正＋`MDFX_FarmingSyncDedupe` 逐鍵比較（工作樹快照 `796dd38`；之後只改了安裝時的試跑也記寫入與註解，每 10 遊戲分鐘跑的程式沒變），
+兩組各 5 輪、交錯排程、獨佔機器。數字是 5 輪中位數的中位數（括號是 5 輪範圍）：
+
+| 量測 | A（0.22.0） | B（這次） | 差 |
+|------|------|------|------|
+| `checkPlant` 中位數 | 109.9 ms（106.0–113.7） | 65.8 ms（60.2–68.2） | −40% |
+| `checkPlant` 每輪最長 | 173.0 ms（162.1–183.2） | 108.1 ms（103.2–110.4） | −38% |
+| 整個 `EveryTenMinutes` 中位數 | 122.2 ms（118.2–126.0） | 75.6 ms（73.4–81.2） | −38% |
+| 整個 `EveryTenMinutes` 每輪最長 | 199.8 ms（186.6–208.2） | 112.4 ms（101.1–125.7） | −44% |
+
+兩組 10 輪伺服器與客戶端都沒有 Lua 例外，B 每輪都有兩行 `installed`、沒有 `NOT installed`。每輪作物總數在 12,011–12,126 之間
+（差在傳送途中載入的地圖原有作物，不到 1%），載入株數每輪都是 637。兩項修正是一起量的，沒有拆開各自的份量。
+這台機器上整個 `EveryTenMinutes` 的中位數仍高於 70 ms（75.6 ms，最長約 112 ms）：要再往下，得動到服主 2026-11-26 沒同意的做法（分攤到多幀、`MDFX_FarmingGosPrune` 降頻、
+批次刪已踩爛的作物）。正式服的硬體與作物組成不同，上線後的實際數字要在正式服重新取樣。
+
+### 可退場條件
+
+官方把 `checkPlant` 改成每輪只取一次（或改了這兩個迴圈的形狀）：試跑對不上就自動不裝、印 `NOT installed`。
+遊戲更新後跑 `python scripts/check_vanilla_alignment.py`：`:236-251` 的本體（含 `EveryTenMinutes` 結尾呼叫
+`self:checkPlant()`）、`SGlobalObjectSystem:getLuaObjectByIndex` 的本體改變，或 `checkPlant2`／`plowFadeCheck`
+消失、改簽名，都會 CHANGED；只改了試跑看不出來的地方（例如迴圈內多了全域函式呼叫、依作物數量分支而只動區域變數）時，
+要人工確認照抄的版本仍與新原版相同。
 
 ---
 

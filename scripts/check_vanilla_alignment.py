@@ -342,6 +342,36 @@ FIXES = [
             r"if sprite then luaObject:setSpriteName\(sprite\) end\s*luaObject:saveData\(\)",
         ],
     },
+    # ── 農作每 10 遊戲分鐘的全表檢查：每輪只取一次物件 ─────────────────────────
+    {
+        "name": "MDFX_FarmingCheckPlantOnce",
+        "file": "media/lua/server/Farming/SFarmingSystem.lua",
+        "crash": [
+            # :236-251 整個本體：兩個迴圈每輪都先判空、再取一次（:240-241、:246-247）。
+            # 補丁照抄這個本體、只拿掉第二次取值；本體一改就要人工確認照抄的版本仍相同
+            r"function SFarmingSystem:checkPlant\(\)\s*--\s*local i = self:getLuaObjectCount\(\)\s*--\s*while i > 0 do\s*"
+            r"for i=1,self:getLuaObjectCount\(\) do\s*if not self:getLuaObjectByIndex\(i\) then break end\s*"
+            r"local luaObject = self:getLuaObjectByIndex\(i\)\s*if luaObject then self:checkPlant2\(luaObject\) end\s*end\s*"
+            r"local i = self:getLuaObjectCount\(\)\s*while i > 0 do\s*if not self:getLuaObjectByIndex\(i\) then break end\s*"
+            r"local luaObject = self:getLuaObjectByIndex\(i\)\s*if luaObject then self:plowFadeCheck\(luaObject\) end\s*"
+            r"i = i - 1\s*end\s*end",
+            # :127 EveryTenMinutes 每次都 checkPlant
+            r"self:checkPlant\(\)\s*end",
+        ],
+        "depends": [
+            r"function SFarmingSystem:checkPlant2\(luaObject\)",
+            r"function SFarmingSystem:plowFadeCheck\(luaObject\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingCheckPlantOnce（取物件每次跨到 Java）",
+        "file": "media/lua/server/Map/SGlobalObjectSystem.lua",
+        "crash": [
+            # :44-46：每次呼叫都 getObjectByIndex＋getModData；改成快取的話補丁的效益就沒了
+            r"function SGlobalObjectSystem:getLuaObjectByIndex\(index\)\s*"
+            r"return self\.system:getObjectByIndex\(index-1\):getModData\(\)\s*end",
+        ],
+    },
     # ── 農作物存檔三件：時鐘備份（C）、時鐘錯位自癒（A）、GOS 瘦身（B）──────────
     {
         "name": "MDFX_FarmingClockBackup",

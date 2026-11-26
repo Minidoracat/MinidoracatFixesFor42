@@ -53,8 +53,9 @@ MDFX_FarmingSyncDedupe — 原版農作物同步改成「有變才送」（serve
   只有「寫入前」看得到差異。
 
 比對的是內容，不是 table identity：照 KahluaTableImpl.save（:210-231、:379-401）
-實際會上線的型別（鍵 string／number，值 string／number／boolean）排序後組成字串。
-遇到巢狀 table，或比對本身失敗，就當「看不出來」，照原版送。
+實際會上線的型別（鍵 string／number，值 string／number／boolean）拷成平坦的表、逐鍵比較
+（0 與 -0 分開）。不排序、不組字串：saveData 每 10 遊戲分鐘每株作物比兩次，正式服一萬株時
+排序組字串佔掉 checkPlant 約四成。遇到巢狀 table，或比對本身失敗，就當「看不出來」，照原版送。
 
 【零行為差異】
 有變一定送，客戶端拿到的名稱、sprite、modData 與原版相同；少送的只有內容與客戶端
@@ -82,9 +83,10 @@ MDFX_Guard.onServer：立即安裝一次，OnGameBoot 再查一次。本 session
 local VANILLA_FILE = "/media/lua/server/farming/splantglobalobject.lua"
 local DOC = " See docs/fixes.md MDFX_FarmingSyncDedupe"
 
--- 座標 "x,y,z" → saveData 上次實際送出的 modData 指紋
--- ponytail: 本 session 不清，上限＝同步過的作物格數（每格一條字串）；記憶體真的吃緊再改成 chunk 卸載時清
-local sent = {}
+-- 座標 "x,y,z" → saveData 上次實際送出的 modData 平坦拷貝（每格一張約 26 鍵的表）。
+-- 格數到 SENT_CAP 就整張清掉重來：清掉只讓那些格下一次照原版送一次，不會吞同步
+local SENT_CAP = 20000
+local sent, sentCount = {}, 0
 local installed = {}
 
 local function warnOnce(key, message)
@@ -97,41 +99,53 @@ local function positionOf(luaObject)
     return x .. "," .. y .. "," .. z
 end
 
--- 值編成自帶邊界的字串（字串帶長度），整份串起來不會有歧義；不會上線的型別回 nil
-local function encode(v)
-    local t = type(v)
-    if t == "string" then return "s" .. #v .. ":" .. v end
-    if t == "number" then return "n" .. tostring(v) .. ";" end
-    if t == "boolean" then return v and "T" or "F" end
-    return nil
-end
-
--- 插入排序：verify_mod.py 禁 table.sort，一份作物 modData 約 26 鍵
-local function fingerprint(md)
-    local entries = {}
+-- modData 的平坦拷貝：只收會上線的鍵值（鍵 string／number，值 string／number／boolean）；
+-- 遇到巢狀 table 回 nil（看不出來，照原版送）
+local function flat(md)
+    local copy = {}
     for k, v in pairs(md) do
-        if type(v) == "table" then return nil end
-        local ek = type(k) ~= "boolean" and encode(k) or nil
-        local ev = encode(v)
-        if ek and ev then
-            local e = ek .. ev
-            local i = #entries
-            while i > 0 and entries[i] > e do
-                entries[i + 1] = entries[i]
-                i = i - 1
-            end
-            entries[i + 1] = e
+        local tv = type(v)
+        if tv == "table" then return nil end
+        local tk = type(k)
+        if (tk == "string" or tk == "number") and (tv == "string" or tv == "number" or tv == "boolean") then
+            copy[k] = v
         end
     end
-    return table.concat(entries)
+    return copy
+end
+
+-- 兩份拷貝逐鍵相同；0 與 -0 上線是不同的 double，要分開
+local function equal(a, b)
+    local n = 0
+    for k, v in pairs(a) do
+        local w = b[k]
+        if w ~= v or (v == 0 and 1 / v ~= 1 / w) then return false end
+        n = n + 1
+    end
+    for _ in pairs(b) do n = n - 1 end
+    return n == 0
+end
+
+-- 比對失敗（拷貝或逐鍵比較拋錯）一律當「看不出來」，照原版送
+local function cannotCompare(err)
+    warnOnce("fingerprint", "MDFX_FarmingSyncDedupe could not compare a crop's modData (" .. tostring(err)
+        .. "); sent it as vanilla does. Further occurrences suppressed this session." .. DOC)
 end
 
 local function snapshot(md)
-    local ok, fp = pcall(fingerprint, md)
-    if ok then return fp end
-    warnOnce("fingerprint", "MDFX_FarmingSyncDedupe could not compare a crop's modData (" .. tostring(fp)
-        .. "); sent it as vanilla does. Further occurrences suppressed this session." .. DOC)
+    local ok, copy = pcall(flat, md)
+    if ok then return copy end
+    cannotCompare(copy)
     return nil
+end
+
+-- 任一份是 nil（看不出來、沒有基準）就不同
+local function same(a, b)
+    if a == nil or b == nil then return false end
+    local ok, eq = pcall(equal, a, b)
+    if ok then return eq end
+    cannotCompare(eq)
+    return false
 end
 
 local function noteSkip(kind, luaObject, what)
@@ -158,7 +172,7 @@ local function wrapLoad(original)
             sentAny = true
         end
         local after = snapshot(isoObject:getModData())
-        if after == nil or after ~= before then
+        if not same(before, after) then
             isoObject:transmitModData()
             sentAny = true
         end
@@ -176,11 +190,18 @@ local function wrapSave(original)
         self:toModData(md)
         local after = snapshot(md)
         local key = positionOf(self)
-        if key and after and before == after and sent[key] == after then
+        if key and same(before, after) and same(sent[key], after) then
             noteSkip("save", self, "crop modData resend")
             return
         end
-        if key then sent[key] = after end
+        if key then
+            -- 已有基準的格遇到 after == nil 時表少一格、計數不減：只會提早清表（多送一次），不會漏送
+            if after ~= nil and sent[key] == nil then
+                if sentCount >= SENT_CAP then sent, sentCount = {}, 0 end
+                sentCount = sentCount + 1
+            end
+            sent[key] = after
+        end
         return original(self)
     end
 end

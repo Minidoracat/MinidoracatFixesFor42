@@ -24,6 +24,7 @@ A collection of fixes for vanilla Build 42 bugs: vanilla bugs only, each fix ret
 [*] Vehicle doors only lock halfway
 [*] The server keeps re-sending unchanged crop data near farmland
 [*] The farming save grows too large, gets wiped, and crops stop growing
+[*] With many crops (trampled ones included), the farming check every 10 in-game minutes stalls the game or server for a moment (about 40% shorter in our tests, not gone)
 [*] Watering an animal the server no longer knows makes the server error nonstop and the action never ends
 [*] Leashing, tying to a tree, loading into a trailer or hand-feeding an animal the server no longer knows makes the server error
 [*] Mod settings reset to defaults after a restart, or all vanish at once

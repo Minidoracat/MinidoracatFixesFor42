@@ -6,7 +6,7 @@ Project Zomboid Build 42 的常設修復合輯（client + server）。
 
 只收「原版或熱門 MOD 壞掉、官方修好就退場」的防護。純修復——不改平衡、
 不加物品、不加介面、不加設定選項；正常遊玩的行為不變，只在原本會炸掉的
-地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、不再讓多人客戶端對車底下已經踩爛的作物一直重送指令、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器）、替伺服器補上它漏掉的多人死亡、把多人遊戲裡掉到地板下的車放回地面、把掉到地下室牆外的角色放回原來站的地方、把被配方用掉的袋子裡的東西放回袋子原本所在的地方、讓一天很長的多人伺服器全員睡著快轉時的體溫模擬不再失控、讓原版判錯方向的北向新款窗裝得回去、把已經放到地上卻還留在穿戴清單的物品從穿戴拿掉、讓缺了幾片的多格物件用大錘敲得掉、強化伺服器對健康作弊與大錘拆除的驗證，或讓存檔不會撐破引擎上限
+地方乾淨接住、在原版讀到之前修好它留下的壞格子資料、拿掉原版內容沒變也照送的重複同步、不再讓多人客戶端對車底下已經踩爛的作物一直重送指令、讓原版的 MOD 設定檔不再黏行或被清空、省下原版每幀的多餘重算（充電器）與農作定期檢查裡重複的取物件、替伺服器補上它漏掉的多人死亡、把多人遊戲裡掉到地板下的車放回地面、把掉到地下室牆外的角色放回原來站的地方、把被配方用掉的袋子裡的東西放回袋子原本所在的地方、讓一天很長的多人伺服器全員睡著快轉時的體溫模擬不再失控、讓原版判錯方向的北向新款窗裝得回去、把已經放到地上卻還留在穿戴清單的物品從穿戴拿掉、讓缺了幾片的多格物件用大錘敲得掉、強化伺服器對健康作弊與大錘拆除的驗證，或讓存檔不會撐破引擎上限
 （看得到的行為差異都登記在 docs/fixes.md 各項，例如沒人的區域裡，枯死／腐爛作物慢慢變成踩爛外觀的轉換會暫停
 （`MDFX_FarmingGosPrune`），多人遊戲「重新連線後舊角色又活過來」改成一律算死亡（`MDFX_DeathSync`），沒有健康作弊權限的帳號不能再用它（`MDFX_HealthCheatPermission`），大錘拆除的程式被 MOD 換掉時，不符合原版伺服器規則的拆除照樣拒絕（`MDFX_SledgehammerGuard`））。每一項修復都在
 [docs/fixes.md](docs/fixes.md) 登記症狀、根因、修法、驗證方式與可退場條件；遊戲更新後跑
@@ -33,6 +33,7 @@ TimedAction／多人同步修復）的分工是**發佈管道**，不是端別�
 | `MDFX_GiveWaterAnimalGuard` | server | 餵水動作送到伺服器時找不到那隻動物或玩家的水容器（`self.animal`／`self.item` 為 nil）：原版伺服器時長 -1、每 400 ms 模擬一次事件，`ISGiveWaterToAnimal.lua:85`／`:86` 每次都拋錯，動作停不下來（最久 30 分鐘；水容器 nil 時還會白白把動物餵到不渴）。改成結束並拒絕動作，每個動作在伺服器記一行玩家與位置供追查（每次開機最多 20 行） |
 | `MDFX_AnimalCompleteGuard` | server | 牽繩、拴樹、裝拖車、手餵送到伺服器時找不到那隻動物：四個動作的 `complete` 各對 nil 拋錯一次（`ISAttachAnimalToPlayer.lua:42`、`ISAttachAnimalToTree.lua:42`、`ISAddAnimalInTrailer.lua:76`、`ISFeedAnimalFromHand.lua:46`）。改成回 false 直接拒絕，同樣每個動作記一行玩家與位置 |
 | `MDFX_FarmingSyncDedupe` | server | 伺服器每載入一塊地圖區域，原版就對區域內每株作物固定送名稱／sprite／modData 三包（`SPlantGlobalObject.lua:51-55`、`:82-86`；這時客戶端還沒有那個 chunk，收到就丟），之後每 10 遊戲分鐘再對翻土、枯死、腐爛的作物整份重送（`:775`），值沒變也送；改成有變才送 |
+| `MDFX_FarmingCheckPlantOnce` | server | 原版 `SFarmingSystem:checkPlant`（`SFarmingSystem.lua:236-251`）每 10 遊戲分鐘把全部作物（含沒載入、已踩爛的）走兩遍，每輪都呼叫兩次結果相同、跨到 Java 的 `getLuaObjectByIndex`；改成每輪取一次，檢查的順序、次數與時間點同原版。連同 `MDFX_FarmingSyncDedupe` 改成逐鍵比較，約 1.2 萬株作物的實機測試裡整個 `EveryTenMinutes` 的中位數從 122 ms 降到 76 ms |
 | `MDFX_FarmingGosPrune` | server | 原版把載入過的每株作物（枯死、被踩爛、已收成的也算）永久留在 `gos_farming.bin`；檔案超過引擎固定的 10 MiB 存檔緩衝時被截成 0 byte，下次開機整個農作物系統清空。沒人的區域裡這類作物暫時移出存檔，區域載入時從地圖物件原樣重建；原版失去登記後回不來的踩爛／已收成作物也一併重新登記 |
 | `MDFX_FarmingClockBackup` | server | `gos_farming.bin` 讀不到時農作物時鐘 `hoursElapsed` 歸零；每 10 遊戲分鐘另存一份，讀檔失敗時還原 |
 | `MDFX_FarmingStallHeal` | server | 時鐘歸零後重新登記的作物帶著舊時鐘的 `nextGrowing`，卡住不長（原版補救只在 `stateToIsoObject`，下雨或澆水就失效）；定期檢查時把遠到不可能的 `nextGrowing` 拉回 |

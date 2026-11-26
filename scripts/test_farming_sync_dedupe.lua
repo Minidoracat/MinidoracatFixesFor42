@@ -9,7 +9,7 @@
 --   * saveData：寫入前後相同且與這一格上次送出相同才不送；
 --       - setSpriteName／setObjectName 先寫 modData 不送、再 saveData（播種、生長、枯死的形狀）必須送
 --       - 別人改過 iso modData（客戶端轉送、MOD 直寫）必須送
---   * 指紋比內容不比順序、分得出 "1" 與 1、巢狀 table 一律照原版送、比對失敗照原版送
+--   * 比對逐鍵比內容、不比順序；分得出 "1" 與 1、0 與 -0、tostring 精度以下的差；巢狀 table 一律照原版送、比對失敗照原版送
 --   * 只包原版檔案的函式（別的 MOD 覆寫就不碰），三個 method 各自判斷
 --   * 原函式拋錯原樣外洩；重複載入／OnGameBoot 不疊；後載 MOD 替換後不接回去
 --   * 診斷每種只印一次
@@ -363,10 +363,67 @@ iso.md.fn = function() end -- 不會上線的型別（KahluaTableImpl.java:387-4
 C.saveData(p)
 T.check("9 不會上線的值變動不算變 → 不送", take(iso) == "")
 
+iso.md.custom = 0.1 + 0.2
+C.saveData(p)
+take(iso)
+iso.md.custom = 0.3 -- tostring 兩者都是 "0.3"，上線的 double 不同
+C.saveData(p)
+T.check("9 數字差在 tostring 精度以下也算變 → 送", take(iso) == "MODDATA")
+
+iso.md.custom = 0.0
+C.saveData(p)
+take(iso)
+iso.md.custom = -0.0
+C.saveData(p)
+T.check("9 0 與 -0 分得出來 → 送", take(iso) == "MODDATA")
+C.saveData(p)
+T.check("9 -0 送過之後 → 不送", take(iso) == "")
+
+iso.md.custom = nil
+C.saveData(p)
+T.check("9 少一個鍵 → 送", take(iso) == "MODDATA")
+C.saveData(p)
+take(iso)
+
+iso.md[1] = "a" -- 數字鍵會上線；同時放字串鍵 "1"，兩個鍵不能混
+iso.md["1"] = "a"
+C.saveData(p)
+take(iso)
+iso.md[1] = "b"
+C.saveData(p)
+T.check("9 只改數字鍵的值 → 送", take(iso) == "MODDATA")
+C.saveData(p)
+T.check("9 數字鍵送過之後 → 不送", take(iso) == "")
+iso.md[1], iso.md["1"] = nil, nil
+C.saveData(p)
+take(iso)
+
+iso.md.flag = false -- 布林值會上線
+C.saveData(p)
+take(iso)
+iso.md.flag = true
+C.saveData(p)
+T.check("9 布林值 false→true → 送", take(iso) == "MODDATA")
+C.saveData(p)
+T.check("9 布林值送過之後 → 不送", take(iso) == "")
+iso.md.flag = nil
+C.saveData(p)
+take(iso)
+
+iso.md[true] = "a" -- 不會上線的鍵（KahluaTableImpl.save 只寫 string／number 鍵）
+C.saveData(p)
+iso.md[true] = "b"
+C.saveData(p)
+T.check("9 不會上線的鍵變動不算變 → 不送", take(iso) == "")
+iso.md[true] = nil
+
 iso.md.nested = { a = 1 }
 C.saveData(p)
 C.saveData(p)
 T.check("9 巢狀 table 看不出來 → 每次照原版送", take(iso) == "MODDATA,MODDATA")
+iso.md.nested = nil
+C.saveData(p)
+T.check("9 巢狀 table 消失後 → 送（看不出來那次基準就作廢）", take(iso) == "MODDATA")
 
 p, iso = syncedIso(C, carrot())
 iso.md.nested = { a = 1 }
@@ -385,6 +442,27 @@ T.check("10 照原版送", take(iso) == "MODDATA")
 pcall(C.saveData, p)
 T.check("10 診斷只印一次", S.printCount("could not compare") == 1)
 
+-- 拷貝成功、逐鍵比較時才失敗（pairs 對私有拷貝拋錯）：存與載都要照原版送
+local realPairs = pairs
+local function pairsFailOnCopies(md)
+    return function(t) if t ~= md then error("pairs boom") end return realPairs(t) end
+end
+C = resetEnv(true)
+S.load(FIX)
+p, iso = syncedIso(C, carrot())
+C.saveData(p)
+take(iso)
+pairs = pairsFailOnCopies(iso.md)
+ok = pcall(C.saveData, p)
+pairs = realPairs
+T.check("10 逐鍵比較失敗（saveData）→ 不拋例外、照原版送", ok and take(iso) == "MODDATA")
+p, iso = syncedIso(C, carrot())
+pairs = pairsFailOnCopies(iso.md)
+ok = pcall(C.stateToIsoObject, p, iso)
+pairs = realPairs
+T.check("10 逐鍵比較失敗（載入）→ 不拋例外、照原版送 modData", ok and take(iso) == "MODDATA")
+T.check("10 比對失敗的診斷只印一次", S.printCount("could not compare") == 1)
+
 -- ── 11. 沒有 iso object、多格、原函式拋錯 ──────────────────────
 T.section("[11] 邊界")
 C = resetEnv(true)
@@ -399,6 +477,28 @@ C.saveData(pa)
 C.saveData(pa)
 C.saveData(pb)
 T.check("11 基準按座標分開：A 的基準不讓 B 跳過", take(isoA) == "MODDATA" and take(isoB) == "MODDATA")
+
+-- 基準表到上限就整張清掉：那一格下一次照原版送（不會吞同步）
+C = resetEnv(true)
+S.load(FIX)
+p, iso = syncedIso(C, carrot(0, 0))
+C.saveData(p)
+take(iso)
+C.saveData(p)
+T.check("11 上限前：沒變不送", take(iso) == "")
+for i = 1, 20000 do
+    C.saveData((syncedIso(C, carrot(1000 + i, 0))))
+end
+C.saveData(p)
+T.check("11 基準超過 20000 格整張清掉 → 這格下一次照原版送", take(iso) == "MODDATA")
+C.saveData(p)
+T.check("11 清掉後重新建立基準 → 不送", take(iso) == "")
+local p2, iso2 = syncedIso(C, carrot(1, 1))
+C.saveData(p2)
+take(iso2)
+C.saveData(p)
+C.saveData(p2)
+T.check("11 清掉後計數歸零：兩格的基準都留著", take(iso) == "" and take(iso2) == "")
 
 p, iso = syncedIso(C, carrot())
 p.failLoad = true

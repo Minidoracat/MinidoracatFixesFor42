@@ -147,6 +147,17 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Scope[/b]: one half runs in each player's game and the other on the multiplayer server; multiplayer only. The server half works as soon as the server updates the mod; the player half once players connect and download the new version.
 [*] [b]Retired[/b]: once vanilla keeps your game in step with the crop state the server sends (or checks the state itself before telling the server), and the server stops handling reports for crops already trampled.
 [/list]
+=== 🧰 Many crops: a short stall every 10 in-game minutes
+[h3]With many crops (trampled ones included), the game or server stalls every 10 in-game minutes[/h3]
+[list]
+[*] [b]Symptom[/b]: a server (or SP save) with many crops freezes briefly every 10 in-game minutes, with no error. On a live server with about 11,000 crops (three quarters trampled) each stall took about 0.1–0.2 s.
+[*] [b]Cause[/b]: every 10 in-game minutes vanilla checks every crop on record, trampled and unloaded ones included, and fetches each crop's data from the engine twice. On MP servers, this mod's crop-sync fix also compared crop data more slowly than needed.
+[*] [b]Fix[/b]: each crop's data is fetched once, and crop changes are compared field by field. On a test server with about 12,000 crops the median stall dropped from about 122 ms to about 76 ms (about 40% less), the longest from about 200 ms to about 112 ms. Shorter, not gone.
+[*] [b]Difference from vanilla[/b]: none; crops are checked in the same order, count and timing, and players get the same data.
+[*] [b]Log[/b]: each startup, the server's server-console.txt (console.txt in SP) shows [MinidoracatFixes] MDFX_FarmingCheckPlantOnce installed: the ten-minute crop check fetches each crop once per pass.
+[*] [b]Scope[/b]: server and SP; players need nothing.
+[*] [b]Retired[/b]: it stops installing itself once vanilla fetches each crop's data once.
+[/list]
 === 🧰 Kicked to the main menu: player-built houses & hen houses
 [h3]Players near a player-built house get kicked back to the main menu after walls are removed or rebuilt (fixed officially in Build 42.21, retired)[/h3]
 [list]
