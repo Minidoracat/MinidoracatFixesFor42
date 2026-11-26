@@ -1,23 +1,20 @@
-[h1]Minidoracat Fixes for B42 42.22.2-0.22.0[/h1]
-[i]2026-11-26[/i]
+[h1]Minidoracat Fixes for B42 42.22.2-0.23.0[/h1]
+[i]2026-11-27[/i]
 
 [b]English summary[/b]
 [list]
-[*] Multiplayer: a vehicle parked on farmland or next to crops no longer makes the server lag ("Server is too busy"). Before, the lag lasted as long as the vehicle stayed on trampled crops with a player nearby.
-[*] Cause: for each crop under the vehicle, the player's game told the server "this crop was trampled" again on every frame, although it was already trampled. This is a vanilla problem; it happens without any mods too.
-[*] Vehicles still trample crops as in vanilla. Two differences you may notice: an already-trampled crop no longer replays the trample sound every frame, and water you were adding when it got trampled is no longer cleared.
-[*] Takes effect once the server has updated; players don't need to do anything. Single player is not affected.
-[*] Tested on a 42.22.2 multiplayer server: with a vehicle parked on trampled crops for 10 seconds, the repeated messages the server received dropped from about 2,500 to 0.
+[*] Servers and saves with many crops: the short stall every 10 in-game minutes is now about 40% shorter. It is not gone completely.
+[*] Takes effect once the server has the update; players don't need to do anything. Single player benefits too.
+[*] Crops grow, wilt and look exactly as before; trampled crops count toward the stall, so worlds with many of them gain the most.
+[*] Tested on a 42.22.2 multiplayer server with about 12,000 crops: each stall dropped from about 0.12 to about 0.08 seconds.
 [/list]
 
-[h3]🔧 修正[/h3]
+[h3]⚡ 效能[/h3]
 [list]
-[*] [b]多人遊戲：車停在農地或作物旁時伺服器變卡（Server is too busy）[/b]：現在車停在踩爛的作物上，伺服器不會再因此變卡。伺服器更新後就生效，玩家不用另外做什麼；單人遊戲不受影響。
+[*] [b]作物很多的伺服器或存檔，每 10 遊戲分鐘卡一下[/b]：現在每次卡住的時間約縮短四成。伺服器更新 MOD 後就生效，玩家不用另外做什麼；單人遊戲也適用。
 [list]
-[*] 以前只要附近有玩家，車在踩爛的作物上停多久就卡多久，把車開走才恢復。
-[*] 一個正式伺服器實測，伺服器約五分之一的時間花在這件事上，其中大部分是另一個 MOD 對每次通知做的權限檢查。
-[*] 作物照樣會被車踩爛，車也照樣可以停在田上。
-[*] 玩家會注意到的差別：已經踩爛的作物不再每個畫面重播踩爛的音效；澆水澆到一半作物被車踩爛、車還壓在上面時，水量不再被清空。
-[*] 2026-11-26 在 42.22.2 多人伺服器實機驗過：車停在踩爛的作物上 10 秒，伺服器收到的重複通知從約 2500 次變成 0 次。
+[*] 作物越多越明顯，已經被踩爛的作物也算在內。
+[*] 不是完全消除：約一萬兩千株作物的測試伺服器，每次卡住從約 0.12 秒變成約 0.08 秒。
+[*] 2026-11-26～27 在 42.22.2 多人伺服器實機驗過：播種、生長、枯死、被踩爛等作物變化，玩家畫面上看到的都和前一版相同。
 [/list]
 [/list]

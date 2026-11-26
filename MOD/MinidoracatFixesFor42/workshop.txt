@@ -27,6 +27,7 @@ description=[*] Server error when changing clothes or placing furniture and the 
 description=[*] Vehicle doors only lock halfway
 description=[*] The server keeps re-sending unchanged crop data near farmland
 description=[*] The farming save grows too large, gets wiped, and crops stop growing
+description=[*] With many crops (trampled ones included), the farming check every 10 in-game minutes stalls the game or server for a moment (about 40% shorter in our tests, not gone)
 description=[*] Watering an animal the server no longer knows makes the server error nonstop and the action never ends
 description=[*] Leashing, tying to a tree, loading into a trailer or hand-feeding an animal the server no longer knows makes the server error
 description=[*] Mod settings reset to defaults after a restart, or all vanish at once
