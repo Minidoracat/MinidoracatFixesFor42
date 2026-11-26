@@ -43,8 +43,12 @@ MDFX_FarmingSyncDedupe — 原版農作物同步改成「有變才送」（serve
   內容變了送 transmitModData，順序同原版。sprite 比的是 getSprite() 物件本身：
   setSpriteFromName 不更新 spriteName 欄位（IsoObject.java:1979-1982、:2235-2237），
   用 getSpriteName() 比會漏掉 sprite 變化。
-- saveData：先做原版的 toModData（:774），「寫入前後相同」而且「和這一格上次實際
-  送出的內容相同」才不送；其餘交給原函式照原版送（再 toModData 一次，同值）。
+- saveData：先做原版的 toModData（:774），「寫入前後相同」而且「和同一株作物在這一格
+  上次實際送出的內容相同」才不送；其餘交給原函式照原版送（再 toModData 一次，同值）。
+  同一格會換作物（鏟掉重種、MDFX_FarmingGosPrune 移出後重建），每株是另一張 Lua 表
+  （GlobalObject.java:17-24；SGlobalObject.lua:63-69），所以基準另記是哪一株送的，
+  換了就當沒有基準：新作物播種時 setSpriteName 先默寫 modData，內容若又剛好等於舊作物
+  送過的，只看座標會把這次同步吞掉。
   只比寫入前後不夠：setSpriteName／setObjectName 先把整份 modData 寫進 iso object
   卻不送（:118、:103），播種（:732-733）、生長（SFarmingSystem.lua:288-289）、
   枯死與踩爛（→ deadPlant :765）都是這樣接著 saveData；只比前後會漏掉這些真正
@@ -83,7 +87,9 @@ MDFX_Guard.onServer：立即安裝一次，OnGameBoot 再查一次。本 session
 local VANILLA_FILE = "/media/lua/server/farming/splantglobalobject.lua"
 local DOC = " See docs/fixes.md MDFX_FarmingSyncDedupe"
 
--- 座標 "x,y,z" → saveData 上次實際送出的 modData 平坦拷貝（每格一張約 26 鍵的表）。
+-- 座標 "x,y,z" → { plant = 送出的那株作物（luaObject 表）, data = saveData 上次實際送出的
+-- modData 平坦拷貝（約 26 鍵）}。一格一筆，換了作物就覆寫：舊作物的基準不能讓新作物跳過。
+-- 不拿作物表當鍵：Kahlua 沒有弱表，被移除的作物會佔名額到清表。
 -- 格數到 SENT_CAP 就整張清掉重來：清掉只讓那些格下一次照原版送一次，不會吞同步
 local SENT_CAP = 20000
 local sent, sentCount = {}, 0
@@ -148,7 +154,11 @@ local function same(a, b)
     return false
 end
 
+-- 沒送是常態：印過就不再組診斷字串；一 session 一次仍由 MDFX_Guard.warnOnce 把關（本檔重跑時旗標會重置）
+local skipNoted = {}
 local function noteSkip(kind, luaObject, what)
+    if skipNoted[kind] then return end
+    skipNoted[kind] = true
     warnOnce("skip:" .. kind, "MDFX_FarmingSyncDedupe: unchanged " .. what .. " at " .. tostring(positionOf(luaObject))
         .. " not re-sent. Further skips not logged this session." .. DOC)
 end
@@ -190,17 +200,18 @@ local function wrapSave(original)
         self:toModData(md)
         local after = snapshot(md)
         local key = positionOf(self)
-        if key and same(before, after) and same(sent[key], after) then
+        local base = key and sent[key]
+        if base and base.plant == self and same(before, after) and same(base.data, after) then
             noteSkip("save", self, "crop modData resend")
             return
         end
         if key then
             -- 已有基準的格遇到 after == nil 時表少一格、計數不減：只會提早清表（多送一次），不會漏送
-            if after ~= nil and sent[key] == nil then
+            if after ~= nil and not base then
                 if sentCount >= SENT_CAP then sent, sentCount = {}, 0 end
                 sentCount = sentCount + 1
             end
-            sent[key] = after
+            sent[key] = after and { plant = self, data = after }
         end
         return original(self)
     end

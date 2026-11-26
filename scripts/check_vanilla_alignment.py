@@ -342,6 +342,23 @@ FIXES = [
             r"if sprite then luaObject:setSpriteName\(sprite\) end\s*luaObject:saveData\(\)",
         ],
     },
+    # 基準另記「哪一株作物送的」靠作物表的身分：作物表就是全域物件的 modData 表、每個全域物件各建一張、
+    # 伺服器每次 newObject 都 new（不重用）。任一條轉紅＝同格換作物可能沿用舊表，重種漏送的保護會無聲失效
+    {
+        "name": "MDFX_FarmingSyncDedupe（依賴：作物 Lua 表就是全域物件的 modData 表）",
+        "file": "media/lua/server/Map/SGlobalObject.lua",
+        "depends": [r"local o = globalObject:getModData\(\)\s*setmetatable\(o, self\)"],
+    },
+    {
+        "name": "MDFX_FarmingSyncDedupe（Java 依賴：每個全域物件各建一張表）",
+        "class": "zombie.globalObjects.GlobalObject",
+        "depends": [r"J2SEPlatform\.newTable:\(\)Lse/krka/kahlua/vm/KahluaTable;\s+\d+: putfield\s+#\d+\s+// Field modData:"],
+    },
+    {
+        "name": "MDFX_FarmingSyncDedupe（Java 依賴：伺服器每次 newObject 都 new，不重用）",
+        "class": "zombie.globalObjects.SGlobalObjectSystem",
+        "depends": [r"protected zombie\.globalObjects\.GlobalObject makeObject\(int, int, int\);\s+Code:\s+\d+: new\s+#\d+\s+// class zombie/globalObjects/SGlobalObject"],
+    },
     # ── 農作每 10 遊戲分鐘的全表檢查：每輪只取一次物件 ─────────────────────────
     {
         "name": "MDFX_FarmingCheckPlantOnce",

@@ -12,6 +12,7 @@
 --   * 比對逐鍵比內容、不比順序；分得出 "1" 與 1、0 與 -0、tostring 精度以下的差；巢狀 table 一律照原版送、比對失敗照原版送
 --   * 只包原版檔案的函式（別的 MOD 覆寫就不碰），三個 method 各自判斷
 --   * 原函式拋錯原樣外洩；重複載入／OnGameBoot 不疊；後載 MOD 替換後不接回去
+--   * 同一格換了作物（鏟掉重種、移出後重建）時，舊作物的基準不讓新作物跳過
 --   * 診斷每種只印一次
 
 local S = dofile("scripts/_stub.lua")
@@ -578,5 +579,37 @@ local later = function(self) end
 C.saveData = later
 S.fireBoot()
 T.check("14 後載 MOD 換掉後，OnGameBoot 不接回去", C.saveData == later)
+
+-- ── 15. 同格換作物 ─────────────────────────────────────────────
+T.section("[15] 同格換作物")
+C = resetEnv(true)
+S.load(FIX)
+local oldP, oldIso = syncedIso(C, carrot(5, 5))
+C.saveData(oldP)
+take(oldIso)
+C.saveData(oldP)
+T.check("15 舊作物沒變 → 不送", take(oldIso) == "")
+-- 鏟掉重種（farmingCommands.lua:68-79 → SFarmingSystem.lua:524-527）：新表、新 iso，客戶端手上是翻土
+local replant = carrot(5, 5)
+replant.state, replant.spriteName = "plow", "vegetation_farming_01_1"
+local newIsoObj = newIso(replant.objectName, replant.spriteName, {})
+local newP = newPlant(C, replant, newIsoObj)
+C.toModData(newP, newIsoObj.md) -- addObject :213
+newP.state = "seeded"           -- seed :715-734
+C.setSpriteName(newP, "vegetation_farming_01_57")
+T.check("15 播種的 setSpriteName 只送 SPRITE、modData 已默寫", take(newIsoObj) == "SPRITE" and newIsoObj.md.state == "seeded")
+C.saveData(newP)
+T.check("15 同格重種：內容等於舊作物上次送出的 → 仍必須送", take(newIsoObj) == "MODDATA")
+C.saveData(newP)
+T.check("15 新作物送過之後 → 不送", take(newIsoObj) == "")
+-- 移出後重建（MDFX_FarmingGosPrune）：同格、同內容、另一張表
+local rebuilt, rebuiltIso = syncedIso(C, carrot(5, 5))
+C.saveData(rebuilt)
+T.check("15 同格換了一張作物表（內容相同）→ 照原版送一次", take(rebuiltIso) == "MODDATA")
+C.saveData(rebuilt)
+T.check("15 之後沒變 → 不送", take(rebuiltIso) == "")
+C.stateToIsoObject(rebuilt, rebuiltIso)
+T.check("15 載入與定期兩種 skip 診斷各印一次", S.printCount("unchanged crop load sync") == 1
+    and S.printCount("unchanged crop modData resend") == 1)
 
 T.finish()
