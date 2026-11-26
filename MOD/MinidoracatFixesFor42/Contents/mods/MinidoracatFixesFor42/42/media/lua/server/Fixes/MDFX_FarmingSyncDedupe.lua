@@ -46,7 +46,7 @@ MDFX_FarmingSyncDedupe — 原版農作物同步改成「有變才送」（serve
 - saveData：先做原版的 toModData（:774），「寫入前後相同」而且「和同一株作物在這一格
   上次實際送出的內容相同」才不送；其餘交給原函式照原版送（再 toModData 一次，同值）。
   同一格會換作物（鏟掉重種、MDFX_FarmingGosPrune 移出後重建），每株是另一張 Lua 表
-  （GlobalObject.java:17-24；SGlobalObject.lua:63-69），所以基準另記是哪一株送的，
+  （GlobalObject.java:17-24；SGlobalObject.lua:70-71），所以基準另記是哪一株送的，
   換了就當沒有基準：新作物播種時 setSpriteName 先默寫 modData，內容若又剛好等於舊作物
   送過的，只看座標會把這次同步吞掉。
   只比寫入前後不夠：setSpriteName／setObjectName 先把整份 modData 寫進 iso object
@@ -201,7 +201,8 @@ local function wrapSave(original)
         local after = snapshot(md)
         local key = positionOf(self)
         local base = key and sent[key]
-        if base and base.plant == self and same(before, after) and same(base.data, after) then
+        -- rawequal：只比身分，別的 MOD 替作物類別加 __eq 也不執行它
+        if base and rawequal(base.plant, self) and same(before, after) and same(base.data, after) then
             noteSkip("save", self, "crop modData resend")
             return
         end

@@ -359,6 +359,17 @@ FIXES = [
         "class": "zombie.globalObjects.SGlobalObjectSystem",
         "depends": [r"protected zombie\.globalObjects\.GlobalObject makeObject\(int, int, int\);\s+Code:\s+\d+: new\s+#\d+\s+// class zombie/globalObjects/SGlobalObject"],
     },
+    {
+        # GlobalObjectSystem.java:36-45：同座標沒物件就直接 makeObject 並登記，中間沒有取回收物件的分支
+        "name": "MDFX_FarmingSyncDedupe（Java 依賴：newObject 沒物件就直接 makeObject，不取回收物件）",
+        "class": "zombie.globalObjects.GlobalObjectSystem",
+        "depends": [
+            r"public final zombie\.globalObjects\.GlobalObject newObject\(int, int, int\);(?:(?!\n  \S)[\s\S])*?"
+            r"\d+: athrow\s+\d+: aload_0\s+\d+: iload_1\s+\d+: iload_2\s+\d+: iload_3\s+"
+            r"\d+: invokevirtual\s+#\d+\s+// Method makeObject:\(III\)Lzombie/globalObjects/GlobalObject;\s+"
+            r"\d+: astore\s+4\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field objects:",
+        ],
+    },
     # ── 農作每 10 遊戲分鐘的全表檢查：每輪只取一次物件 ─────────────────────────
     {
         "name": "MDFX_FarmingCheckPlantOnce",

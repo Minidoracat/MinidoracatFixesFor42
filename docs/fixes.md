@@ -529,7 +529,7 @@ exithint）。
    先把整份 modData 寫進 iso object 卻只送 SPRITE／NAME（`:118`、`:103`），播種（`:732-733`）、
    生長（`SFarmingSystem.lua:288-289`、`farming_vegetableconf.lua:124-128`）、枯死與踩爛
    （→ `deadPlant` 的 `:765`）都是這樣接著 `saveData`。到了 `saveData` 裡寫入前後幾乎總是相同，
-   只比前後會把這些真正有變的同步全部吞掉（離線突變實測：8 項轉紅）。所以基準是「上次實際送出」。
+   只比前後會把這些真正有變的同步全部吞掉（離線突變實測轉紅，見「驗證」的突變表）。所以基準是「上次實際送出」。
 2. **寫入前後也要比**。客戶端送來的 `ObjectModData` 會先改掉伺服器的 iso modData 再轉給其他人
    （`ObjectModDataPacket.java:50-96`），`toModData` 蓋回原值之後只有「寫入前」看得到差異。
 3. **sprite 比物件本身**。`setSpriteFromName` 不更新 `spriteName` 欄位
@@ -540,13 +540,14 @@ exithint）。
    遇到巢狀 table、拷貝或比較本身拋錯就當「看不出來」，照原版送。2026-11-26 前是排序後組成字串再比，
    正式服一萬株作物時這段佔掉每 10 遊戲分鐘 `checkPlant` 約四成，改成逐鍵比（見
    `MDFX_FarmingCheckPlantOnce` 的「效能」）。
-5. **基準跟著作物，不只跟著座標**。同一格會換作物：鏟掉重種（`farmingCommands.lua:67-79` → `SFarmingSystem.lua:524-527`）、
+5. **基準跟著作物，不只跟著座標**。同一格會換作物：鏟掉重種（`farmingCommands.lua:67-78` → `SFarmingSystem.lua:524-527`）、
    `MDFX_FarmingGosPrune` 移出後重建，都是新的全域物件、新的 Lua 表（`GlobalObjectSystem.java:36-45` 每次 `makeObject`、
-   沒有物件池；`GlobalObject.java:17-24` 各自 `newTable`；`SGlobalObject.lua:63-69` 作物表就是那張表）。新地圖物件在客戶端是翻土，
+   沒有物件池；`GlobalObject.java:17-24` 各自 `newTable`；`SGlobalObject.lua:70-71` 作物表就是那張表）。新地圖物件在客戶端是翻土，
    播種的 `setSpriteName` 先默寫 modData（`:732`），`saveData` 時寫入前後相同；內容若又剛好等於舊作物送過的
    （同遊戲小時、同種子，health 與生長偏移的亂數也抽中同值），只看座標就會把這次同步吞掉，客戶端停在翻土。
-   所以基準另記是哪一株作物送的，換了就當沒有基準。Kahlua 的 `==` 對 table 是引用比較（`KahluaThread.java:505-557`，
-   作物類別沒有 `__eq`）。不拿作物表當基準表的鍵：Kahlua 沒有弱表，被移除的作物會佔名額到清表。2026-11-27 修，之前只看座標（0.22.0 以前就有）。
+   所以基準另記是哪一株作物送的，換了就當沒有基準。比身分用 `rawequal`：Kahlua 的 `==` 遇到兩張不同的 table
+   會先找 `__eq`（`KahluaThread.java:543-566`），原版作物類別沒有，但別的 MOD 加了就會改變結果或拋錯。
+   不拿作物表當基準表的鍵：Kahlua 沒有弱表，被移除的作物會佔名額到清表。2026-11-27 修，之前只看座標（0.22.0 以前就有）。
 
 不做陷阱與營火：陷阱（`STrapGlobalObject.lua:30-98`）載入時同款三包，但數量遠少於作物、
 modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊戲分鐘 `fuelAmt` 都在變
@@ -562,9 +563,14 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 - **基準表**按座標存「哪一株作物＋它上次送出的 modData 平坦拷貝」（一格一筆，換了作物就覆寫），格數到 20000 就整張清掉重來
   （清掉只讓那些格下一次照原版送一次）；格數是本 session 走過 `saveData`（且當時 iso object 在記憶體裡）的作物格數；
   地圖內建枯作物還是 `destroy` 狀態時每 10 遊戲分鐘都會走、會佔一格，踩爛成 `destroyed` 之後就不再走定期那條。
-- **`MDFX_FarmingGosPrune` 重建的枯死／腐爛作物，重建後第一次 `saveData` 照原版送一包**（新的作物表沒有基準）。
-  踩爛／已收成的不走定期 `saveData`（`SFarmingSystem.lua:265`），不受影響。原版同一時間點每株本來就送，不會多於原版。
-- **換株靠作物表的身分**：官方若改成重用同一張表，就退回只看座標（重種可能漏送）；`check_vanilla_alignment.py` 有指紋。
+- **`MDFX_FarmingGosPrune` 重建的枯死／腐爛作物，每次重建後第一次 `saveData` 照原版送一包**（新的作物表沒有基準）。
+  0.23.0 以前這包不送（舊基準只看座標、內容相同）；正式服 GOS 條目裡腐爛約 14%、枯死約 4%（見 `MDFX_FarmingGosPrune`），
+  實機沒量過多送了多少。踩爛／已收成的不走定期 `saveData`（`SFarmingSystem.lua:265`），不受影響。原版同一時間點每株本來就送，不會多於原版。
+- **換株靠作物表的身分**：官方若改成重用同一張表（`newObject` 加物件池），就退回只看座標（重種可能漏送）；
+  `check_vanilla_alignment.py` 有四條指紋（作物表就是 modData 表、各建一張、`makeObject` 每次 new、`newObject` 直接 `makeObject`）。
+- **伺服器送的 modData 客戶端沒收到，之後內容沒變就不再送**：客戶端在 chunk 下載途中收到的 `ObjectModData`
+  找不到物件就丟（`ObjectModDataPacket.java:53-56`），原版下一個 10 遊戲分鐘會整份重送補上，修正後要等內容真的有變。
+  踩爛那條另有 `MDFX_FarmingDestroyResync` 的限頻補送；其他狀態沒有。
 - **被踩爛的地圖枯作物仍會送 SPRITE**。`typeOfSeed = "none"` 的作物被踩時 `destroyThis` 取不到
   sprite，原版 `setSpriteName(nil)` 把 luaObject 的 `spriteName` 變成 nil；之後每次載入，引擎照
   iso 的 `spriteName` 欄位另建一個 sprite（`IsoObject.java:1301-1303`），`stateToIsoObject` 又
@@ -579,7 +585,7 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 
 ### 驗證
 
-`lua scripts/test_farming_sync_dedupe.lua` — 82 項，全綠。涵蓋：`isServer()` 為假時零介入（連原函式的
+`lua scripts/test_farming_sync_dedupe.lua` — 84 項，全綠。涵蓋：`isServer()` 為假時零介入（連原函式的
 全域表都不動）、安裝只換三個 method 不加成員、載入時沒變零封包而原版同狀態固定三包（對照組）、
 名稱／sprite 物件／modData 各自變化只補送那一項且順序同原版、`stateFromIsoObject` 零封包、
 `saveData` 無基準照送／沒變不送不呼叫原函式、`setSpriteName`／`setObjectName` 之後的
@@ -587,7 +593,7 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 順序無關、分得出 `"1"` 與 `1`、只改數字鍵的值與布林值 false→true 都送（送過後不再送）、
 `tostring` 精度以下的差與 0／-0 算變（-0 送過後不再送）、不上線的鍵與值變動不算變、
 巢狀 table、拷貝失敗、逐鍵比較失敗（存與載兩條路）都照原版送、看不出來那次之後基準作廢（巢狀 table 消失時照送）、
-基準按座標分開、同一格換了作物（鏟掉重種且內容等於舊作物送過的、移出後重建）時照送一次、基準超過 20000 格整張清掉後照原版送一次、清掉後計數歸零（不會每個新格都清一次）、
+基準按座標分開、同一格換了作物（鏟掉重種且內容等於舊作物送過的、移出後重建）時照送一次、作物類別有 `__eq` 也只比身分不呼叫它、基準超過 20000 格整張清掉後照原版送一次、清掉後計數歸零（不會每個新格都清一次）、
 原函式拋錯原樣外洩、別的 MOD 覆寫的 method 不碰（含 Windows 反斜線路徑的原版判斷）、形狀不符不裝、
 本檔重跑與 `OnGameBoot` 不疊、後載 MOD 換掉後不接回去、診斷一 session 一次。
 
@@ -595,8 +601,9 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 
 | 突變 | 轉紅 |
 |------|------|
-| `saveData` 只比寫入前後（交接提案的判準；2026-11-27 加同格換作物後重測） | 17 項（播種、`setObjectName` 後、額外鍵、無基準首送、同格換作物全部漏掉） |
-| 不看擁有者（`base.plant == self`）／送出時不記擁有者／送出時沿用舊擁有者（2026-11-27） | 2／19／2 項 |
+| `saveData` 只比寫入前後（交接提案的判準；2026-11-27 對 84 項重測） | 18 項（播種、`setObjectName` 後、額外鍵、無基準首送、同格換作物全部漏掉） |
+| 不看擁有者／送出時不記擁有者／送出時沿用舊擁有者（2026-11-27，84 項） | 3／20／3 項 |
+| 擁有者改用 `==` 比（2026-11-27） | 2 項（作物類別有 `__eq` 時拋錯） |
 | 診斷旗標不分種類（2026-11-27） | 1 項 |
 | `saveData` 只比上次送出、不比寫入前 | 1 項（客戶端轉送後不蓋回） |
 | 不送的路徑不做 `toModData` | 2 項 |
@@ -630,6 +637,11 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正組伺服器 log 有 `installed` 與兩行
 首次 skip 診斷；兩輪收回的 console 都沒有 Lua 例外（只有開機期固定雜訊與原版 `MOWoodenWalFrame`
 的 `IsoThumpable not found`，對照組同樣出現）。
+
+2026-11-27 情境加「同格重種」（伺服器暫時固定 `ZombRand`，照 `Commands.plow` 鏟掉重翻兩次，
+讓新作物的 modData 逐鍵等於舊作物送過的；9950X3D，修正組）：0.23.0 在這一步 FAIL，客戶端的
+新作物停在翻土（`md.state plow ~= seeded`）；這次的修正 PASS（35 個 CHECK，客戶端約 0.5 秒後一致），
+兩版三段計數逐項相同。對照組沒有重跑（原版每次 `saveData` 都送）。
 
 ### 可退場條件
 

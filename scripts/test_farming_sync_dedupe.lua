@@ -6,7 +6,7 @@
 --   * isServer() 為假時完全不安裝，也不動原函式的全域表
 --   * 載入時（stateFromIsoObject／stateToIsoObject）：原版固定三包 → 名稱／sprite／modData
 --     各自有變才送、順序同原版；sprite 比物件本身（setSpriteFromName 不更新 spriteName 欄位）
---   * saveData：寫入前後相同且與這一格上次送出相同才不送；
+--   * saveData：寫入前後相同且與同一株作物在這一格上次送出相同才不送；
 --       - setSpriteName／setObjectName 先寫 modData 不送、再 saveData（播種、生長、枯死的形狀）必須送
 --       - 別人改過 iso modData（客戶端轉送、MOD 直寫）必須送
 --   * 比對逐鍵比內容、不比順序；分得出 "1" 與 1、0 與 -0、tostring 精度以下的差；巢狀 table 一律照原版送、比對失敗照原版送
@@ -589,12 +589,12 @@ C.saveData(oldP)
 take(oldIso)
 C.saveData(oldP)
 T.check("15 舊作物沒變 → 不送", take(oldIso) == "")
--- 鏟掉重種（farmingCommands.lua:68-79 → SFarmingSystem.lua:524-527）：新表、新 iso，客戶端手上是翻土
+-- 鏟掉重種（farmingCommands.lua:67-78 → SFarmingSystem.lua:524-527）：新表、新 iso，客戶端手上是翻土
 local replant = carrot(5, 5)
 replant.state, replant.spriteName = "plow", "vegetation_farming_01_1"
 local newIsoObj = newIso(replant.objectName, replant.spriteName, {})
 local newP = newPlant(C, replant, newIsoObj)
-C.toModData(newP, newIsoObj.md) -- addObject :213
+C.toModData(newP, newIsoObj.md) -- addObject :214
 newP.state = "seeded"           -- seed :715-734
 C.setSpriteName(newP, "vegetation_farming_01_57")
 T.check("15 播種的 setSpriteName 只送 SPRITE、modData 已默寫", take(newIsoObj) == "SPRITE" and newIsoObj.md.state == "seeded")
@@ -608,6 +608,14 @@ C.saveData(rebuilt)
 T.check("15 同格換了一張作物表（內容相同）→ 照原版送一次", take(rebuiltIso) == "MODDATA")
 C.saveData(rebuilt)
 T.check("15 之後沒變 → 不送", take(rebuiltIso) == "")
+-- 別的 MOD 替作物類別加 __eq：身分比對不能執行它
+C.__eq = function() error("crop __eq called") end
+local eqP, eqIso = syncedIso(C, carrot(5, 5))
+local okEq = pcall(C.saveData, eqP)
+T.check("15 作物類別有 __eq 也只比身分：換表照送、不呼叫 __eq", okEq and take(eqIso) == "MODDATA")
+okEq = pcall(C.saveData, eqP)
+T.check("15 作物類別有 __eq：同一張表之後不送", okEq and take(eqIso) == "")
+C.__eq = nil
 C.stateToIsoObject(rebuilt, rebuiltIso)
 T.check("15 載入與定期兩種 skip 診斷各印一次", S.printCount("unchanged crop load sync") == 1
     and S.printCount("unchanged crop modData resend") == 1)
