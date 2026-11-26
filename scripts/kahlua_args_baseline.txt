@@ -1,0 +1,6 @@
+# 既有的「固定參數少傳」呼叫（scripts/verify_mod.py 第 1c 項）。只會變少：改掉一處就重跑
+# python scripts/verify_mod.py --rebase-args。不要為了讓新的呼叫通過而重跑：少的補 nil 傳齊，
+# 或把選用參數改成 ... 接。只有確定呼叫的是 Java 方法，或最後一個引數的呼叫確定每條路都回夠多個值
+# （key 裡是 ~，後面是那個呼叫的函式名）才加進來。
+1	server/Fixes/MDFX_AnimalCompleteGuard.lua|guard|2<3
+2	shared/Fixes/MDFX_ChargerIdleGuard.lua|guarded|1<2
