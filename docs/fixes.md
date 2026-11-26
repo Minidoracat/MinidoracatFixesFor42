@@ -569,8 +569,9 @@ modData 帶巢狀 `zones`，抓包裡沒有它的份量；點燃的營火每遊�
 - **換株靠作物表的身分**：官方若改成重用同一張表（`newObject` 加物件池），就退回只看座標（重種可能漏送）；
   `check_vanilla_alignment.py` 有四條指紋（作物表就是 modData 表、各建一張、`makeObject` 每次 new、`newObject` 直接 `makeObject`）。
 - **伺服器送的 modData 客戶端沒收到，之後內容沒變就不再送**：客戶端在 chunk 下載途中收到的 `ObjectModData`
-  找不到物件就丟（`ObjectModDataPacket.java:53-56`），原版下一個 10 遊戲分鐘會整份重送補上，修正後要等內容真的有變。
-  踩爛那條另有 `MDFX_FarmingDestroyResync` 的限頻補送；其他狀態沒有。
+  找不到物件就丟（`ObjectModDataPacket.java:53-56`）。仍會走 `checkPlant2` 到 `saveData` 的作物，原版下一個 10 遊戲分鐘
+  會整份重送補上，修正後要等內容真的有變；踩爛、已收成的原版本來就不走定期 `saveData`（`SFarmingSystem.lua:264-265`），
+  兩版一樣不會補（踩爛的另有 `MDFX_FarmingDestroyResync` 在客戶端又打到它時限頻補送）。
 - **被踩爛的地圖枯作物仍會送 SPRITE**。`typeOfSeed = "none"` 的作物被踩時 `destroyThis` 取不到
   sprite，原版 `setSpriteName(nil)` 把 luaObject 的 `spriteName` 變成 nil；之後每次載入，引擎照
   iso 的 `spriteName` 欄位另建一個 sprite（`IsoObject.java:1301-1303`），`stateToIsoObject` 又
@@ -640,7 +641,7 @@ modData 在下一次輪詢（約 0.5 秒）就與伺服器逐鍵相同。修正�
 
 2026-11-27 情境加「同格重種」（伺服器暫時固定 `ZombRand`，照 `Commands.plow` 鏟掉重翻兩次，
 讓新作物的 modData 逐鍵等於舊作物送過的；伺服器端當場驗這個前提與新作物播種送 1 包；9950X3D）：
-0.23.0 在這一步 FAIL（新作物播種送 0 包，客戶端停在翻土）；這次的修正 PASS（35 個 CHECK，客戶端約 0.5 秒後一致），
+0.23.0 在這一步 FAIL（新作物播種送 0 包；第一版情境 `fxrp-old-1127` 沒有伺服器端斷言，走到客戶端比對，讀到客戶端停在翻土 `md.state plow ~= seeded`）；這次的修正 PASS（35 個 CHECK，客戶端約 0.5 秒後一致），
 兩版三段計數逐項相同；原版對照組也 PASS（31 個 CHECK，載入每次 3 包、每次 `saveData` 都送）。
 
 ### 可退場條件

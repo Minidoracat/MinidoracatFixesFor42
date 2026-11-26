@@ -360,14 +360,18 @@ FIXES = [
         "depends": [r"protected zombie\.globalObjects\.GlobalObject makeObject\(int, int, int\);\s+Code:\s+\d+: new\s+#\d+\s+// class zombie/globalObjects/SGlobalObject"],
     },
     {
-        # GlobalObjectSystem.java:36-45：同座標沒物件就直接 makeObject 並登記，中間沒有取回收物件的分支
+        # GlobalObjectSystem.java:36-45：從方法開頭錨定——先查同座標、有就拋錯，否則直接 makeObject、登記並回傳這一個；
+        # makeObject 之前不能有任何 areturn（例如物件池命中就提前回傳），整個方法只有結尾一個 areturn
         "name": "MDFX_FarmingSyncDedupe（Java 依賴：newObject 沒物件就直接 makeObject，不取回收物件）",
         "class": "zombie.globalObjects.GlobalObjectSystem",
         "depends": [
-            r"public final zombie\.globalObjects\.GlobalObject newObject\(int, int, int\);(?:(?!\n  \S)[\s\S])*?"
-            r"\d+: athrow\s+\d+: aload_0\s+\d+: iload_1\s+\d+: iload_2\s+\d+: iload_3\s+"
-            r"\d+: invokevirtual\s+#\d+\s+// Method makeObject:\(III\)Lzombie/globalObjects/GlobalObject;\s+"
-            r"\d+: astore\s+4\s+\d+: aload_0\s+\d+: getfield\s+#\d+\s+// Field objects:",
+            r"public final zombie\.globalObjects\.GlobalObject newObject\(int, int, int\);\s+Code:\s+"
+            r"0: aload_0\s+1: iload_1\s+2: iload_2\s+3: iload_3\s+4: invokevirtual\s+#\d+\s+// Method getObjectAt:\(III\)[^\n]*\s+"
+            r"7: ifnull\s+\d+\s+10: new\s+#\d+\s+// class java/lang/IllegalStateException"
+            r"(?:(?!areturn|\n  \S)[\s\S])*?\d+: athrow\s+"
+            r"\d+: aload_0\s+\d+: iload_1\s+\d+: iload_2\s+\d+: iload_3\s+"
+            r"\d+: invokevirtual\s+#\d+\s+// Method makeObject:\(III\)Lzombie/globalObjects/GlobalObject;\s+\d+: astore\s+4"
+            r"(?:(?!areturn|\n  \S)[\s\S])*?\d+: aload\s+4\s+\d+: areturn\n(?!\s+\d+:)",
         ],
     },
     # ── 農作每 10 遊戲分鐘的全表檢查：每輪只取一次物件 ─────────────────────────
