@@ -120,7 +120,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [*] [b]Cause[/b]: vanilla keeps every crop ever loaded in the save, even dead and trampled ones. Past the engine's 10 MB limit the file comes out empty and the farming clock resets. Crops re-register with old-clock growth times (vanilla's recovery breaks after rain or watering); trampled/harvested ones are never recognized again.
 [*] [b]Fix[/b], three parts:
 [list]
-[*] [b]Move out[/b]: in empty areas, dead, rotten, trampled and harvested crops that the map can rebuild exactly and were unchanged over two checks leave the save (100 at a time), restored when someone returns; ones vanilla lost are re-registered too. Companion crops (onion, garlic etc.) stay.
+[*] [b]Move out[/b]: in empty areas, dead, rotten, trampled and harvested crops that the map can rebuild exactly and were unchanged over two checks leave the save (up to 100 per 10 in-game minutes, spread over the next few seconds; slower while everyone sleeps), restored when someone returns; ones vanilla lost are re-registered too. Companion crops (onion, garlic etc.) stay.
 [*] [b]Clock backup[/b]: saved every 10 in-game minutes, restored if the save can't be read.
 [*] [b]Unstick[/b]: stuck crops resume at the next 10-minute check; growth is only moved earlier.
 [/list]
@@ -152,7 +152,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3790443858
 [list]
 [*] [b]Symptom[/b]: a server (or SP save) with many crops freezes briefly every 10 in-game minutes, with no error. On a live server with about 11,000 crops (three quarters trampled) each stall took about 0.1–0.2 s.
 [*] [b]Cause[/b]: every 10 in-game minutes vanilla checks every crop on record, trampled and unloaded ones included, and fetches each crop's data from the engine twice. On MP servers, this mod's crop-sync fix also compared crop data more slowly than needed.
-[*] [b]Fix[/b]: each crop's data is fetched once, and crop changes are compared field by field. On a test server with about 12,000 crops the median stall dropped from about 122 ms to about 76 ms (about 40% less), the longest from about 200 ms to about 112 ms. Shorter, not gone.
+[*] [b]Fix[/b]: each crop's data is fetched once, and crop changes are compared field by field. On a test server with about 12,000 crops the median stall dropped from about 122 ms to about 76 ms (about 40% less), the longest from about 200 ms to about 112 ms. This mod's own crop-save cleanup is now spread over the next few seconds instead of one moment, cutting the median from about 72 ms to about 60 ms and the longest from about 97 ms to about 66 ms. Shorter, not gone.
 [*] [b]Difference from vanilla[/b]: none; crops are checked in the same order, count and timing, and players get the same data.
 [*] [b]Log[/b]: each startup, the server's server-console.txt (console.txt in SP) shows [MinidoracatFixes] MDFX_FarmingCheckPlantOnce installed: the ten-minute crop check fetches each crop once per pass.
 [*] [b]Scope[/b]: server and SP; players need nothing.

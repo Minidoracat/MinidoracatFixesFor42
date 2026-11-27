@@ -1,19 +1,18 @@
-[h1]Minidoracat Fixes for B42 42.22.2-0.23.1[/h1]
-[i]2026-11-27[/i]
+[h1]Minidoracat Fixes for B42 42.22.2-0.24.0[/h1]
+[i]2026-11-28[/i]
 
 [b]English summary[/b]
 [list]
-[*] Multiplayer: after digging up and replanting the same tile, players could keep seeing freshly plowed soil instead of the new crop. Replanted crops now always sync.
-[*] Rare: only when the new crop matched the old one exactly (same in-game hour, same seed, same random values). Caused by this mod, not vanilla.
-[*] Takes effect once the server has the update; players don't need to do anything. Single player is not affected.
+[*] With many crops, the short stall every 10 in-game minutes is shorter again, most of all the longest ones (test server, about 12,000 crops: about 72 → 60 ms, longest about 97 → 66 ms).
+[*] This mod's crop-save cleanup is now spread over the next few seconds instead of one moment. While everyone sleeps it moves dead crops out more slowly; players see the same crops as before.
+[*] Takes effect once the server has the update; players don't need to do anything. Single player benefits too.
 [/list]
 
-[h3]🔧 修正[/h3]
+[h3]⚡ 效能[/h3]
 [list]
-[*] [b]多人遊戲：同一格鏟掉重種後，玩家畫面上的新作物可能停在剛翻好的土[/b]：現在重種的作物一定會同步給玩家。伺服器更新 MOD 後就生效，玩家不用另外做什麼；單人遊戲不受影響。
+[*] [b]作物很多的伺服器或存檔，每 10 遊戲分鐘還是會卡一下[/b]：現在每次卡住的時間再縮短一些，最久的那幾次縮短最多。伺服器更新 MOD 後就生效，玩家不用另外做什麼；單人遊戲也適用。
 [list]
-[*] 只在少數情況發生：新作物剛好和舊作物同一個遊戲小時、同一種子播下，隨機數值也一樣。
-[*] 這是本 MOD 從「走過農田時伺服器重送沒變的作物資料」那項修復起就有的問題，原版沒有。
-[*] 2026-11-27 在 42.22.2 多人伺服器實機驗過：前一版重種後新作物沒有送出，這一版玩家約 0.5 秒後就看到新作物。
+[*] 縮短的是本 MOD 自己整理農作存檔的那部分：它不再擠在同一瞬間做完，改成分散在之後幾秒內一點一點做。測試伺服器（1.2 萬株作物）上，每次卡住約 72 → 60 毫秒，最久的一次約 97 → 66 毫秒；剩下的幾乎都是原版自己的作物檢查。
+[*] 被踩爛、枯死的作物照樣移出存檔，平常的速度和前一版相同；全員睡覺快轉時移出得比較慢，醒來後照常。玩家看到的作物和前一版相同。
 [/list]
 [/list]
