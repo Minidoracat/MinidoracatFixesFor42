@@ -1,5 +1,7 @@
 -- MDFX_FarmingGosPrune 離線自我檢查
 -- 用法（repo 根目錄）： lua scripts/test_farming_gos_prune.lua
+--                       lua scripts/test_farming_gos_prune.lua --mutants   （每個突變都要被抓到）
+--                       lua scripts/test_farming_gos_prune.lua --fix <檔>  （改測別份原始碼；--mutants 內部用）
 --
 -- 以最小假 vanilla 農作物系統驗證：
 --   * 假 Java GOS（newObject 同格重複就拋 "already an object at"、removeObject、新增／移除封包）
@@ -20,10 +22,134 @@
 --   5. 重建 hook：原樣重建＋一包新增；各種 no-op；建到一半失敗會拿掉半成品、不外洩錯誤
 --   6. 移出 → 重建來回，26 個 KEYS 完全相同
 --   7. 掃描拋錯不外洩；診斷每 session 只印一次
+--   8. 分攤到每幀：開輪那幀不走、每 tick 300 株、閒置不碰引擎；重走只評估一次；放棄一輪清空條目；
+--      輪中再觸發只補一輪；數量縮到游標以下；尾端新增；-nosave 與出錯中途放棄；
+--      原版 fromModData 只比 KEYS、別的 MOD 換掉才比多寫的鍵；延後比對的語意
 
 local S = dofile("scripts/_stub.lua")
 local T = S.checker()
-local FIX = S.SERVER_FIXES .. "MDFX_FarmingGosPrune.lua"
+local FIX = (arg and arg[1] == "--fix" and arg[2]) or (S.SERVER_FIXES .. "MDFX_FarmingGosPrune.lua")
+
+-- ── --mutants：每個突變寫成暫存檔，用子行程跑整支測試，要轉紅（非 0 結束）──
+local MUTANTS = {
+    { "拿掉 isClient 閘門", "if isClient() then return end\n", "" },
+    { "rebuildable 不看 spriteName", "if name == nil or modData.spriteName ~= name then return nil end", "if name == nil then return nil end" },
+    { "rebuildable 不看狀態", "    if not EVICTABLE[modData.state] then return nil end\n", "" },
+    { "移出不限註冊過的 sprite", "if not modData or not restorable[name] then return nil end", "if not modData then return nil end" },
+    { "hook 不看這格已有 luaObject", "        if existing then\n", "        if false then\n" },
+    { "載入不清驗證", "            verified[existing] = nil\n", "" },
+    { "載入不清這輪的 keep", "            if pass then pass.keep[existing] = nil end\n", "" },
+    { "記時間時不比對", "            if not same(luaObject, entry.snap, entry.full) then return end\n", "" },
+    { "輪中觸發加額度", "Events.EveryTenMinutes.Add(function() due = true end)",
+        "Events.EveryTenMinutes.Add(function() due = true; if pass then pass.evicted = pass.evicted - CAP end end)" },
+    { "hook 失敗不拿掉半成品", "            pcall(function() system.system:removeObject(globalObject) end)\n", "" },
+    { "priority 改回 5", "local PRIORITY = 4242", "local PRIORITY = 5" },
+    { "註冊不逐種 pcall", "local ok, err = pcall(MapObjects.OnLoadWithSprite, names, onLoad, PRIORITY)",
+        "local ok, err = true, MapObjects.OnLoadWithSprite(names, onLoad, PRIORITY)" },
+    { "拿掉 seen 檢查（重走再評估）", "    if pass.seen[luaObject] then return end\n", "" },
+    { "seen 寫在過濾之後", "    pass.seen[luaObject] = true\n    if not EVICTABLE[luaObject.state] or companion(luaObject) then return end\n",
+        "    if not EVICTABLE[luaObject.state] or companion(luaObject) then return end\n    pass.seen[luaObject] = true\n" },
+    { "移出時改用這輪的 full", "        if same(luaObject, entry.snap, entry.full) then",
+        "        if same(luaObject, entry.snap, pass.full) then" },
+    { "驗證不回傳 full", "if ok and same(luaObject, t, full) then return t, full end", "if ok and same(luaObject, t, full) then return t end" },
+    { "舊式 modData 不跑全鍵", "    full = full or not modData.objectName\n", "" },
+    { "快照不看輪中途換掉 fromModData", "    full = full or not judged\n", "" },
+    { "舊式 modData 只認 nil", "full = full or not modData.objectName", "full = full or modData.objectName == nil" },
+    { "放棄時不清 verified", "pass, due, verified = nil, false, {}", "pass, due = nil, false" },
+    { "開輪那幀也走", "        return -- EveryTenMinutes", "        -- EveryTenMinutes" },
+    { "每 tick 沒有上限", "local BATCH = 300", "local BATCH = math.huge" },
+    { "每 tick 從尾端重來", "local i = math.min(pass.cursor, system:getLuaObjectCount())", "local i = system:getLuaObjectCount()" },
+    { "游標不夾到數量", "local i = math.min(pass.cursor, system:getLuaObjectCount())", "local i = pass.cursor" },
+    { "不記游標", "    pass.cursor = i\n", "" },
+    { "拿掉閒置閘門", "    if not pass and not due then return end\n", "" },
+    { "上限變成每 tick", "    local cell, now = getCell(), getTimestampMs()\n", "    pass.evicted = 0\n    local cell, now = getCell(), getTimestampMs()\n" },
+    { "拿掉上限", " and pass.evicted < CAP", "" },
+    { "拿掉 since 檢查", "entry.since and now - entry.since >= SETTLE_MS and ", "" },
+    { "拿掉 30 秒下限", "now - entry.since >= SETTLE_MS and ", "" },
+    { "移出前不比對", "        if same(luaObject, entry.snap, entry.full) then\n", "        if true then\n" },
+    { "驗證時不比對", "if ok and same(luaObject, t, full) then return t, full end", "if ok then return t, full end" },
+    { "拿掉狀態檢查", "    if not EVICTABLE[luaObject.state] or companion(luaObject) then return end\n",
+        "    if companion(luaObject) then return end\n" },
+    { "拿掉伴生檢查", " or companion(luaObject) then return end", " then return end" },
+    { "拿掉 isNoSave", "if not system or getCore():isNoSave() then return abandon() end", "if not system then return abandon() end" },
+    { "拿掉 instance 檢查", "if not system or getCore():isNoSave() then return abandon() end", "if getCore():isNoSave() then return abandon() end" },
+    { "放棄時不清 due", "pass, due, verified = nil, false, {}", "pass, verified = nil, {}" },
+    { "只在開輪時看 isNoSave", "if not system or getCore():isNoSave() then return abandon() end",
+        "if not system or (not pass and getCore():isNoSave()) then return abandon() end" },
+    { "載入分支沿用舊 since", "if snap then pass.keep[luaObject] = { snap = snap, full = full } end",
+        "if snap then pass.keep[luaObject] = { snap = snap, full = full, since = verified[luaObject] and verified[luaObject].since } end" },
+    { "EveryTenMinutes 時重開一輪", "Events.EveryTenMinutes.Add(function() due = true end)",
+        "Events.EveryTenMinutes.Add(function() due = true; pass = nil end)" },
+    { "收尾時丟掉輪中的觸發", "    verified = pass.keep\n", "    verified = pass.keep\n    due = false\n" },
+    { "出錯不放棄", "        abandon()\n        warnOnce(\"sweepError\"", "        warnOnce(\"sweepError\"" },
+    { "full 固定 true", "full = foreign(), fn", "full = true, fn" },
+    { "full 固定 false", "full = foreign(), fn", "full = false, fn" },
+    { "不記開輪時的 fromModData", "fn = SPlantGlobalObject.fromModData }", "fn = nil }" },
+    { "不看 /mods/", " or string.find(path, \"/mods/\", 1, true) ~= nil", "" },
+    { "不比檔名尾", "string.sub(path, -#VANILLA_FILE) ~= VANILLA_FILE or ", "" },
+    { "不轉斜線", "string.lower(string.gsub(file, \"\\\\\", \"/\"))", "string.lower(file)" },
+    { "不轉小寫", "string.lower(string.gsub(file, \"\\\\\", \"/\"))", "(string.gsub(file, \"\\\\\", \"/\"))" },
+    { "查來源不包 pcall", "local ok, file = pcall(getFilenameOfClosure, SPlantGlobalObject.fromModData)",
+        "local ok, file = true, getFilenameOfClosure(SPlantGlobalObject.fromModData)" },
+    { "查不到來源當原版", "if not ok or type(file) ~= \"string\" then return true end", "if not ok or type(file) ~= \"string\" then return false end" },
+}
+
+if arg and arg[1] == "--mutants" then
+    local fh = assert(io.open(FIX, "rb"))
+    local src = fh:read("a")
+    fh:close()
+    -- 直譯器路徑可能有空白；暫存檔放 scripts/（乾淨 checkout 沒有 temp/）
+    local lua, tmp = arg[-1] or "lua", "scripts/_mutant_farming_gos_prune.lua"
+    local function run(source)
+        local out = assert(io.open(tmp, "wb"))
+        out:write(source)
+        out:close()
+        -- 編譯不過的突變不算抓到：子行程的 pcall 會把它變成 FAIL
+        if not loadfile(tmp) then
+            os.remove(tmp)
+            return nil, "COMPILE"
+        end
+        local p = io.popen(string.format('"%s" scripts/test_farming_gos_prune.lua --fix %s 2>&1', lua, tmp))
+        local log = p:read("a")
+        local ok = p:close()
+        os.remove(tmp)
+        return ok, log
+    end
+    -- 先用同一條指令跑原始碼：沒跑起來或沒全綠，就不能把突變的失敗算成抓到
+    local baseOk, baseLog = run(src)
+    if not baseOk or not baseLog:find(" checks, 0 failed", 1, true) then
+        print(baseLog)
+        print("baseline did not pass; mutants not run")
+        os.exit(1)
+    end
+    local survived, broken = 0, 0
+    for _, m in ipairs(MUTANTS) do
+        local s, e = src:find(m[2], 1, true)
+        if not s or src:find(m[2], e + 1, true) then
+            broken = broken + 1
+            print("  BROKEN    " .. m[1] .. "（樣式" .. (s and "不唯一" or "找不到") .. "）")
+        else
+            local ok, log = run(src:sub(1, s - 1) .. m[3] .. src:sub(e + 1))
+            local fails = select(2, log:gsub("  FAIL  ", ""))
+            if log == "COMPILE" then
+                broken = broken + 1
+                print("  BROKEN    " .. m[1] .. "（編譯不過）")
+            elseif ok then
+                survived = survived + 1
+                print("  SURVIVED  " .. m[1])
+            elseif fails == 0 and not log:find("  PASS  ", 1, true) then
+                broken = broken + 1
+                print("  BROKEN    " .. m[1] .. "（測試沒跑起來）")
+            else
+                print(string.format("  KILLED    %s（%s）", m[1], fails > 0 and (fails .. " 項轉紅") or "拋錯中止"))
+            end
+        end
+    end
+    print("")
+    print(string.format("%d mutants, %d survived, %d broken", #MUTANTS, survived, broken))
+    os.exit((survived == 0 and broken == 0) and 0 or 1)
+end
+
 local PRIORITY = 4242
 local SETTLE = 30000
 
@@ -289,11 +415,26 @@ local function hasPacket(p)
     return false
 end
 
--- 觸發一次 EveryTenMinutes；錯誤外洩就回 false
-local function tick(advance)
-    W.now = W.now + (advance or 0)
+-- 只觸發 EveryTenMinutes／只觸發 n 次 OnTick（W.now 不動）；錯誤外洩就回 false
+local function fireTen()
     local ok, err = pcall(Events.EveryTenMinutes.fire)
     return ok, tostring(err)
+end
+
+local function fireTicks(n)
+    for _ = 1, n do
+        local ok, err = pcall(Events.OnTick.fire)
+        if not ok then return false, tostring(err) end
+    end
+    return true, "true"
+end
+
+-- 觸發一次 EveryTenMinutes，再觸發 8 次 OnTick（開輪 1 次、700 株 3 批、餘裕），讓這輪走完
+local function tick(advance)
+    W.now = W.now + (advance or 0)
+    local ok, err = fireTen()
+    if not ok then return ok, err end
+    return fireTicks(8)
 end
 
 local function unloadAll() W.loaded = {} end
@@ -326,7 +467,15 @@ local function resetEnv(opts)
         package.loaded[m] = true
     end
     Events.EveryTenMinutes = newEvent()
-    W = { loaded = {}, squares = {}, packets = {}, calls = {}, hooks = {}, now = 1000000, noSave = false }
+    Events.OnTick = newEvent()
+    W = { loaded = {}, squares = {}, packets = {}, calls = {}, hooks = {}, now = 1000000, noSave = false,
+        lookups = 0, noSaveCalls = 0, cells = 0,
+        -- 原版 fromModData 的來源（getFilenameOfClosure）；設成 error 物件就拋錯
+        closureFile = "C:/Steam/steamapps/common/ProjectZomboid/media/lua/server/Farming/SPlantGlobalObject.lua" }
+    getFilenameOfClosure = function()
+        if type(W.closureFile) == "table" then error("getFilenameOfClosure boom") end
+        return W.closureFile
+    end
     SPlantGlobalObject = makePlant()
     SFarmingSystem = makeSystem()
     SFarmingSystem.instance = setmetatable({ system = newJavaSystem() }, SFarmingSystem)
@@ -345,12 +494,20 @@ local function resetEnv(opts)
     local cell = {}
     function cell:getGridSquare(x, y, z)
         local k = key(x, y, z)
+        W.lookups = W.lookups + 1
+        if W.boomAt == k then error("getGridSquare boom") end
         if W.loaded[k] then return W.squares[k] end
         return nil
     end
-    getCell = function() return cell end
+    getCell = function()
+        W.cells = W.cells + 1
+        return cell
+    end
     local core = {}
-    function core:isNoSave() return W.noSave end
+    function core:isNoSave()
+        W.noSaveCalls = W.noSaveCalls + 1
+        return W.noSave
+    end
     getCore = function() return core end
     getTimestampMs = function() return W.now end
 end
@@ -390,7 +547,8 @@ end
 T.check("1 每種作物的 trampled／dead 清單都註冊、沒有清單的作物跳過", allRegistered and #W.calls == 4, "calls=" .. #W.calls)
 T.check("1 priority 一律 4242", samePriority)
 T.check("1 全部是同一個 hook 函式", sameFn and type(firstFn) == "function")
-T.check("1 裝了一個 EveryTenMinutes 與一個 OnGameBoot", #Events.EveryTenMinutes.handlers == 1 and #S.bootHandlers == 1)
+T.check("1 裝了一個 EveryTenMinutes、一個 OnTick 與一個 OnGameBoot", #Events.EveryTenMinutes.handlers == 1
+    and #Events.OnTick.handlers == 1 and #S.bootHandlers == 1)
 T.check("1 正常安裝不印診斷", not S.printed("[MinidoracatFixes]"))
 
 -- 後載 MOD 在開機前加進新作物
@@ -448,7 +606,7 @@ T.section("[1d] isClient()")
 resetEnv({ client = true })
 ok, err = load()
 T.check("1d 不註冊、不掛事件、不印", ok and #W.calls == 0 and #Events.EveryTenMinutes.handlers == 0
-    and #S.bootHandlers == 0 and not S.printed("[MinidoracatFixes]"), err)
+    and #Events.OnTick.handlers == 0 and #S.bootHandlers == 0 and not S.printed("[MinidoracatFixes]"), err)
 
 -- ── 2. 移出生命週期 ───────────────────────────────────────────
 for _, case in ipairs({
@@ -529,6 +687,26 @@ W.loaded[ns.k] = true
 cycle()
 T.check("3b 對照：關掉 -nosave 後同一株照常移出", not inGos(ns))
 
+T.section("[3b2] -nosave 放棄後不每 tick 查")
+resetEnv()
+load()
+W.noSave = true
+fireTen()
+W.noSaveCalls = 0
+fireTicks(5)
+T.check("3b2 一次 EveryTenMinutes 後連續 5 tick：只查一次 isNoSave", W.noSaveCalls == 1, "calls=" .. W.noSaveCalls)
+W.noSave = false
+
+T.section("[3b3] SFarmingSystem.instance 為 nil 時觸發一輪")
+resetEnv()
+load()
+local liveInst = SFarmingSystem.instance
+SFarmingSystem.instance = nil
+fireTen()
+local tickOk, tickErr = pcall(fireTicks, 3)
+SFarmingSystem.instance = liveInst
+T.check("3b3 不拋錯、不印 sweep failed", tickOk and not S.printed("sweep failed"), tickErr)
+
 T.section("[3c] 卸載期間 luaObject 變了")
 resetEnv()
 load()
@@ -548,7 +726,7 @@ tick(SETTLE)
 tick(SETTLE)
 T.check("3c 第一次卸載掃描前就變了 → 不移出", inGos(changedEarly))
 T.check("3c 記下時間之後才變 → 不移出", inGos(changedLate))
-T.check("3c 變了又變回去（沒再驗證過）→ 仍不移出", inGos(changedBack))
+T.check("3c 滿 30 秒那次比對時不同就丟掉條目，之後變回去也不移出", inGos(changedBack))
 T.check("3c 對照：沒變的移出", not inGos(ctl))
 
 T.section("[3d] 載入時不一致、卸載後才變一致")
@@ -738,5 +916,416 @@ local ok1, err1 = tick(1000)
 local ok2, err2 = tick(1000)
 T.check("7 getCell 拋錯不外洩", ok1 and ok2, err1 .. " / " .. err2)
 T.check("7 掃描失敗診斷只印一次、帶原因", S.printCount("sweep failed") == 1 and S.printed("getCell boom"))
+
+-- ── 8. 分攤到每幀 ────────────────────────────────────────────
+-- 沒有地圖物件的 seeded 作物：撐出索引、不會被評估
+local function filler(n, y)
+    local system = SFarmingSystem.instance
+    for i = 1, n do
+        local lo = system:newLuaObject(system.system:newObject(10000 + i, y, 0))
+        lo.state, lo.nbOfGrow = "seeded", 2
+    end
+end
+
+-- 載入時驗過 → 全部卸載 → 記時間 → 時間往後 30 秒（下一輪就能移出）
+local function settle()
+    tick(1000)
+    unloadAll()
+    tick(1000)
+    W.now = W.now + SETTLE
+end
+
+local function count() return SFarmingSystem.instance:getLuaObjectCount() end
+
+T.section("[8a] 重走一株：第一次載入中驗不過、重走時已卸載")
+resetEnv()
+load()
+local victim = crop(900, 2, { state = "seeded", nbOfGrow = 2, health = 60 }) -- 索引 1
+local rewalk = crop(1, 2, {})                                               -- 索引 2：第一個走訪 tick 的最後一株
+filler(299, 3)
+settle()
+W.loaded[rewalk.k] = true
+rewalk.iso.md.health = 77
+fireTen()
+fireTicks(2)
+SFarmingSystem.instance:removeLuaObject(victim.lo)
+W.loaded[rewalk.k] = nil
+fireTicks(6)
+T.check("8a 別人移掉前方物件讓它被重走：不拿上一輪的條目移出", inGos(rewalk))
+
+T.section("[8b] 重走一株：第一次載入中驗過、重走時已卸載")
+resetEnv()
+load()
+victim = crop(900, 2, { state = "seeded", nbOfGrow = 2, health = 60 })
+rewalk = crop(1, 2, {})
+filler(299, 3)
+settle()
+W.loaded[rewalk.k] = true
+fireTen()
+fireTicks(2)
+SFarmingSystem.instance:removeLuaObject(victim.lo)
+W.loaded[rewalk.k] = nil
+fireTicks(6)
+T.check("8b 重走時不繞過 30 秒", inGos(rewalk))
+tick()
+T.check("8b 下一輪只記時間", inGos(rewalk))
+W.now = W.now + SETTLE
+tick()
+T.check("8b 滿 30 秒才移出", not inGos(rewalk))
+
+T.section("[8c] 一輪出錯放棄：不沿用更早一輪的條目")
+resetEnv()
+load()
+local boom = crop(1, 3, {})    -- 索引 1：最後走到
+local changed = crop(2, 3, {}) -- 索引 2
+settle()
+W.loaded[changed.k] = true
+changed.iso.md.health = 77
+W.boomAt = boom.k
+tick()
+T.check("8c 前提：這輪出錯、印一次", S.printCount("sweep failed") == 1 and S.printed("getGridSquare boom"))
+W.boomAt = nil
+unloadAll()
+tick()
+T.check("8c 出錯那輪驗不過的作物，下一輪不拿更早的條目移出", inGos(changed))
+
+T.section("[8d] 開輪那幀不走、每 tick 300 株、閒置不碰引擎")
+resetEnv()
+load()
+for i = 1, 700 do crop(i, 4, {}) end
+fireTen()
+local seen = { W.lookups }
+for _ = 1, 4 do
+    fireTicks(1)
+    seen[#seen + 1] = W.lookups
+end
+local noSaveBefore = W.noSaveCalls
+fireTicks(5)
+T.check("8d EveryTenMinutes 那幀不走", seen[1] == 0, table.concat(seen, ","))
+T.check("8d 開輪的 OnTick 不走", seen[2] == 0, table.concat(seen, ","))
+T.check("8d 之後每 tick 300 株、接著上一 tick 走", seen[3] == 300 and seen[4] == 600 and seen[5] == 700, table.concat(seen, ","))
+T.check("8d 走完之後閒置：不再查格子、不查 -nosave", W.lookups == 700 and W.noSaveCalls == noSaveBefore,
+    W.lookups .. " / " .. (W.noSaveCalls - noSaveBefore))
+
+T.section("[8e] 每輪上限 100 跨 tick 累計")
+resetEnv()
+load()
+for i = 1, 700 do crop(i, 5, {}) end
+settle()
+W.packets = {}
+tick()
+T.check("8e 一輪 3 個 tick 合計恰好移出 100 株", packetCount("remove") == 100, "removed=" .. packetCount("remove"))
+for _ = 1, 6 do tick() end
+T.check("8e 再 6 輪全部移完", count() == 0, "left=" .. count())
+
+T.section("[8f] 輪中再觸發 EveryTenMinutes")
+resetEnv()
+load()
+for i = 1, 700 do crop(i, 6, {}) end
+fireTen()
+fireTicks(2)
+fireTen()
+fireTen()
+fireTicks(2)
+local midway = W.lookups
+fireTicks(8)
+local after = W.lookups
+fireTicks(5)
+T.check("8f 不重開進行中的那輪", midway == 700, "lookups=" .. midway)
+T.check("8f 走完後恰好再補一輪", after == 1400 and W.lookups == 1400, after .. " / " .. W.lookups)
+
+T.section("[8g] 數量縮到游標以下")
+resetEnv()
+load()
+local shrink = {}
+for i = 1, 700 do shrink[i] = crop(i, 7, {}) end
+fireTen()
+fireTicks(2)
+for i = 1, 350 do SFarmingSystem.instance:removeLuaObject(shrink[i].lo) end
+fireTicks(5)
+T.check("8g 不拋錯，剩下沒走過的 50 株照走", not S.printed("sweep failed") and W.lookups == 350, "lookups=" .. W.lookups)
+settle()
+for _ = 1, 4 do tick() end
+T.check("8g 之後照常移完", count() == 0, "left=" .. count())
+
+T.section("[8h] 原版 fromModData 只比 KEYS；別的 MOD 換掉才比多寫的鍵")
+local function extraFrom()
+    local realFrom = SPlantGlobalObject.fromModData
+    SPlantGlobalObject.fromModData = function(self, md)
+        realFrom(self, md)
+        self.extra = 1
+    end
+end
+local MOD_FILE = "D:/Steam/steamapps/workshop/content/108600/1/mods/Farm/42/media/lua/server/Farming/SPlantGlobalObject.lua"
+resetEnv()
+load()
+W.closureFile = "C:\\STEAM\\ProjectZomboid\\media\\lua\\server\\Farming\\SPlantGlobalObject.lua"
+local plainA = crop(1, 8, {})
+local realPairs, pairsCalls = pairs, 0
+pairs = function(t)
+    pairsCalls = pairsCalls + 1
+    return realPairs(t)
+end
+cycle()
+pairs = realPairs
+T.check("8h 原版路徑（反斜線、大寫）：照常移出、不跑 pairs", not inGos(plainA) and pairsCalls == 0, "pairs=" .. pairsCalls)
+
+resetEnv()
+load()
+W.closureFile = MOD_FILE
+local missing, matching = crop(1, 8, {}), crop(2, 8, {})
+extraFrom()
+matching.lo.extra = 1
+cycle()
+T.check("8h /mods/ 底下同名檔：多寫的鍵不同 → 不移出", inGos(missing))
+T.check("8h /mods/ 底下同名檔：多寫的鍵相同 → 移出", not inGos(matching))
+
+for _, case in ipairs({
+    { "別的檔名", "C:/Steam/ProjectZomboid/media/lua/server/Farming/MyFarming.lua" },
+    { "查來源拋錯", {} },
+}) do
+    resetEnv()
+    load()
+    W.closureFile = case[2]
+    local other = crop(1, 8, {})
+    extraFrom()
+    cycle()
+    T.check("8h " .. case[1] .. "：當成外來、多寫的鍵不同 → 不移出", inGos(other) and not S.printed("sweep failed"))
+end
+
+resetEnv()
+load()
+local swapped = crop(1, 8, {})
+fireTen()
+fireTicks(1)
+W.closureFile = MOD_FILE
+extraFrom()
+fireTicks(7)
+unloadAll()
+tick(1000)
+tick(SETTLE)
+T.check("8h 輪中途才換掉 fromModData：之後那輪重判、多寫的鍵不同 → 不移出", inGos(swapped))
+
+do
+    resetEnv()
+    load()
+    local late = crop(1, 8, {})
+    fireTen()
+    fireTicks(1)
+    W.closureFile = MOD_FILE
+    extraFrom()
+    late.lo.extra = 1
+    fireTicks(7)
+    unloadAll()
+    tick(1000)
+    late.lo.extra = 2
+    tick(SETTLE)
+    T.check("8h 輪中途才換掉、記時間之後多寫的鍵才變：移出時仍比多寫的鍵 → 不移出", inGos(late))
+end
+
+do
+    resetEnv()
+    load()
+    W.closureFile = "C:/STEAM/ProjectZomboid/media/lua/server/Farming/SPlantGlobalObject.lua"
+    local back = crop(1, 8, {})
+    back.lo.extra = 2
+    local vanillaFrom = SPlantGlobalObject.fromModData
+    fireTen()
+    fireTicks(1)
+    extraFrom()
+    fireTicks(7)
+    SPlantGlobalObject.fromModData = vanillaFrom
+    unloadAll()
+    tick(1000)
+    tick(SETTLE)
+    T.check("8h 開輪後才換掉、下一輪前又換回：快照時仍比多寫的鍵 → 不移出", inGos(back))
+end
+
+T.section("[8i] 輪中途 -nosave")
+resetEnv()
+load()
+for i = 1, 50 do crop(i, 9, {}) end
+filler(300, 10)
+settle()
+W.packets = {}
+fireTen()
+fireTicks(2)
+W.noSave = true
+fireTicks(6)
+T.check("8i 走到一半開 -nosave：不移出", packetCount("remove") == 0, "removed=" .. packetCount("remove"))
+W.noSave = false
+tick()
+T.check("8i 關掉之後下一輪也不拿放棄前的條目移出", packetCount("remove") == 0, "removed=" .. packetCount("remove"))
+
+T.section("[8j] 出錯後不每 tick 重試")
+resetEnv()
+load()
+local retry = crop(1, 11, {})
+local realGetCell = getCell
+getCell = function()
+    W.cells = W.cells + 1
+    error("getCell boom 8j")
+end
+fireTen()
+fireTicks(7)
+T.check("8j 出錯只發生一次", W.cells == 1 and S.printCount("sweep failed") == 1, "getCell=" .. W.cells)
+getCell = realGetCell
+cycle()
+T.check("8j 恢復後照常移出", not inGos(retry))
+
+T.section("[8k] 輪中途在尾端新增")
+resetEnv()
+load()
+for i = 1, 350 do crop(i, 12, {}) end
+settle()
+fireTen()
+fireTicks(2)
+local late = crop(5000, 12, {}, { unloaded = true })
+fireTicks(6)
+for _ = 1, 5 do tick() end
+T.check("8k 原有的照常移完，只剩新增的那株", count() == 1 and inGos(late), "left=" .. count())
+
+T.section("[8l] 延後比對")
+resetEnv()
+load()
+local flip = crop(1, 13, {})
+tick(1000)
+unloadAll()
+tick(1000)
+flip.lo.health = 9
+tick(1000)
+flip.lo.health = 0
+W.now = W.now + SETTLE
+tick()
+T.check("8l 未滿 30 秒時變了又變回：移出當下相同就移出", not inGos(flip))
+
+resetEnv()
+load()
+local queued = {}
+for i = 1, 150 do queued[i] = crop(i, 14, {}) end
+settle()
+tick()
+T.check("8l 前提：上限擋下 50 株、索引 1 那株還在", count() == 50 and inGos(queued[1]), "left=" .. count())
+queued[1].lo.health = 5
+tick()
+T.check("8l 排隊時變了：輪到移出時比對擋下", inGos(queued[1]) and count() == 1, "left=" .. count())
+
+T.section("[8m] 重走一株：第一次因狀態被排除、重走時已恢復")
+resetEnv()
+load()
+victim = crop(900, 2, { state = "seeded", nbOfGrow = 2, health = 60 }) -- 索引 1
+rewalk = crop(1, 2, {})                                               -- 索引 2：第一個走訪 tick 的最後一株
+filler(299, 3)
+settle()
+local restState = rewalk.lo.state
+rewalk.lo.state = "seeded"
+fireTen()
+fireTicks(2)
+SFarmingSystem.instance:removeLuaObject(victim.lo)
+rewalk.lo.state = restState
+fireTicks(6)
+T.check("8m 這輪已排除的作物，重走時不拿上一輪的條目移出", inGos(rewalk))
+
+T.section("[8n] 快照記下自己的比對方式")
+resetEnv()
+load()
+local vanillaFile, vanillaFrom = W.closureFile, SPlantGlobalObject.fromModData
+W.closureFile = MOD_FILE
+local drift = crop(1, 15, {})
+extraFrom()
+drift.lo.extra = 1
+tick(1000)
+unloadAll()
+W.closureFile, SPlantGlobalObject.fromModData = vanillaFile, vanillaFrom
+tick(1000)
+drift.lo.extra = 2
+tick(SETTLE)
+tick(SETTLE)
+T.check("8n 外來 fromModData 做的快照，換回原版後仍比多寫的鍵：不同 → 不移出", inGos(drift))
+
+T.section("[8o] 舊式 modData（objectName 是 nil 或 false）一律全鍵比對")
+local realName = farming_vegetableconf.getObjectName
+for _, v in ipairs({ NIL, false }) do
+    resetEnv()
+    load()
+    local oldStyle = crop(1, 16, { objectName = v })
+    farming_vegetableconf.getObjectName = function(plant)
+        plant.extra = 1
+        return realName(plant)
+    end
+    cycle()
+    T.check("8o objectName " .. (v == false and "false" or "nil") .. "：換掉的 getObjectName 多寫的鍵不同 → 不移出", inGos(oldStyle))
+    farming_vegetableconf.getObjectName = realName
+end
+
+T.section("[8p] 活的作物不查格子")
+resetEnv()
+load()
+filler(50, 17)
+fireTen()
+fireTicks(3)
+T.check("8p 走過 50 株活作物，一次都不查格子", W.lookups == 0, "lookups=" .. W.lookups)
+
+T.section("[8q] 輪中再觸發 EveryTenMinutes：每輪上限不變")
+do
+    resetEnv()
+    load()
+    for i = 1, 700 do crop(i, 18, {}) end
+    settle()
+    W.packets = {}
+    fireTen()
+    fireTicks(2)
+    fireTen()
+    fireTicks(2)
+    T.check("8q 這輪收到兩次 EveryTenMinutes：仍只移出 100 株", packetCount("remove") == 100, "removed=" .. packetCount("remove"))
+end
+
+T.section("[8r] 第一次記時間時比一次")
+do
+    resetEnv()
+    load()
+    local c = crop(1, 19, {})
+    local health = c.lo.health
+    tick(1000)
+    unloadAll()
+    c.lo.health = 9
+    tick(1000)
+    c.lo.health = health
+    tick(SETTLE)
+    tick(SETTLE)
+    T.check("8r 卸載時已經和快照不同：之後變回也不移出", inGos(c))
+end
+
+T.section("[8s] 重新載入讓舊驗證失效")
+do
+    resetEnv()
+    load()
+    local c = crop(1, 20, {})
+    settle()
+    W.loaded[c.k] = true
+    callHook(c)
+    W.loaded[c.k] = nil
+    tick()
+    T.check("8s 載入後、輪到它之前又卸載：不拿載入前的條目移出", inGos(c))
+    W.loaded[c.k] = true
+    cycle()
+    T.check("8s 之後重新驗過照常移出", not inGos(c))
+
+    resetEnv()
+    load()
+    filler(300, 21)
+    c = crop(1, 21, {}) -- 索引 301：這輪第一個走到
+    tick(1000)
+    unloadAll()
+    fireTen()
+    fireTicks(2)
+    W.loaded[c.k] = true
+    callHook(c)
+    W.loaded[c.k] = nil
+    fireTicks(6)
+    W.now = W.now + SETTLE
+    tick()
+    T.check("8s 這輪記下時間後才重新載入：這輪記下的也不算", inGos(c))
+end
 
 T.finish()

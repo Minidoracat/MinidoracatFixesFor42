@@ -708,6 +708,7 @@ Lua 取樣裡這段的大頭是兩部分：`MDFX_FarmingSyncDedupe` 的指紋比
 
 無。每株作物被檢查的順序、次數、時間點與原版相同；原函式內的錯誤（`checkPlant2`、`plowFadeCheck`、取物件越界時對 nil 取 modData）照樣外洩。
 不做（服主 2026-11-26 沒同意，會改行為或存檔）：把檢查分攤到多幀、`MDFX_FarmingGosPrune` 降頻、批次刪已踩爛的作物。
+2026-11-27 晚服主在審核頁再裁定一次：原版檢查分攤、批次刪仍不做；改做「`MDFX_FarmingGosPrune` 的掃描分攤到每幀」（見該節）。
 
 ### 驗證
 
@@ -765,6 +766,7 @@ B＝本修正＋`MDFX_FarmingSyncDedupe` 逐鍵比較（工作樹快照 `796dd38
 （差在傳送途中載入的地圖原有作物，不到 1%），載入株數每輪都是 637。兩項修正是一起量的，沒有拆開各自的份量。
 這台機器上整個 `EveryTenMinutes` 的中位數仍高於 70 ms（75.6 ms，最長約 112 ms）：要再往下，得動到服主 2026-11-26 沒同意的做法（分攤到多幀、`MDFX_FarmingGosPrune` 降頻、
 批次刪已踩爛的作物）。正式服的硬體與作物組成不同，上線後的實際數字要在正式服重新取樣。
+0.23.0 上線後正式服晚峰（2026-11-27）仍是中位數 81 ms、23 次裡 20 次 ≥70 ms；服主之後選了 `MDFX_FarmingGosPrune` 分攤到每幀（見該節）。
 
 ### 可退場條件
 
@@ -823,7 +825,7 @@ B＝本修正＋`MDFX_FarmingSyncDedupe` 逐鍵比較（工作樹快照 `796dd38
 
 | 修復 | 做什麼 | 關鍵判準 |
 |---|---|---|
-| `MDFX_FarmingGosPrune` | ① 常駐重建：對每種作物的 trampledSprite／deadSprite 註冊 OnLoad（priority 4242），格子載入時地圖物件是 destroyed／harvested／dead／rotten、`modData.spriteName` 等於畫面 sprite、這格沒有 luaObject，就 `fromModData` 原樣重建並通知客戶端。② 移出：每 10 遊戲分鐘掃一次，所在格沒載入的這四種作物，先前在載入時確認過「地圖物件能重建出逐鍵相同的條目」、之後沒變，連續兩次掃到且相隔 ≥30 秒真實時間，才用原版 `removeLuaObject` 移出，每次最多 100 株 | 只移出 hook 一定能重建成一模一樣的；伴生作物（`nbOfGrow >= 3` 且有 `*Bane`）與 `-nosave` 不移出 |
+| `MDFX_FarmingGosPrune` | ① 常駐重建：對每種作物的 trampledSprite／deadSprite 註冊 OnLoad（priority 4242），格子載入時地圖物件是 destroyed／harvested／dead／rotten、`modData.spriteName` 等於畫面 sprite、這格沒有 luaObject，就 `fromModData` 原樣重建並通知客戶端；這格已有 luaObject 時，作廢它在 ② 記下的驗證與計時。② 移出：每 10 遊戲分鐘開一輪，分攤到之後的 `OnTick`、每 tick 由後往前走 300 株；所在格沒載入的這四種作物，上一輪走完時記下過「載入時地圖物件能重建出逐鍵相同的條目」，第一次掃到時仍相同才記時間，之後的輪距第一次 ≥30 秒真實時間、而且移出當下仍與記下的相同，才當場用原版 `removeLuaObject` 移出，每輪最多 100 株 | 只移出 hook 一定能重建成一模一樣的；伴生作物（`nbOfGrow >= 3` 且有 `*Bane`）與 `-nosave` 不移出；一輪中途出錯或 `-nosave` 就放棄並清空記下的 |
 | `MDFX_FarmingClockBackup` | 每 10 遊戲分鐘把時鐘抄進 GlobalModData；開機時 `loadedWorldVersion()` 還是 -1（沒讀完）且備份比現在大就還原 | 備份與 GOS 同一輪存檔；新世界沒有備份 |
 | `MDFX_FarmingStallHeal` | 包 `checkPlant2`：生長中作物 `lastWaterHour` 領先時鐘，或 `nextGrowing` 遠過原版在任何沙盒下排得出來的上限（`max(T) × 10 + 12`，原版 14,952 小時），就把 `nextGrowing` 拉回 `hoursElapsed + timeToGrow` | 只會提前、不會延後；`lastWaterHour` 領先才重設；排程函式被別的 MOD 換掉時遠期判斷關閉 |
 
@@ -842,21 +844,55 @@ B＝本修正＋`MDFX_FarmingSyncDedupe` 逐鍵比較（工作樹快照 `796dd38
   這個競態已由官方補上；等待保留當保險，程式不改。再加 30 秒真實時間，是因為全員睡覺快轉時 10 遊戲分鐘可能不到 1 秒。
 - A 只往前調：時鐘由 C 還原後，最後一次存檔之後才卸載的 chunk 可能帶著略新的 `lastWaterHour`，
   照原版無條件寫會把本來幾小時後就要長的作物往後延幾百小時。
+- B 的移出分攤到每幀（2026-11-27 加，實作前交給 oracle 審；正式服晚峰這段約佔 `EveryTenMinutes` 那一幀 27 ms）：
+  - 由後往前走：全域物件清單只在尾端新增、移除時後面左移（`GlobalObjectSystem.java:41`、`:53`），這輪開始時就在的作物不會漏走；
+    別人在游標前方移除會讓一株被重走，所以每株每輪只評估一次，這輪因狀態或伴生排除的也算（不這樣做，重走時剛卸載的作物會拿上一輪的條目被移出，
+    其中「第一次載入中驗不過」的會變成內容不同或重建不回來）。
+  - 決定與移出在同一個 tick：伺服器的格子只在 Lua 事件之外載入與卸載（`ServerMap.java:500`、`:583-584`），同一個 tick 裡 `getGridSquare` 前後一致。
+  - 開輪在 `OnTick`、開輪那一幀不走：`EveryTenMinutes` 與 `OnTick` 同一幀（`IngameState.java:1558`、`:1562`）。輪中 `EveryTenMinutes` 再到，這輪走完後再開一輪，
+    每輪上限仍是 100 株（服主裁定 `CAP` 不變）。全員睡覺快轉時一輪約 4 秒內會收到好幾次 `EveryTenMinutes`，改版前每次各掃一輪、各移出最多 100 株，
+    現在合併成一輪，快轉期間移出變慢；正常時間一輪約 4 秒走完，比 10 遊戲分鐘短，速度不變。安全性不變（靠真實時間的等待與移出當下的比對）。
+  - 一輪沒走完（出錯、`-nosave`、沒有 instance）就清空記下的：沿用更早一輪的條目，會漏掉這輪才看到的「重新載入後地圖物件被改」（改版前一輪出錯也有同樣的洞）。
+  - 延後比對：等著移出的作物只在兩個時間點比對——第一次看到沒載入（記時間）時，和輪到移出時；中間未滿 30 秒或被額度擋下的輪不比。
+    結果的差別只有一種：記時間之後「變了又變回」的作物，以前永不移出、現在會移出。這段期間格子沒載入、地圖物件不會變，
+    記時間時 luaObject 又與快照相同，重建結果相同。
+  - 作物所在格重新載入時作廢之前的驗證與計時（重建 hook 本來就在載入時被呼叫，碰到已有 luaObject 就清掉它在 `verified` 與這輪記下的）：
+    一株作物的觀察點從「`EveryTenMinutes` 那一刻」散到這輪的各個 tick，載入又卸載落在兩次觀察之間的機會變多；
+    清掉之後必須在這次載入中重新驗過才能再開始計時，比改版前更嚴（改版前兩次掃描之間的短暫載入也看不到）。
+  - 原版 `fromModData` 只寫那 26 個鍵（`SPlantGlobalObject.lua:779-813`），比對只跑 `KEYS`；`getFilenameOfClosure` 查到不是原版檔（或查不到）才另比它多寫的鍵，每輪開頭判一次，
+    同時記下開輪時判過的函式；建立快照時呼叫的不是同一個（輪中途被換掉），那株一律全鍵比對。舊式 modData 的 `objectName` 是 nil 或 false 時，原版改呼叫可被換掉的 `getObjectName`，
+    這種也全鍵比對。快照記下自己用哪種比對，之後照記下的比（外來的 `fromModData` 做的快照，換回原版後仍比多寫的鍵）。
+  - 實測（2026-11-28，9950X3D `farming-tenmin-perf --define gap=60`，`servertest_mdadparts` 約 1.2 萬株、637 株一直載入，
+    新版 `688f2a09` 與 `e3732c9` 各 3 輪交錯、每輪 30 次手動觸發，3 輪中位數）：
+
+    | 指標 | `e3732c9` | 分攤版 |
+    |---|---|---|
+    | 每次 `EveryTenMinutes` 中位數 | 72.4 ms | 60.3 ms |
+    | 每次 `EveryTenMinutes` 最大 | 96.9 ms | 65.8 ms |
+    | 同一幀原版 `checkPlant`（`E2EFarmCheck`）中位數 | 60.0 ms | 62.0 ms |
+    | 非觸發幀 `OnTick` 中位數／p95／最大 | 0.071／0.11／0.77 ms | 0.101／0.67／1.84 ms |
+
+    GosPrune 在觸發幀約 12 ms，分攤後觸發幀幾乎只剩原版 `checkPlant`；每 tick 多約 0.03 ms（中位數）、最多約 1 ms。
+    a 組三輪都 FAIL 在情境的身分檢查「`checkPlant` is vanilla」（這個情境原本比的是 `MDFX_FarmingCheckPlantOnce` 前後，這次兩組都有它），量測本身完整。
+    `688f2a09` 之後只多了 `pass.fn`／`judged`（每株驗證時多一次函式比較），沒有重量。
 
 ### 與原版的差異與殘留風險
 
 - **移出期間，dead／rotten 每 10 遊戲分鐘 1/5000 變成 destroyed 的外觀轉換暫停**，格子再載入後照常。
   這也讓它們較晚進入 `plowFadeCheck` 的清除範圍。這是本修復唯一看得到的行為差異，使用者已同意。
-- **移出之後 chunk 是唯一的來源**：chunk 存檔失敗（`ServerChunkLoader` 存檔執行緒只記 log），或改過的客戶端在最後一次
-  掃描到卸載之間改了那格的 modData（`ObjectModDataPacket.java:21-27,46-58` 不驗來源），重建出來的就是
-  那份內容。原版客戶端不送農作物 modData。42.21 另有「`IsoChunk` 先記 checksum 再寫檔、之後同內容的存檔被跳過」，
+- **移出之後 chunk 是唯一的來源**：chunk 存檔失敗（`ServerChunkLoader` 存檔執行緒只記 log），或在「這株最後一次在載入中被驗過」到卸載之間，
+  改過的客戶端（`ObjectModDataPacket.java:21-27,46-58` 不驗來源）或只改地圖物件、不改 luaObject 的 MOD 改了那格的 modData，重建出來的就是
+  那份內容。原版客戶端不送農作物 modData。分攤前這個驗證點是 `EveryTenMinutes` 那一刻，分攤後是走到這株的那個 tick（晚 ≤ 一輪）：
+  空窗長度不變、位置後移，兩邊各有對方擋得住的時序（2026-11-28 oracle 以測試環境實跑新舊版三個情境確認）。
+  42.21 另有「`IsoChunk` 先記 checksum 再寫檔、之後同內容的存檔被跳過」，
   42.22 起專用伺服器的卸載與存檔改走 `ServerChunkLoader.writeChunk`（先寫檔再記 checksum），不再適用。
 - **整個 MOD 移除時**，被移出、所在區域之後沒再載入過的踩爛／已收成作物會變回原版的孤兒；
   dead／rotten 會由原版 `LoadPlant` 走 `stateFromIsoObject` 重新登記。移出部分可以先單獨退場，
   重建部分要等官方替 trampledSprite 註冊 OnLoad。三份 Workshop 描述都有寫。
 - **效益只及於本 session 載入又卸載過的區域**，而且 `spriteName` 為 nil 的條目永遠不移出
   （例如還沒播種就被踩的翻土格：`trampledSprite["none"]` 不存在，`getSpriteName` 回 nil）。
-  事故時的 20,100 個物件裡，這類 destroyed 有 236 個。
+  事故時的 20,100 個物件裡，這類 destroyed 有 236 個。排隊中的作物被短暫載入（不滿一輪就又卸載）會失去資格，
+  要等下次在載入中被走到才重新開始計時；全員睡覺快轉時移出也變慢（見上方「分攤到每幀」）。
 - **重建時的新增封包送給所有連線**，一個 cell 載入的封包數＝該 cell 被移出的作物數×連線數；
   移出每次最多 100 株，重建端沒有上限。
 - **重建的新增封包撞上還在登入的玩家**（2026-10-03 正式服，見 `MDFX_GosDuplicateNewGuard`）：伺服器把連線加進廣播表
@@ -872,13 +908,16 @@ B＝本修正＋`MDFX_FarmingSyncDedupe` 逐鍵比較（工作樹快照 `796dd38
 
 | 測試 | 項數 | mutation（全部轉紅） |
 |---|---|---|
-| `test_farming_gos_prune.lua` | 108 | 拿掉伴生檢查、`isNoSave`、兩次掃描等待、30 秒下限、移出前再比一次、驗證時的比對、`rebuildable` 的 spriteName 檢查、只認註冊過的 sprite、每次上限、hook 的「已有 luaObject」檢查、hook 的狀態檢查、失敗時的回滾、priority 改回 5、逐種 pcall，共 14 項 |
+| `test_farming_gos_prune.lua` | 152 | `--mutants` 51 項自動跑（先跑一次原始碼確認全綠；編譯不過或沒跑起來的算 BROKEN）：分攤（開輪那幀不走、每 tick 上限、游標、閒置閘門、輪中再觸發不重開也不加額度、重走只評估一次、排除的也記 seen、放棄時清空與清 `due`、出錯不重試、instance 為 nil）、活作物不查格子、延後比對（記時間時比一次）、重新載入作廢驗證與這輪記下的、`full` 判斷（`/mods/`、反斜線、大小寫、檔名、pcall、查不到來源、舊式 modData 的 nil 與 false、輪中途換掉 fromModData、快照記下的比對方式）、伴生、`isNoSave`、30 秒、每輪上限、驗證時的比對、`rebuildable` 的 spriteName 與狀態、只認註冊過的 sprite、hook 的「已有 luaObject」與回滾、priority、逐種 pcall |
 | `test_farming_clock_backup.lua` | 38 | 拿掉 `isClient` 閘門、`loadedWorldVersion` 判斷、「備份比時鐘大」判斷、備份型別檢查、record 的 `checked` 防線、`checked = true`、兩處 pcall、instance 型別檢查，共 10 項 |
 | `test_farming_stall_heal.lua` | 72 | 拿掉 seeded 判斷、兩個觸發條件、LIMIT 的 ×10／+12／+50／rotTime、FastGrow、pcall、marker、「只往前」、「lastWaterHour 領先才重設」、原版來源檢查（整段、`/mods/`、反斜線、大小寫、檔名、pcall）等，共 32 項 |
 
 `python scripts/check_vanilla_alignment.py` 為三支登記了爆點、依賴符號與公式係數（`SandboxOptions.java:232`
 的 FarmingSpeedNew 下限 0.1 是 Java，腳本查不到，記在 `MDFX_FarmingStallHeal.lua` 檔頭）；42.22.2 起另以 `javap` 登記
 兩條 Java 前提：`SliceY` 的 10,485,760 byte 緩衝、`SGlobalObjectSystem.save()` 先開 `FileOutputStream` 才序列化。
+2026-11-27 分攤到每幀時再加：`GlobalObjectSystem` 的清單只在尾端新增、移除用 `ArrayList.remove`（它與子類別 `SGlobalObjectSystem` 整個類別都沒有插入、`addAll(int, …)`、`set`、`ListIterator`、`Collections` 或排序），
+`IngameState.update` 先 `UpdateStuff` 再 `onTick`、`UpdateStuff` 呼叫 `GameTime.update`、`GameTime.update` 觸發 `EveryTenMinutes`、`onTick` 以 `triggerEvent("OnTick", …)` 觸發 `OnTick`；
+Lua 端另登記原版 `fromModData` 本體只寫 KEYS 那 26 個鍵（多寫一鍵或多一個呼叫就轉紅：原版時只比 `KEYS` 的前提）。
 
 **實機**（`fixes-e2e` 的 `farming-gos`，no-Steam 專用伺服器＋MP 客戶端，同一輪兩個場次；另跑一次單人）：
 時鐘先設 30000 模擬老伺服器，在 Muldraugh 蓋 25 株（生長中 4、枯死 4、腐爛 4、踩爛 4、已收成 4、翻土 2，
@@ -894,6 +933,9 @@ B＝本修正＋`MDFX_FarmingSyncDedupe` 逐鍵比較（工作樹快照 `796dd38
 
 單人跑第一場次同樣全部通過（25 項）。MP 兩個場次的伺服器 log（`SERVER STARTED` 之後）與兩種模式的客戶端 log 都沒有
 `already an object at`、`NOT installed` 或堆疊帶本 MOD 路徑的例外。
+
+2026-11-28 GosPrune 分攤到每幀後重跑（9950X3D，最終版 `94835030`）：MP 兩場次 25＋5 項、單人 25 項全部通過；移出照常
+（每輪最多 100 株，log 的第一批是 98 與 100 株；卸載後約 45 秒移出是中間版 `23ae56e6` 量的），同樣沒有 `NOT installed`、`sweep failed` 或例外。
 
 ### 可退場條件
 

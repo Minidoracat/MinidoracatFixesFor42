@@ -23,6 +23,7 @@ desktop.ini
 
 temp/
 tmp/
+scripts/_mutant_*.lua
 
 # Python 編譯快取
 __pycache__/

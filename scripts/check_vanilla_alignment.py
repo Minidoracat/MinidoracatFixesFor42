@@ -37,6 +37,13 @@ DEFAULT_PZ_HOME = r"D:/SteamLibrary/steamapps/common/ProjectZomboid"
 # 停在同一個方法區塊內的任意內容（javap -c 的方法之間隔一個空行、方法宣告縮兩格）
 N = r"(?:(?!\n  \S)[\s\S])*?"
 
+# GosPrune 由後往前走 GOS 清單：整個類別沒有插入到中間、覆寫、交換或重排的寫法
+NO_LIST_REORDER = (
+    r"\A(?![\s\S]*// Method java/util/ArrayList\.add:\(ILjava/lang/Object;\)V)(?![\s\S]*// Method java/util/ArrayList\.set:)"
+    r"(?![\s\S]*// Method java/util/ArrayList\.addAll:\(ILjava/util/Collection;\)Z)(?![\s\S]*ListIterator)"
+    r"(?![\s\S]*// Method java/util/Collections\.)(?![\s\S]*\.sort:)"
+)
+
 # 每條修復的指紋。pattern 都是對「整檔內容」的 regex search。
 FIXES = [
     {
@@ -532,6 +539,16 @@ FIXES = [
             r'return self\.state ~= "destroyed" and self\.state ~= "dead" and self\.state ~= "rotten" and self\.state ~= "harvested"',
             r"function SPlantGlobalObject:initNew\(\)",
             r"function SPlantGlobalObject:fromModData\(modData\)",
+            # :779-813 原版只寫 KEYS 那 26 個鍵（加兩個舊式補值）：本補丁在原版時只比 KEYS，多寫一鍵就要回頭改
+            r"function SPlantGlobalObject:fromModData\(modData\)[ \t\r]*\n"
+            r"(?:[ \t]*(?:--[^\n]*|self\.(?:state|nbOfGrow|typeOfSeed|fertilizer|mildewLvl|aphidLvl|fliesLvl|slugsLvl|hasWeeds|"
+            r"naturalLight|waterLvl|waterNeeded|waterNeededMax|lastWaterHour|nextGrowing|hasSeed|hasVegetable|cursed|compost|"
+            r"bonusYield|health|badCare|exterior|spriteName|objectName|owner) = modData\.[^\n]*)\n)+"
+            r"[ \t]*if not self\.spriteName then[^\n]*\n[ \t]*self\.spriteName = farming_vegetableconf\.getSpriteName\(self\)[ \t\r]*\n"
+            r"[ \t]*end[ \t\r]*\n"
+            r"[ \t]*if not self\.objectName then[^\n]*\n[ \t]*self\.objectName = farming_vegetableconf\.getObjectName\(self\)[ \t\r]*\n"
+            r"[ \t]*end[ \t\r]*\n"
+            r"end",
         ],
     },
     {
@@ -551,6 +568,44 @@ FIXES = [
             r"local globalObject = self\.system:newObject\(square:getX\(\), square:getY\(\), square:getZ\(\)\)\s*"
             r"local luaObject = self:newLuaObject\(globalObject\)\s*luaObject:stateFromIsoObject\(isoObject\)",
             r"function SGlobalObjectSystem:getIsoObjectOnSquare\(square\)",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（前提：GOS 清單只在尾端新增、移除時後面左移）",
+        "class": "zombie.globalObjects.GlobalObjectSystem",
+        "depends": [
+            # GlobalObjectSystem.java:41、:53：一輪由後往前走，才不會漏掉這輪開始時就在的作物
+            r"public final zombie\.globalObjects\.GlobalObject newObject\(int, int, int\);" + N
+            + r"// Method java/util/ArrayList\.add:\(Ljava/lang/Object;\)Z",
+            r"public final void removeObject\(zombie\.globalObjects\.GlobalObject\)" + N
+            + r"// Method java/util/ArrayList\.remove:\(Ljava/lang/Object;\)Z",
+            # 沒有插入到中間、覆寫、交換或重排的寫法
+            NO_LIST_REORDER,
+        ],
+    },
+    {
+        # objects 是 protected（GlobalObjectSystem.java:14），子類別也碰得到
+        "name": "MDFX_FarmingGosPrune（前提：子類別不插入或重排 GOS 清單）",
+        "class": "zombie.globalObjects.SGlobalObjectSystem",
+        "depends": [NO_LIST_REORDER],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（前提：EveryTenMinutes 與同一幀的 OnTick 先後）",
+        "class": "zombie.gameStates.IngameState",
+        "depends": [
+            # IngameState.java:1558、:1562：UpdateStuff（→ GameTime.update → EveryTenMinutes）先於 onTick；開輪那一幀不走
+            r"// Method UpdateStuff:\(\)V" + N + r"// Method onTick:\(\)V",
+            r"public void UpdateStuff\(\);" + N + r"// Method zombie/GameTime\.update:\(Z\)V",
+            r"private void onTick\(\);" + N + r"// String OnTick\n" + N
+            + r"// Method zombie/Lua/LuaEventManager\.triggerEvent:\(Ljava/lang/String;Ljava/lang/Object;\)V",
+        ],
+    },
+    {
+        "name": "MDFX_FarmingGosPrune（前提：GameTime.update 觸發 EveryTenMinutes）",
+        "class": "zombie.GameTime",
+        "depends": [
+            r"public void update\(boolean\);" + N + r"// String EveryTenMinutes\s+\d+: invokestatic\s+#\d+\s+"
+            r"// Method zombie/Lua/LuaEventManager\.triggerEvent:\(Ljava/lang/String;\)V",
         ],
     },
     {
